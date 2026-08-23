@@ -68,14 +68,93 @@ jobs:
           if (/netkeep80\/repo-guard@(main|latest)\b/.test(guardWorkflow)) {
             throw new Error("floating repo-guard ref is forbidden");
           }
+          NODE
 
-          for (const forbidden of ["package.json", "package-lock.json", "tsconfig.json", "src", "test"]) {
-            try {
-              await access(forbidden);
-            } catch (error) {
-              if (error?.code === "ENOENT") continue;
-              throw error;
-            }
-            throw new Error(`${forbidden} is outside G0 scope`);
+  standalone-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install exact standalone dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate package ownership boundary
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+
+          const pkg = JSON.parse(await readFile("package.json", "utf8"));
+          if (pkg.name !== "@mts/visual") throw new Error("package name must be @mts/visual");
+          if (pkg.version !== "0.1.0") throw new Error("standalone extraction baseline must be 0.1.0");
+          if (pkg.private !== true) throw new Error("standalone extraction baseline must remain private");
+          if (pkg.dependencies?.three !== "0.185.1") throw new Error("three must remain exact 0.185.1");
+          if (pkg.devDependencies?.["@types/three"] !== "0.185.0") throw new Error("@types/three must remain exact 0.185.0");
+          if (pkg.devDependencies?.typescript !== "5.9.3") throw new Error("typescript must be exact 5.9.3");
+
+          const allDependencies = {
+            ...(pkg.dependencies ?? {}),
+            ...(pkg.devDependencies ?? {}),
+            ...(pkg.peerDependencies ?? {}),
+            ...(pkg.optionalDependencies ?? {}),
+          };
+          for (const forbidden of ["@mts/core", "anum_docs", "anum_parser", "aprover"]) {
+            if (forbidden in allDependencies) throw new Error(`forbidden dependency authority: ${forbidden}`);
+          }
+
+          const root = await readFile("src/index.ts", "utf8");
+          if (/\.\/three|from\s+["']three["']/.test(root)) {
+            throw new Error("browser-neutral root must not re-export or import Three companion APIs");
           }
           NODE
+      - name: Reject cross-repository semantic authority imports
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir, readFile } from "node:fs/promises";
+          import path from "node:path";
+          import ts from "typescript";
+
+          const forbidden = (specifier) =>
+            /^@mts\/core(?:\/|$)/.test(specifier)
+            || /^(?:netkeep80\/)?(?:anum_docs|anum_parser|aprover)(?:@|\/|$)/.test(specifier);
+
+          async function filesUnder(root) {
+            const result = [];
+            for (const entry of await readdir(root, { withFileTypes: true })) {
+              const current = path.join(root, entry.name);
+              if (entry.isDirectory()) result.push(...await filesUnder(current));
+              else if (entry.isFile() && /\.[cm]?tsx?$/.test(entry.name)) result.push(current);
+            }
+            return result;
+          }
+
+          for (const file of [...await filesUnder("src"), ...await filesUnder("test")]) {
+            const text = await readFile(file, "utf8");
+            const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+            const visit = (node) => {
+              let specifier;
+              if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+                  && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
+                specifier = node.moduleSpecifier.text;
+              } else if (ts.isCallExpression(node) && node.arguments.length > 0
+                  && ts.isStringLiteralLike(node.arguments[0])) {
+                if (node.expression.kind === ts.SyntaxKind.ImportKeyword
+                    || (ts.isIdentifier(node.expression) && node.expression.text === "require")) {
+                  specifier = node.arguments[0].text;
+                }
+              } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
+                  && ts.isStringLiteralLike(node.argument.literal)) {
+                specifier = node.argument.literal.text;
+              }
+              if (specifier !== undefined && forbidden(specifier)) {
+                throw new Error(`${file}: forbidden cross-repository module import: ${specifier}`);
+              }
+              ts.forEachChild(node, visit);
+            };
+            visit(source);
+          }
+          NODE
+      - name: Build and run accepted visual conformance suite
+        run: npm run check
