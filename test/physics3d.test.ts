@@ -21,6 +21,7 @@ type PhysicalModelProbe = Readonly<{
   keys: readonly string[];
   springs: readonly SpringProbe[];
 }>;
+
 type ForceProbe = Readonly<{ key: string; vector: Point3D }>;
 type ForceResultProbe = Readonly<{
   forces: readonly ForceProbe[];
