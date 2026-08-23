@@ -111,9 +111,50 @@ jobs:
       - name: Reject cross-repository semantic authority imports
         shell: bash
         run: |
-          if grep -R -n -E '@mts/core|netkeep80/anum_docs|netkeep80/anum_parser|netkeep80/aprover' src test package.json tsconfig.json; then
-            echo "::error::standalone visual package contains forbidden semantic/repository authority reference"
-            exit 1
-          fi
+          node --input-type=module <<'NODE'
+          import { readdir, readFile } from "node:fs/promises";
+          import path from "node:path";
+          import ts from "typescript";
+
+          const forbidden = (specifier) =>
+            /^@mts\/core(?:\/|$)/.test(specifier)
+            || /^(?:netkeep80\/)?(?:anum_docs|anum_parser|aprover)(?:@|\/|$)/.test(specifier);
+
+          async function filesUnder(root) {
+            const result = [];
+            for (const entry of await readdir(root, { withFileTypes: true })) {
+              const current = path.join(root, entry.name);
+              if (entry.isDirectory()) result.push(...await filesUnder(current));
+              else if (entry.isFile() && /\.[cm]?tsx?$/.test(entry.name)) result.push(current);
+            }
+            return result;
+          }
+
+          for (const file of [...await filesUnder("src"), ...await filesUnder("test")]) {
+            const text = await readFile(file, "utf8");
+            const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+            const visit = (node) => {
+              let specifier;
+              if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+                  && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
+                specifier = node.moduleSpecifier.text;
+              } else if (ts.isCallExpression(node) && node.arguments.length > 0
+                  && ts.isStringLiteralLike(node.arguments[0])) {
+                if (node.expression.kind === ts.SyntaxKind.ImportKeyword
+                    || (ts.isIdentifier(node.expression) && node.expression.text === "require")) {
+                  specifier = node.arguments[0].text;
+                }
+              } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
+                  && ts.isStringLiteralLike(node.argument.literal)) {
+                specifier = node.argument.literal.text;
+              }
+              if (specifier !== undefined && forbidden(specifier)) {
+                throw new Error(`${file}: forbidden cross-repository module import: ${specifier}`);
+              }
+              ts.forEachChild(node, visit);
+            };
+            visit(source);
+          }
+          NODE
       - name: Build and run accepted visual conformance suite
         run: npm run check
