@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Validate standalone governance boundary
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { access, readFile } from "node:fs/promises";
+
+          const expectedRepoGuard = "921582f085b0dffab22d847889893cda70fc3f2b";
+          const required = [
+            "repo-policy.json",
+            ".github/workflows/ci.yml",
+            ".github/workflows/repo-guard.yml",
+            ".github/PULL_REQUEST_TEMPLATE.md",
+          ];
+          for (const path of required) await access(path);
+
+          const policy = JSON.parse(await readFile("repo-policy.json", "utf8"));
+          if (policy.policy_format_version !== "0.3.0") throw new Error("policy format must be 0.3.0");
+          if (policy.repository_kind !== "tooling") throw new Error("repository kind must be tooling");
+          if (policy.enforcement?.mode !== "blocking") throw new Error("repo-policy must be blocking");
+
+          const integrations = policy.integration?.workflows ?? [];
+          const ci = integrations.find((entry) => entry.id === "project-ci");
+          if (ci?.role !== "ci_gate" || ci?.expect?.enforcement !== "blocking") {
+            throw new Error("blocking project-ci integration is missing");
+          }
+          const guardIntegration = integrations.find((entry) => entry.id === "repo-guard-pr");
+          if (guardIntegration?.role !== "repo_guard_pr_gate") {
+            throw new Error("repo-guard-pr integration is missing");
+          }
+          if (guardIntegration?.expect?.action?.uses !== "netkeep80/repo-guard") {
+            throw new Error("repo-guard action owner mismatch");
+          }
+          if (guardIntegration?.expect?.action?.ref !== expectedRepoGuard) {
+            throw new Error("repo-guard integration must pin exact expected SHA");
+          }
+          if (guardIntegration?.expect?.action?.ref_pinning !== "sha") {
+            throw new Error("repo-guard integration must require SHA pinning");
+          }
+
+          const guardWorkflow = await readFile(".github/workflows/repo-guard.yml", "utf8");
+          if (!guardWorkflow.includes(`netkeep80/repo-guard@${expectedRepoGuard}`)) {
+            throw new Error("repo-guard workflow is not pinned to exact expected SHA");
+          }
+          if (/netkeep80\/repo-guard@(main|latest)\b/.test(guardWorkflow)) {
+            throw new Error("floating repo-guard ref is forbidden");
+          }
+
+          for (const forbidden of ["package.json", "package-lock.json", "tsconfig.json", "src", "test"]) {
+            try {
+              await access(forbidden);
+            } catch (error) {
+              if (error?.code === "ENOENT") continue;
+              throw error;
+            }
+            throw new Error(`${forbidden} is outside G0 scope`);
+          }
+          NODE
