@@ -55,6 +55,12 @@ jobs:
             throw new Error("repo-guard integration must require SHA pinning");
           }
 
+          const templates = policy.integration?.templates ?? [];
+          const prTemplate = templates.find((entry) => entry.id === "pull-request-change-intent");
+          if (prTemplate?.requires_change_intent_block !== true || prTemplate?.required_block_kind !== "repo-guard-yaml") {
+            throw new Error("ChangeIntent PR template integration is missing");
+          }
+
           const guardWorkflow = await readFile(".github/workflows/repo-guard.yml", "utf8");
           if (!guardWorkflow.includes(`netkeep80/repo-guard@${expectedRepoGuard}`)) {
             throw new Error("repo-guard workflow is not pinned to exact expected SHA");
