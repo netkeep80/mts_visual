@@ -1,0 +1,32 @@
+{
+  "name": "@mts/visual",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./three": {
+      "types": "./dist/src/three/index.d.ts",
+      "default": "./dist/src/three/index.js"
+    }
+  },
+  "files": [
+    "dist/src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build --silent && node dist/test/model.test.js",
+    "check": "npm test"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.185.0",
+    "typescript": "5.9.3"
+  }
+}
