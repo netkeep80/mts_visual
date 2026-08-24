@@ -1,8 +1,10 @@
 import {
+  createInitialPhysics3DState,
   type Point3D,
   type VisualLinkNetwork,
   type VisualPosition3D,
 } from "../src/index.js";
+import { createLivePhysics3D } from "../src/live-physics3d.js";
 import {
   Physics3DError,
   buildPhysicalModel3D,
@@ -317,5 +319,79 @@ for (const invalid of [
     () => computePhysicalForces3D(chargeModel, pairPositions, invalid),
     "invalid-option",
     `invalid option ${JSON.stringify(invalid)}`,
+  );
+}
+
+const emptyInitial = createInitialPhysics3DState({ links: [] }) as StateProbe;
+assert(JSON.stringify(emptyInitial) === JSON.stringify({ positions: [], velocities: [] }), "empty network creates exact empty initial state");
+
+const singletonNetwork: VisualLinkNetwork = {
+  links: [{ key: "ONLY", startKey: "ONLY", endKey: "ONLY" }],
+};
+const singletonInitial = createInitialPhysics3DState(singletonNetwork) as StateProbe;
+assert(
+  JSON.stringify(singletonInitial) === JSON.stringify({
+    positions: [position("ONLY", 0, 0, 0)],
+    velocities: [velocity("ONLY", 0, 0, 0)],
+  }),
+  "singleton self-link starts at origin with zero velocity",
+);
+
+const initial = createInitialPhysics3DState(topologyNetwork) as StateProbe;
+const initialAgain = createInitialPhysics3DState(topologyNetwork) as StateProbe;
+const reorderedInitial = createInitialPhysics3DState({ links: [...topologyNetwork.links].reverse() }) as StateProbe;
+const metadataInitial = createInitialPhysics3DState({
+  links: topologyNetwork.links.map((link) => ({ ...link, label: `changed:${link.key}`, tags: ["changed"] })),
+}) as StateProbe;
+assert(JSON.stringify(initial) === JSON.stringify(initialAgain), "initial state is repeatable");
+assert(JSON.stringify(initial) === JSON.stringify(reorderedInitial), "initial state is independent from input order");
+assert(JSON.stringify(initial) === JSON.stringify(metadataInitial), "initial state is independent from labels/tags");
+assert(
+  JSON.stringify(initial.positions.map((entry) => entry.key)) === JSON.stringify(["A", "B", "C", "R"]),
+  "initial state covers normalized VisualKeys exactly",
+);
+assert(
+  JSON.stringify(initial.velocities.map((entry) => entry.key)) === JSON.stringify(["A", "B", "C", "R"]),
+  "initial velocities cover normalized VisualKeys exactly",
+);
+const distinctInitialPoints = new Set<string>();
+for (const entry of initial.positions) {
+  assert(Number.isFinite(norm(entry.point)), `initial position ${entry.key} finite`);
+  approx(norm(entry.point), 3, `initial position ${entry.key} uses default radius`);
+  distinctInitialPoints.add(`${entry.point.x}:${entry.point.y}:${entry.point.z}`);
+}
+assert(distinctInitialPoints.size === initial.positions.length, "multi-link initial positions are distinct");
+for (const entry of initial.velocities) {
+  assert(entry.vector.x === 0 && entry.vector.y === 0 && entry.vector.z === 0, `initial velocity ${entry.key} is zero`);
+}
+const initialR = initial.positions.find((entry) => entry.key === "R");
+assert(initialR !== undefined && norm(initialR.point) > 0, "root-looking R receives no origin special case");
+
+const radiusFive = createInitialPhysics3DState(topologyNetwork, { radius: 5 }) as StateProbe;
+for (const entry of radiusFive.positions) approx(norm(entry.point), 5, `custom radius applies to ${entry.key}`);
+
+const linkOfLinksInitial = createInitialPhysics3DState({
+  links: [
+    { key: "L", startKey: "L", endKey: "L" },
+    { key: "U", startKey: "U", endKey: "U" },
+    { key: "X", startKey: "L", endKey: "U" },
+  ],
+}) as StateProbe;
+assert(
+  JSON.stringify(linkOfLinksInitial.positions.map((entry) => entry.key)) === JSON.stringify(["L", "U", "X"]),
+  "links-of-links receive ordinary initial positions",
+);
+
+const liveFromInitial = createLivePhysics3D(topologyNetwork, initial);
+assert(
+  JSON.stringify(liveFromInitial.model.keys) === JSON.stringify(["A", "B", "C", "R"]),
+  "initial state passes directly into shared live controller",
+);
+
+for (const radius of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+  expectPhysicsCode(
+    () => createInitialPhysics3DState(topologyNetwork, { radius }),
+    "invalid-option",
+    `invalid initial radius ${String(radius)}`,
   );
 }

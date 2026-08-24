@@ -86,8 +86,14 @@ jobs:
           import { readFile } from "node:fs/promises";
 
           const pkg = JSON.parse(await readFile("package.json", "utf8"));
+          const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
           if (pkg.name !== "@mts/visual") throw new Error("package name must be @mts/visual");
-          if (pkg.version !== "0.1.0") throw new Error("standalone extraction baseline must be 0.1.0");
+          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(pkg.version)) {
+            throw new Error("package version must be valid SemVer");
+          }
+          if (lock.version !== pkg.version || lock.packages?.[""]?.version !== pkg.version) {
+            throw new Error("package-lock version must match package.json");
+          }
           if (pkg.private !== true) throw new Error("standalone extraction baseline must remain private");
           if (pkg.dependencies?.three !== "0.185.1") throw new Error("three must remain exact 0.185.1");
           if (pkg.devDependencies?.["@types/three"] !== "0.185.0") throw new Error("@types/three must remain exact 0.185.0");

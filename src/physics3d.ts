@@ -10,6 +10,8 @@ import type { Point3D, VisualPosition3D } from "./geometry3d.js";
 // Parser DTOs, root pinning, depth force, live state, and renderer concerns are excluded.
 
 const EPSILON = 1e-12;
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const DEFAULT_INITIAL_RADIUS = 3;
 
 export interface PhysicalSpring3D {
   readonly linkKey: VisualKey;
@@ -31,6 +33,10 @@ export interface VisualVelocity3D {
 export interface Physics3DState {
   readonly positions: readonly VisualPosition3D[];
   readonly velocities: readonly VisualVelocity3D[];
+}
+
+export interface InitialPhysics3DOptions {
+  readonly radius?: number;
 }
 
 export interface Physics3DOptions {
@@ -194,6 +200,48 @@ function normalizedOptions(options: Physics3DOptions): NormalizedPhysics3DOption
   invalid("maxStep", value.maxStep <= 0);
   invalid("coordinateBound", value.coordinateBound <= 0);
   return Object.freeze(value);
+}
+
+export function createInitialPhysics3DState(
+  network: VisualLinkNetwork,
+  options: InitialPhysics3DOptions = {},
+): Physics3DState {
+  const normalized = normalizeVisualLinkNetwork(network);
+  const radius = options.radius ?? DEFAULT_INITIAL_RADIUS;
+  if (!Number.isFinite(radius) || radius <= 0) throw new Physics3DError("invalid-option", "radius");
+
+  const keys = normalized.links.map((link) => link.key);
+  const velocities = Object.freeze(keys.map((key) => Object.freeze({
+    key,
+    vector: point(0, 0, 0),
+  })));
+
+  if (keys.length === 0) {
+    return Object.freeze({ positions: Object.freeze([]), velocities });
+  }
+  if (keys.length === 1) {
+    return Object.freeze({
+      positions: Object.freeze([Object.freeze({ key: keys[0]!, point: point(0, 0, 0) })]),
+      velocities,
+    });
+  }
+
+  const count = keys.length;
+  const positions = Object.freeze(keys.map((key, index) => {
+    const z = 1 - (2 * (index + 0.5)) / count;
+    const radial = Math.sqrt(Math.max(0, 1 - z * z));
+    const angle = GOLDEN_ANGLE * index;
+    return Object.freeze({
+      key,
+      point: point(
+        radius * radial * Math.cos(angle),
+        radius * radial * Math.sin(angle),
+        radius * z,
+      ),
+    });
+  }));
+
+  return Object.freeze({ positions, velocities });
 }
 
 export function buildPhysicalModel3D(network: VisualLinkNetwork): PhysicalModel3D {
