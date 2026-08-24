@@ -47,6 +47,10 @@ export interface BlueprintGeometry {
 export interface BlueprintOptions {
   readonly spacing?: number;
   readonly loopRadius?: number;
+  /** Presentation-only distance from START anchor as a fraction of spacing. */
+  readonly startOffsetFraction?: number;
+  /** Presentation-only distance from END anchor as a fraction of spacing. */
+  readonly endOffsetFraction?: number;
 }
 
 export type BlueprintGeometryErrorCode =
@@ -70,6 +74,8 @@ export class BlueprintGeometryError extends Error {
 
 const DEFAULT_SPACING = 96;
 const DEFAULT_LOOP_RADIUS = 34;
+const DEFAULT_START_OFFSET_FRACTION = 0;
+const DEFAULT_END_OFFSET_FRACTION = 0;
 const EPSILON = 1e-9;
 
 export function createBlueprintInitialPositions(
@@ -92,10 +98,24 @@ export function buildBlueprintGeometry(
   const normalized = normalizeVisualLinkNetwork(network);
   const spacing = positiveOption(options.spacing, DEFAULT_SPACING);
   const loopRadius = positiveOption(options.loopRadius, DEFAULT_LOOP_RADIUS);
+  const startOffset = nonNegativeOption(
+    options.startOffsetFraction,
+    DEFAULT_START_OFFSET_FRACTION,
+  ) * spacing;
+  const endOffset = nonNegativeOption(
+    options.endOffsetFraction,
+    DEFAULT_END_OFFSET_FRACTION,
+  ) * spacing;
   const resolved = resolvePositions(normalized, positions, spacing);
   const byKey = new Map(resolved.map(({ key, point }) => [key, point] as const));
 
-  const links = normalized.links.map((link) => buildLinkGeometry(link, byKey, loopRadius));
+  const links = normalized.links.map((link) => buildLinkGeometry(
+    link,
+    byKey,
+    loopRadius,
+    startOffset,
+    endOffset,
+  ));
   const geometry = Object.freeze({
     positions: resolved,
     links: Object.freeze(links),
@@ -137,6 +157,8 @@ function buildLinkGeometry(
   link: VisualLink,
   positions: ReadonlyMap<VisualKey, Point2D>,
   loopRadius: number,
+  startOffset: number,
+  endOffset: number,
 ): BlueprintLinkGeometry {
   const center = requirePoint(positions, link.key);
   const start = requirePoint(positions, link.startKey);
@@ -146,7 +168,9 @@ function buildLinkGeometry(
 
   let segments: readonly CubicBezierSegment[];
   if (startAtCenter && endAtCenter) {
-    segments = buildClosedLoop(center, loopRadius, link.key);
+    segments = startOffset > 0 || endOffset > 0
+      ? buildClearancedClosedLoop(center, loopRadius, link.key)
+      : buildClosedLoop(center, loopRadius, link.key);
   } else {
     const waypoints: Point2D[] = [];
     if (startAtCenter) {
@@ -161,6 +185,7 @@ function buildLinkGeometry(
     }
     segments = cubicSegments(waypoints);
   }
+  segments = applyEndpointClearance(segments, startOffset, endOffset);
 
   return Object.freeze({
     key: link.key,
@@ -205,6 +230,31 @@ function buildClosedLoop(center: Point2D, radius: number, key: VisualKey): reado
   ]);
 }
 
+/**
+ * A full self-link with endpoint clearance still needs the semantic center as an
+ * interior path join. Two symmetric lobes preserve C1 there while keeping START
+ * and END presentation endpoints independently movable away from the center.
+ */
+function buildClearancedClosedLoop(
+  center: Point2D,
+  radius: number,
+  key: VisualKey,
+): readonly CubicBezierSegment[] {
+  const angle = stableAngle(key);
+  const axis = { x: Math.cos(angle), y: Math.sin(angle) };
+  const normal = { x: -axis.y, y: axis.x };
+  const firstOpposite = add(center, scale(axis, radius * 2));
+  const secondOpposite = add(center, scale(axis, -radius * 2));
+  const normalOffset = scale(normal, radius);
+
+  return Object.freeze([
+    freezeSegment(center, add(center, normalOffset), add(firstOpposite, normalOffset), firstOpposite),
+    freezeSegment(firstOpposite, subtract(firstOpposite, normalOffset), subtract(center, normalOffset), center),
+    freezeSegment(center, add(center, normalOffset), add(secondOpposite, normalOffset), secondOpposite),
+    freezeSegment(secondOpposite, subtract(secondOpposite, normalOffset), subtract(center, normalOffset), center),
+  ]);
+}
+
 function detour(
   center: Point2D,
   toward: Point2D,
@@ -237,6 +287,21 @@ function cubicSegments(points: readonly Point2D[]): readonly CubicBezierSegment[
   )));
 }
 
+function applyEndpointClearance(
+  segments: readonly CubicBezierSegment[],
+  startOffset: number,
+  endOffset: number,
+): readonly CubicBezierSegment[] {
+  if (segments.length === 0 || (startOffset <= 0 && endOffset <= 0)) return segments;
+  const lastIndex = segments.length - 1;
+  return Object.freeze(segments.map((segment, index) => freezeSegment(
+    index === 0 ? offsetToward(segment.p0, segment.p3, startOffset) : segment.p0,
+    segment.p1,
+    segment.p2,
+    index === lastIndex ? offsetToward(segment.p3, segment.p0, endOffset) : segment.p3,
+  )));
+}
+
 function joinIsC1(left: CubicBezierSegment, right: CubicBezierSegment, epsilon: number): boolean {
   return pointsNear(left.p3, right.p0, epsilon)
     && pointsNear(blueprintCubicDerivativeAtEnd(left), blueprintCubicDerivativeAtStart(right), epsilon);
@@ -248,10 +313,24 @@ function positiveOption(value: number | undefined, fallback: number): number {
   return value;
 }
 
+function nonNegativeOption(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isFinite(value) || value < 0) throw new BlueprintGeometryError("invalid-option");
+  return value;
+}
+
 function requirePoint(positions: ReadonlyMap<VisualKey, Point2D>, key: VisualKey): Point2D {
   const point = positions.get(key);
   if (point === undefined) throw new BlueprintGeometryError("missing-position", key);
   return point;
+}
+
+function offsetToward(from: Point2D, toward: Point2D, offset: number): Point2D {
+  const direction = subtract(toward, from);
+  const length = Math.hypot(direction.x, direction.y);
+  if (length <= EPSILON || offset <= 0) return from;
+  const amount = Math.min(offset, length * 0.8);
+  return add(from, scale(direction, amount / length));
 }
 
 function squareSpiralCell(index: number): Point2D {
