@@ -13,8 +13,14 @@ import "./three-labels.test.js";
 
 import {
   VisualNetworkError,
+  blueprintSegmentsAreC1,
+  buildBlueprintGeometry,
+  createBlueprintInitialPositions,
   normalizeVisualLinkNetwork,
   validateVisualLinkNetwork,
+  type BlueprintGeometry,
+  type BlueprintPosition,
+  type Point2D,
   type VisualLink,
   type VisualLinkNetwork,
   type VisualNetworkErrorCode,
@@ -26,6 +32,22 @@ function assert(condition: unknown, message: string): asserts condition {
 
 function same<T>(actual: T, expected: T, message: string): void {
   assert(Object.is(actual, expected), `${message}: ${String(actual)} !== ${String(expected)}`);
+}
+
+function near(left: Point2D, right: Point2D, epsilon = 1e-8): boolean {
+  return Math.abs(left.x - right.x) <= epsilon && Math.abs(left.y - right.y) <= epsilon;
+}
+
+function blueprintLink(geometry: BlueprintGeometry, key: string) {
+  const link = geometry.links.find((candidate) => candidate.key === key);
+  assert(link !== undefined, `missing blueprint geometry for ${key}`);
+  return link;
+}
+
+function blueprintPoint(positions: readonly BlueprintPosition[], key: string): Point2D {
+  const position = positions.find((candidate) => candidate.key === key);
+  assert(position !== undefined, `missing blueprint position for ${key}`);
+  return position.point;
 }
 
 function expectCode(effect: () => unknown, code: VisualNetworkErrorCode, message: string): void {
@@ -123,3 +145,56 @@ expectCode(
 
 assert(Object.isFrozen(normalized), "normalized network is immutable presentation snapshot");
 assert(Object.isFrozen(normalized.links), "normalized link list is immutable presentation snapshot");
+
+// M4a conformance: semantic anchors stay exact while the rendered path may clear
+// START/END markers away from those centers. This is presentation only.
+const blueprintTopologyBefore = JSON.stringify(basis);
+const blueprintPositions = createBlueprintInitialPositions(basis);
+const clearanced = buildBlueprintGeometry(basis, blueprintPositions, {
+  startOffsetFraction: 0.10,
+  endOffsetFraction: 0.16,
+});
+const clearancedOrdinary = blueprintLink(clearanced, "L");
+const ordinaryFirst = clearancedOrdinary.segments[0]!;
+const ordinaryLast = clearancedOrdinary.segments.at(-1)!;
+assert(near(clearancedOrdinary.startAnchor, blueprintPoint(blueprintPositions, "O")), "semantic START anchor stays exact");
+assert(near(clearancedOrdinary.endAnchor, blueprintPoint(blueprintPositions, "C")), "semantic END anchor stays exact");
+assert(!near(ordinaryFirst.p0, clearancedOrdinary.startAnchor), "rendered START clears its semantic anchor");
+assert(!near(ordinaryLast.p3, clearancedOrdinary.endAnchor), "rendered END clears its semantic anchor");
+assert(blueprintSegmentsAreC1(clearancedOrdinary.segments), "clearanced ordinary path remains C1");
+assert(
+  clearancedOrdinary.segments.some((segment, index) => {
+    const next = clearancedOrdinary.segments[index + 1];
+    return next !== undefined && near(segment.p3, clearancedOrdinary.center) && near(next.p0, clearancedOrdinary.center);
+  }),
+  "semantic center remains an interior continuous join after marker clearance",
+);
+
+const clearancedRoot = blueprintLink(clearanced, "R");
+const rootFirst = clearancedRoot.segments[0]!;
+const rootLast = clearancedRoot.segments.at(-1)!;
+assert(!near(rootFirst.p0, clearancedRoot.startAnchor), "full self-link START marker can clear its own center");
+assert(!near(rootLast.p3, clearancedRoot.endAnchor), "full self-link END marker can clear its own center");
+assert(
+  clearancedRoot.segments.some((segment, index) => {
+    const next = clearancedRoot.segments[index + 1];
+    return next !== undefined && near(segment.p3, clearancedRoot.center) && near(next.p0, clearancedRoot.center);
+  }),
+  "full self-link keeps semantic center on the clearanced path",
+);
+assert(blueprintSegmentsAreC1(clearancedRoot.segments), "clearanced full self-link remains C1 through every join");
+assert(JSON.stringify(basis) === blueprintTopologyBefore, "marker clearance cannot mutate VisualLinkNetwork topology");
+
+const movedBlueprintPositions = blueprintPositions.map((position) => position.key === "O"
+  ? { key: position.key, point: { x: position.point.x - 73, y: position.point.y + 41 } }
+  : position);
+const movedClearanced = buildBlueprintGeometry(basis, movedBlueprintPositions, {
+  startOffsetFraction: 0.10,
+  endOffsetFraction: 0.16,
+});
+const movedOrdinary = blueprintLink(movedClearanced, "L");
+assert(near(movedOrdinary.startAnchor, blueprintPoint(movedBlueprintPositions, "O")), "moved referenced center repins dependent START");
+assert(!near(movedOrdinary.startAnchor, clearancedOrdinary.startAnchor), "dependent START actually moves with referenced center");
+assert(near(movedOrdinary.center, clearancedOrdinary.center), "moving referenced START does not move represented Link center");
+assert(near(movedOrdinary.endAnchor, clearancedOrdinary.endAnchor), "moving referenced START does not move END anchor");
+assert(blueprintSegmentsAreC1(movedOrdinary.segments), "repinned clearanced path remains C1");
