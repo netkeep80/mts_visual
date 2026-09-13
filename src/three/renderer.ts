@@ -586,6 +586,26 @@ function releaseCapture(live: LiveBinding, pointerId: number): void {
   }
 }
 
+function sceneHasKey(state: MountedRenderer, key: VisualKey): boolean {
+  return state.keySpace.links.some((entry) => entry.key === key);
+}
+
+function reconcileLiveInteraction(state: MountedRenderer): void {
+  const live = state.live;
+  if (!live || live.destroyed) return;
+  const active = live.active;
+  if (active && !sceneHasKey(state, active.key)) {
+    if (snapshotLivePhysics3D(live.controller).pinnedKeys.includes(active.key)) {
+      releaseLivePhysics3D(live.controller, active.key);
+    }
+    releaseCapture(live, active.pointerId);
+    live.active = undefined;
+    live.controls.enabled = true;
+  }
+  const candidate = live.candidate;
+  if (candidate && !sceneHasKey(state, candidate.key)) live.candidate = undefined;
+}
+
 function finishCandidate(state: MountedRenderer, event: VisualThreePointerEvent, finalMove: boolean): void {
   const live = state.live;
   const candidate = live?.candidate;
@@ -746,6 +766,14 @@ export function hasVisualThreeLiveController(container: VisualThreeContainer): b
   return !!live && !live.destroyed;
 }
 
+export function isVisualThreeLiveController(
+  container: VisualThreeContainer,
+  controller: LivePhysics3DController,
+): boolean {
+  const live = mounts.get(container)?.live;
+  return !!live && !live.destroyed && live.controller === controller;
+}
+
 export function setVisualThreeLivePhysicsOptions(
   container: VisualThreeContainer,
   patch: VisualThreeLivePhysicsPatch,
@@ -789,7 +817,9 @@ export function updateVisualThreeRenderer(container: VisualThreeContainer, data:
   const state = mounts.get(container);
   if (!state) return false;
   populate(state, data);
+  reconcileLiveInteraction(state);
   render(state);
+  scheduleLiveFrame(state);
   return true;
 }
 
