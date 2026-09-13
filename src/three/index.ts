@@ -14,6 +14,7 @@ import {
 } from "../index.js";
 import {
   snapshotLivePhysics3D,
+  transitionLivePhysics3DNetwork,
   type LivePhysics3DController,
 } from "../live-physics3d.js";
 import { destroyVisualThreeControlBar } from "./controls.js";
@@ -21,6 +22,8 @@ import {
   attachVisualThreeLiveController,
   createVisualThreeRenderer,
   destroyVisualThreeRenderer as destroyRenderer,
+  isVisualThreeLiveController,
+  updateVisualThreeRenderer,
   type VisualThreeContainer,
   type VisualThreeLiveRendererOptions,
   type VisualThreeRendererSnapshot,
@@ -57,6 +60,13 @@ export interface VisualThreeSceneData {
   readonly nodes: readonly VisualThreeNodeData[];
   readonly arcs: readonly VisualThreeArcData[];
 }
+
+interface ManagedVisualThreeLiveRenderer {
+  readonly controller: LivePhysics3DController;
+  currentNetwork: VisualLinkNetwork;
+}
+
+const managedLiveRenderers = new WeakMap<object, ManagedVisualThreeLiveRenderer>();
 
 function point(value: Point3D): Point3D {
   return Object.freeze({ x: value.x, y: value.y, z: value.z });
@@ -114,26 +124,45 @@ export function createVisualThreeLiveRenderer(
   controller: LivePhysics3DController,
   options: VisualThreeLiveRendererOptions = {},
 ): VisualThreeRendererSnapshot {
+  managedLiveRenderers.delete(container);
+  const currentNetwork = normalizeVisualLinkNetwork(network);
   const current = snapshotLivePhysics3D(controller);
   const renderer = createVisualThreeRenderer(
     container,
-    buildVisualThreeSceneData(network, current.state),
+    buildVisualThreeSceneData(currentNetwork, current.state),
     options,
   );
+  const managed: ManagedVisualThreeLiveRenderer = { controller, currentNetwork };
   const attached = attachVisualThreeLiveController(
     container,
     controller,
-    (state) => buildVisualThreeSceneData(network, state),
+    (state) => buildVisualThreeSceneData(managed.currentNetwork, state),
     options,
   );
   if (!attached) {
     destroyRenderer(container);
     throw new Error("@mts/visual/three: failed to attach live controller");
   }
+  managedLiveRenderers.set(container, managed);
   return renderer;
 }
 
+export function transitionVisualThreeLiveNetwork(
+  container: VisualThreeContainer,
+  nextNetwork: VisualLinkNetwork,
+): boolean {
+  const managed = managedLiveRenderers.get(container);
+  if (!managed || !isVisualThreeLiveController(container, managed.controller)) return false;
+
+  const normalized = normalizeVisualLinkNetwork(nextNetwork);
+  const current = transitionLivePhysics3DNetwork(managed.controller, normalized);
+  const data = buildVisualThreeSceneData(normalized, current.state);
+  managed.currentNetwork = normalized;
+  return updateVisualThreeRenderer(container, data);
+}
+
 export function destroyVisualThreeRenderer(container: VisualThreeContainer): boolean {
+  managedLiveRenderers.delete(container);
   destroyVisualThreeControlBar(container);
   return destroyRenderer(container);
 }
