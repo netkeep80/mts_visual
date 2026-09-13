@@ -761,17 +761,12 @@ export function attachVisualThreeLiveController(
   return true;
 }
 
-export function hasVisualThreeLiveController(container: VisualThreeContainer): boolean {
-  const live = mounts.get(container)?.live;
-  return !!live && !live.destroyed;
-}
-
-export function isVisualThreeLiveController(
+export function hasVisualThreeLiveController(
   container: VisualThreeContainer,
-  controller: LivePhysics3DController,
+  controller?: LivePhysics3DController,
 ): boolean {
   const live = mounts.get(container)?.live;
-  return !!live && !live.destroyed && live.controller === controller;
+  return !!live && !live.destroyed && (controller === undefined || live.controller === controller);
 }
 
 export function setVisualThreeLivePhysicsOptions(
