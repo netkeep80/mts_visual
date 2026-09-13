@@ -1,8 +1,13 @@
 import type { Point3D } from "./geometry3d.js";
-import type { VisualKey, VisualLinkNetwork } from "./index.js";
+import {
+  normalizeVisualLinkNetwork,
+  type VisualKey,
+  type VisualLinkNetwork,
+} from "./index.js";
 import {
   Physics3DError,
   buildPhysicalModel3D,
+  createInitialPhysics3DState,
   stepPhysics3D,
   type PhysicalModel3D,
   type Physics3DOptions,
@@ -17,6 +22,7 @@ import {
 const DEFAULT_SETTLE_VELOCITY = 0.01;
 const DEFAULT_SETTLE_POSITION_DELTA = 0.002;
 const DEFAULT_SETTLE_WINDOW = 8;
+const TOPOLOGY_SEED_OFFSET = 0.05;
 
 export interface LivePhysics3DOptions extends Physics3DOptions {
   readonly settleVelocity?: number;
@@ -64,7 +70,8 @@ export interface LivePhysics3DController {
   readonly model: PhysicalModel3D;
 }
 
-interface MutableLivePhysics3DController extends LivePhysics3DController {
+interface MutableLivePhysics3DController {
+  model: PhysicalModel3D;
   state: Physics3DState;
   options: ResolvedLivePhysics3DOptions;
   readonly pinned: Map<VisualKey, Point3D>;
@@ -200,6 +207,84 @@ function metrics(previous: Physics3DState, next: Physics3DState): Readonly<{
   return Object.freeze({ maxVelocity, maxPositionDelta });
 }
 
+function samePhysicalTopology(left: PhysicalModel3D, right: PhysicalModel3D): boolean {
+  if (left.keys.length !== right.keys.length || left.springs.length !== right.springs.length) return false;
+  for (let index = 0; index < left.keys.length; index += 1) {
+    if (left.keys[index] !== right.keys[index]) return false;
+  }
+  for (let index = 0; index < left.springs.length; index += 1) {
+    const previous = left.springs[index]!;
+    const next = right.springs[index]!;
+    if (
+      previous.linkKey !== next.linkKey
+      || previous.role !== next.role
+      || previous.sourceKey !== next.sourceKey
+      || previous.targetKey !== next.targetKey
+    ) return false;
+  }
+  return true;
+}
+
+function transitionState(
+  controller: MutableLivePhysics3DController,
+  network: VisualLinkNetwork,
+  model: PhysicalModel3D,
+): Physics3DState {
+  const fallback = createInitialPhysics3DState(network);
+  const fallbackPositions = new Map(fallback.positions.map((entry) => [entry.key, entry.point] as const));
+  const previousPositions = new Map(controller.state.positions.map((entry) => [entry.key, entry.point] as const));
+  const previousVelocities = new Map(controller.state.velocities.map((entry) => [entry.key, entry.vector] as const));
+  const positions = new Map<VisualKey, Point3D>();
+  const unresolved = new Set<VisualKey>();
+
+  for (const key of model.keys) {
+    const retained = previousPositions.get(key);
+    if (retained === undefined) unresolved.add(key);
+    else positions.set(key, point(retained));
+  }
+
+  let progress = true;
+  while (progress && unresolved.size > 0) {
+    progress = false;
+    for (const link of network.links) {
+      if (!unresolved.has(link.key)) continue;
+      const start = positions.get(link.startKey);
+      const end = positions.get(link.endKey);
+      if (start === undefined || end === undefined) continue;
+      const fallbackPoint = fallbackPositions.get(link.key)!;
+      positions.set(link.key, point({
+        x: (start.x + end.x) / 2 + fallbackPoint.x * TOPOLOGY_SEED_OFFSET,
+        y: (start.y + end.y) / 2 + fallbackPoint.y * TOPOLOGY_SEED_OFFSET,
+        z: (start.z + end.z) / 2 + fallbackPoint.z * TOPOLOGY_SEED_OFFSET,
+      }));
+      unresolved.delete(link.key);
+      progress = true;
+    }
+  }
+
+  for (const key of unresolved) positions.set(key, point(fallbackPositions.get(key)!));
+
+  return cloneState({
+    positions: model.keys.map((key) => ({ key, point: positions.get(key)! })),
+    velocities: model.keys.map((key) => ({
+      key,
+      vector: previousVelocities.has(key) ? previousVelocities.get(key)! : zero(),
+    })),
+  });
+}
+
+function retainedPins(
+  controller: MutableLivePhysics3DController,
+  model: PhysicalModel3D,
+): Map<VisualKey, Point3D> {
+  const pins = new Map<VisualKey, Point3D>();
+  for (const key of model.keys) {
+    const pinned = controller.pinned.get(key);
+    if (pinned !== undefined) pins.set(key, point(pinned));
+  }
+  return pins;
+}
+
 function snapshot(controller: MutableLivePhysics3DController, stepped: boolean): LivePhysics3DSnapshot {
   return Object.freeze({
     state: cloneState(controller.state),
@@ -232,6 +317,31 @@ export function createLivePhysics3D(
     maxVelocity: 0,
     maxPositionDelta: 0,
   } as MutableLivePhysics3DController;
+}
+
+export function transitionLivePhysics3DNetwork(
+  controller: LivePhysics3DController,
+  nextNetwork: VisualLinkNetwork,
+): LivePhysics3DSnapshot {
+  const value = mutable(controller);
+  const normalized = normalizeVisualLinkNetwork(nextNetwork);
+  const nextModel = buildPhysicalModel3D(normalized);
+  const nextState = transitionState(value, normalized, nextModel);
+  const nextPins = retainedPins(value, nextModel);
+  validatePhysics(nextModel, nextState, value.options);
+  const topologyChanged = !samePhysicalTopology(value.model, nextModel);
+
+  value.model = nextModel;
+  value.state = nextState;
+  value.pinned.clear();
+  for (const [key, pinned] of nextPins) value.pinned.set(key, pinned);
+  if (topologyChanged) {
+    value.awake = nextModel.keys.length > 0;
+    value.stableTicks = 0;
+    value.maxVelocity = 0;
+    value.maxPositionDelta = 0;
+  }
+  return snapshot(value, false);
 }
 
 export function wakeLivePhysics3D(controller: LivePhysics3DController): boolean {
