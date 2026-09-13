@@ -22,7 +22,7 @@ import {
   attachVisualThreeLiveController,
   createVisualThreeRenderer,
   destroyVisualThreeRenderer as destroyRenderer,
-  isVisualThreeLiveController,
+  hasVisualThreeLiveController,
   updateVisualThreeRenderer,
   type VisualThreeContainer,
   type VisualThreeLiveRendererOptions,
@@ -152,7 +152,7 @@ export function transitionVisualThreeLiveNetwork(
   nextNetwork: VisualLinkNetwork,
 ): boolean {
   const managed = managedLiveRenderers.get(container);
-  if (!managed || !isVisualThreeLiveController(container, managed.controller)) return false;
+  if (!managed || !hasVisualThreeLiveController(container, managed.controller)) return false;
 
   const normalized = normalizeVisualLinkNetwork(nextNetwork);
   const current = transitionLivePhysics3DNetwork(managed.controller, normalized);
