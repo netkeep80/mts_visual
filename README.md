@@ -25,4 +25,26 @@ The accepted `src/**` and `test/**` content is retained byte-for-byte; repositor
 - `@mts/visual` — browser-neutral package root.
 - `@mts/visual/three` — explicit Three.js/browser companion; it is not re-exported from the package root.
 
+## Live topology transitions
+
+Starting with package version `0.3.0`, live presentation topology can change without pre-creating future links.
+
+The browser-neutral root exports:
+
+```ts
+transitionLivePhysics3DNetwork(controller, nextNetwork)
+```
+
+This atomically replaces the current physical `VisualLinkNetwork`. Retained links keep their position, velocity, and pin state; removed links leave the physical model completely; added links receive deterministic finite initial positions with zero velocity. Physics evaluates only the current network after the transition.
+
+The Three.js companion exports:
+
+```ts
+transitionVisualThreeLiveNetwork(container, nextNetwork)
+```
+
+For a mounted live renderer this applies the same current network to physics and Three presentation without recreating the rendering surface, camera, controls, pointer lifecycle, or RAF binding. Removed keys also leave picking and presentation key-space; newly added keys become ordinary current scene objects.
+
+The consumer remains responsible for deciding **when** topology changes and **which** complete `VisualLinkNetwork` is current. These APIs do not introduce parser/debugger roles or MTS semantic authority into `@mts/visual`.
+
 The development and migration roadmap is tracked in issue #1.
