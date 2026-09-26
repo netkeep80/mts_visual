@@ -281,8 +281,12 @@ function computeForcesIntoResolved(
     const end = topology.endIndices[rod]!;
     if (start === rod) selfAttachments += 1;
     if (end === rod) selfAttachments += 1;
+    // These are two numerical integration spans of ONE continuous rod.
+    // They are not two physical rods or two semantic Links.
     axialConstraint(state.centers, forces, start, rod, halfRestLength, options.axialStiffness, rod * 2 + 1);
     axialConstraint(state.centers, forces, rod, end, halfRestLength, options.axialStiffness, rod * 2 + 2);
+    // A self-attached span has zero net translational lever at the shared center.
+    // Its finite loop shape is an internal rod-shape DOF, not a global repulsion force.
     bendConstraint(state.centers, forces, start, rod, end, options.bendingStiffness);
   }
   for (let index = 0; index < forces.length; index += 1) {
@@ -316,11 +320,9 @@ export function computeRodPhysicalForces3D(
   return { forces, evaluations };
 }
 
-function clampMagnitude3(x: number, y: number, z: number, maximum: number): readonly [number, number, number] {
+function clampScale3(x: number, y: number, z: number, maximum: number): number {
   const length = Math.hypot(x, y, z);
-  if (length <= maximum || length <= EPSILON) return [x, y, z];
-  const scale = maximum / length;
-  return [x * scale, y * scale, z * scale];
+  return length > maximum && length > EPSILON ? maximum / length : 1;
 }
 
 function clamp(value: number, bound: number): number {
@@ -344,13 +346,18 @@ export function stepRodPhysics3DInto(
     let vx = (state.velocities[offset]! + scratchForces[offset]! * resolved.timeStep) * resolved.damping;
     let vy = (state.velocities[offset + 1]! + scratchForces[offset + 1]! * resolved.timeStep) * resolved.damping;
     let vz = (state.velocities[offset + 2]! + scratchForces[offset + 2]! * resolved.timeStep) * resolved.damping;
-    [vx, vy, vz] = clampMagnitude3(vx, vy, vz, resolved.maxVelocity);
+    const velocityScale = clampScale3(vx, vy, vz, resolved.maxVelocity);
+    vx *= velocityScale;
+    vy *= velocityScale;
+    vz *= velocityScale;
     let dx = vx * resolved.timeStep;
     let dy = vy * resolved.timeStep;
     let dz = vz * resolved.timeStep;
-    const unclamped = Math.hypot(dx, dy, dz);
-    [dx, dy, dz] = clampMagnitude3(dx, dy, dz, resolved.maxStep);
-    if (Math.hypot(dx, dy, dz) + EPSILON < unclamped) {
+    const stepScale = clampScale3(dx, dy, dz, resolved.maxStep);
+    dx *= stepScale;
+    dy *= stepScale;
+    dz *= stepScale;
+    if (stepScale < 1) {
       vx = dx / resolved.timeStep;
       vy = dy / resolved.timeStep;
       vz = dz / resolved.timeStep;
