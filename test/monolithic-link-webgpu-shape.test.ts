@@ -307,6 +307,17 @@ assert(
   "shape solve contains no physical integration state",
 );
 
+for (const reservedDeclaration of [
+  "let from =",
+  "let to =",
+  "let target =",
+]) {
+  assert(
+    !MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL.includes(reservedDeclaration),
+    `WGSL does not declare reserved identifier: ${reservedDeclaration}`,
+  );
+}
+
 const aspect32 = 16 * Math.SQRT2;
 const rest32 = 32 * Math.sqrt(2 / 3);
 const device = new FakeDevice();

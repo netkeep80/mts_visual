@@ -46,6 +46,8 @@ const ui = {
   renderTopology: $("render-topology"),
   renderZeroCopy: $("render-zero-copy"),
   renderFrames: $("render-frames"),
+  copyLog: $("copy-log"),
+  saveLog: $("save-log"),
   log: $("log"),
 };
 
@@ -58,6 +60,57 @@ function log(message) {
   const now = new Date().toISOString().slice(11, 23);
   ui.log.textContent += `[${now}] ${message}\n`;
   ui.log.scrollTop = ui.log.scrollHeight;
+}
+
+function diagnosticLogText() {
+  const header = [
+    "mts_visual WebGPU witness diagnostic log",
+    `version: ${buildInfo.version}`,
+    `build SHA: ${buildInfo.mainSha}`,
+    `page: ${location.href}`,
+    `user agent: ${navigator.userAgent}`,
+    "",
+  ];
+  return header.join("\n") + ui.log.textContent;
+}
+
+async function copyDiagnosticLog() {
+  const text = diagnosticLogText();
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+  } else {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    if (!copied) throw new Error("clipboard copy command failed");
+  }
+
+  const original = ui.copyLog.textContent;
+  ui.copyLog.textContent = "Copied";
+  setTimeout(() => {
+    ui.copyLog.textContent = original;
+  }, 1200);
+}
+
+function saveDiagnosticLog() {
+  const text = diagnosticLogText();
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  anchor.href = url;
+  anchor.download =
+    `mts-visual-webgpu-${String(buildInfo.mainSha).slice(0, 12)}-${stamp}.txt`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function fmt(value) {
@@ -1495,6 +1548,20 @@ async function inspectGeometry() {
     ui.inspectGeometry.disabled = false;
   }
 }
+
+ui.copyLog.addEventListener("click", () => {
+  copyDiagnosticLog().catch((error) => {
+    log(`copy diagnostic log ERROR — ${error.stack ?? error}`);
+  });
+});
+
+ui.saveLog.addEventListener("click", () => {
+  try {
+    saveDiagnosticLog();
+  } catch (error) {
+    log(`save diagnostic log ERROR — ${error.stack ?? error}`);
+  }
+});
 
 ui.rerun.addEventListener("click", () => {
   runDifferentials().catch((error) => {
