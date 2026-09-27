@@ -47,4 +47,55 @@ For a mounted live renderer this applies the same current network to physics and
 
 The consumer remains responsible for deciding **when** topology changes and **which** complete `VisualLinkNetwork` is current. These APIs do not introduce parser/debugger roles or MTS semantic authority into `@mts/visual`.
 
+
+## Scalable octahedral live path
+
+Starting with package version `0.4.0`, `@mts/visual` also exposes a scalable Link-physics/rendering path designed to replace the legacy all-pairs charge + per-Link Three object hot path.
+
+One represented Link is one continuous elastic body:
+
+```text
+tetra ≡ octa ≡ octa ≡ ... ≡ octa ≡ octa ≡ tetra
+```
+
+The octahedron count is always even. The virtual Link center is the centroid of the central shared triangle; it is not an extra particle or semantic entity. START/END tetrahedral apexes hinge to the virtual centers of the Links referenced by `startKey` / `endKey`. Self-incidence remains finite.
+
+The Link physics contract has exactly two user-facing parameters:
+
+```text
+aspectRatio = rest length / diameter
+stiffness   = two-point edge-spring stiffness
+```
+
+Every physical lattice edge is a two-point unit-rest-length spring. Extension, compression, bending and torsion emerge from the regular octahedral geometry. There is no scalable-path all-pairs charge force and no explicit three-point bending force.
+
+The browser-neutral root exports the template/live boundaries, including:
+
+```ts
+resolveOctahedralAspectRatio(aspectRatio)
+getOctahedralLinkTemplate3D(aspectRatio)
+createOctahedralLivePhysics3D(network, {
+  aspectRatio,
+  stiffness,
+  simulationSpeed,
+})
+transitionOctahedralLivePhysics3DNetwork(controller, nextNetwork)
+```
+
+`simulationSpeed` is a global integrator control, not a third Link material parameter.
+
+The Three.js companion exports the persistent batched path:
+
+```ts
+createOctahedralThreeBatch(controller)
+createOctahedralThreeLiveRenderer(container, controller, options)
+transitionOctahedralThreeLiveNetwork(container, nextNetwork)
+setOctahedralThreeLiveSimulationSpeed(container, speed)
+setOctahedralThreeLiveStiffness(container, stiffness)
+```
+
+The batched surface stores one cached template topology and reads deformed packed positions from one dynamic Float32 position texture. Surface, virtual-center markers, and END arrows are three shader-instanced draw objects total for any non-empty Link count; ordinary physics frames update texture contents instead of recreating per-Link Three resources. START is red, END is blue, with the gradient carried continuously by the same Link surface.
+
+The legacy `Physics3D` / `createVisualThreeLiveRenderer` APIs remain available for compatibility. New high-scale consumers should use the octahedral path.
+
 The development and migration roadmap is tracked in issue #1.
