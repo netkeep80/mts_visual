@@ -101,17 +101,21 @@ void main() {
 `;
 
 const ARROW_VERTEX_SHADER = `
-uniform float endApexIndex;
-uniform vec3 endBaseVertexIndices;
+uniform vec3 endTriangleVertexIndices;
+uniform vec3 previousEndTriangleVertexIndices;
 uniform float arrowHeight;
 ${FETCH_VERTEX_GLSL}
 
 void main() {
-  vec3 tip = fetchLinkVertex(endApexIndex);
+  vec3 tip = (
+    fetchLinkVertex(endTriangleVertexIndices.x)
+    + fetchLinkVertex(endTriangleVertexIndices.y)
+    + fetchLinkVertex(endTriangleVertexIndices.z)
+  ) / 3.0;
   vec3 baseCenter = (
-    fetchLinkVertex(endBaseVertexIndices.x)
-    + fetchLinkVertex(endBaseVertexIndices.y)
-    + fetchLinkVertex(endBaseVertexIndices.z)
+    fetchLinkVertex(previousEndTriangleVertexIndices.x)
+    + fetchLinkVertex(previousEndTriangleVertexIndices.y)
+    + fetchLinkVertex(previousEndTriangleVertexIndices.z)
   ) / 3.0;
 
   vec3 yAxis = tip - baseCenter;
@@ -257,13 +261,23 @@ function arrowMaterial(
   template: OctahedralLinkTemplate3D,
   arrowHeight: number,
 ): THREE.ShaderMaterial {
-  const lastRing = template.startApex - 3;
+  const previousEndRing = (template.octahedronCount - 1) * 3;
   return new THREE.ShaderMaterial({
     uniforms: {
       ...positionUniforms(storage),
-      endApexIndex: { value: template.endApex },
-      endBaseVertexIndices: {
-        value: new THREE.Vector3(lastRing, lastRing + 1, lastRing + 2),
+      endTriangleVertexIndices: {
+        value: new THREE.Vector3(
+          template.endTriangle[0],
+          template.endTriangle[1],
+          template.endTriangle[2],
+        ),
+      },
+      previousEndTriangleVertexIndices: {
+        value: new THREE.Vector3(
+          previousEndRing,
+          previousEndRing + 1,
+          previousEndRing + 2,
+        ),
       },
       arrowHeight: { value: arrowHeight },
       solidColor: { value: new THREE.Color(0x0000ff) },
@@ -343,8 +357,8 @@ class OctahedralThreeBatchController implements OctahedralThreeBatch {
     this.centers.frustumCulled = false;
     this.centers.userData = { kind: "octahedral-link-centers" };
 
-    const arrowHeight = controller.template.diameter * 0.45;
-    const arrowRadius = controller.template.diameter * 0.12;
+    const arrowHeight = controller.template.diameter * 3;
+    const arrowRadius = controller.template.diameter * 0.55;
     const arrowBase = new THREE.ConeGeometry(arrowRadius, arrowHeight, 6);
     const arrowGeometry = instancedGeometry(arrowBase);
     setInstanceAddress(arrowGeometry, this.instanceAddress, this.currentLinkCount);
