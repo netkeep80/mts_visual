@@ -1,0 +1,184 @@
+name: WebGPU witness Pages
+
+on:
+  pull_request:
+    paths:
+      - "browser/webgpu-witness/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/webgpu-witness-pages.yml"
+  push:
+    branches: [main]
+    paths:
+      - "browser/webgpu-witness/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/webgpu-witness-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: webgpu-witness-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install exact dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run accepted package suite
+        run: npm run check
+
+      - name: Bundle exact checkout for browser witness
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site/vendor
+
+          cp browser/webgpu-witness/index.html _site/index.html
+          cp browser/webgpu-witness/app.js _site/app.js
+          touch _site/.nojekyll
+
+          npx --yes esbuild@0.24.2             src/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-core.bundle.js
+
+          npx --yes esbuild@0.24.2             src/webgpu/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-webgpu.bundle.js
+
+          test -s _site/vendor/mts-visual-core.bundle.js
+          test -s _site/vendor/mts-visual-webgpu.bundle.js
+
+      - name: Generate exact build identity
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+
+          const pkg = JSON.parse(await readFile("package.json", "utf8"));
+          const info = {
+            schemaVersion: 1,
+            version: pkg.version,
+            mainSha: process.env.BUILD_SHA,
+            builtAt: new Date().toISOString(),
+          };
+          await writeFile("_site/build-info.json", JSON.stringify(info, null, 2) + "\n");
+          console.log(info);
+          NODE
+
+      - name: Verify static witness payload
+        run: |
+          set -euo pipefail
+          node --check browser/webgpu-witness/app.js
+
+          grep -F 'src="./app.js"' _site/index.html
+          grep -F './vendor/mts-visual-core.bundle.js' _site/app.js
+          grep -F './vendor/mts-visual-webgpu.bundle.js' _site/app.js
+          grep -F 'runOctahedralWebGpuDifferentialWitness3D' _site/app.js
+          grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' _site/app.js
+          grep -F 'renderer.positionBuffer === compute.positionBuffer' _site/app.js
+
+          cp _site/vendor/mts-visual-core.bundle.js /tmp/mts-visual-core.bundle.mjs
+          cp _site/vendor/mts-visual-webgpu.bundle.js /tmp/mts-visual-webgpu.bundle.mjs
+
+          node --input-type=module <<'NODE'
+          const core = await import("file:///tmp/mts-visual-core.bundle.mjs");
+          const gpu = await import("file:///tmp/mts-visual-webgpu.bundle.mjs");
+
+          if (core.OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA !== 20) {
+            throw new Error("browser bundle lost 20-octahedron presentation baseline");
+          }
+          if (!(core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO > 15
+             && core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO < 16)) {
+            throw new Error("browser bundle has unexpected presentation aspect ratio");
+          }
+          for (const name of [
+            "createOctahedralWebGpuCompute3D",
+            "runOctahedralWebGpuDifferentialWitness3D",
+            "createOctahedralWebGpuZeroCopyRenderer3D",
+          ]) {
+            if (typeof gpu[name] !== "function") throw new Error(`missing WebGPU export: ${name}`);
+          }
+          NODE
+
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const info = JSON.parse(await readFile("_site/build-info.json", "utf8"));
+          const pkg = JSON.parse(await readFile("package.json", "utf8"));
+          if (info.version !== pkg.version) throw new Error("build-info package version mismatch");
+          if (!/^[0-9a-f]{40}$/.test(info.mainSha)) throw new Error("build-info SHA is not exact");
+          NODE
+
+      - name: Upload build artifact for PR diagnostics
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mts-visual-webgpu-witness
+          path: _site
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Configure Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy witness to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Verify deployed exact build
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          base="${PAGE_URL%/}/"
+          mkdir -p /tmp/mts-visual-pages-smoke
+
+          fetch() {
+            local path="$1"
+            local target="$2"
+            curl               --fail --location --silent --show-error               --retry 12 --retry-delay 5 --retry-all-errors               -H 'Cache-Control: no-cache'               "${base}${path}?smoke=${EXPECTED_SHA}"               -o "${target}"
+            test -s "${target}"
+          }
+
+          fetch "build-info.json" /tmp/mts-visual-pages-smoke/build-info.json
+          fetch "index.html" /tmp/mts-visual-pages-smoke/index.html
+          fetch "app.js" /tmp/mts-visual-pages-smoke/app.js
+          fetch "vendor/mts-visual-core.bundle.js" /tmp/mts-visual-pages-smoke/core.js
+          fetch "vendor/mts-visual-webgpu.bundle.js" /tmp/mts-visual-pages-smoke/webgpu.js
+
+          jq -e --arg sha "${EXPECTED_SHA}" '.mainSha == $sha'             /tmp/mts-visual-pages-smoke/build-info.json >/dev/null
+          grep -F 'real WebGPU witness' /tmp/mts-visual-pages-smoke/index.html
+          grep -F 'runOctahedralWebGpuDifferentialWitness3D' /tmp/mts-visual-pages-smoke/app.js
+          grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' /tmp/mts-visual-pages-smoke/app.js
+
+          echo "Published WebGPU witness PASS: ${base}"

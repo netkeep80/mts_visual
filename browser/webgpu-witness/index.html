@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>mts_visual WebGPU witness</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #090d14; color: #e9eef7; }
+    main { width: min(1440px, 100%); margin: 0 auto; padding: 20px; }
+    h1 { margin: 0 0 4px; font-size: 24px; }
+    h2 { margin: 0 0 12px; font-size: 18px; }
+    .muted { color: #98a7bd; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); }
+    .card { background: #111927; border: 1px solid #25334a; border-radius: 12px; padding: 14px; }
+    .value { font: 600 15px ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+    .ok { color: #65d98b; }
+    .fail { color: #ff7272; }
+    .warn { color: #ffd166; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px; border-bottom: 1px solid #25334a; text-align: left; }
+    th { color: #9fb1c9; font-weight: 600; }
+    canvas { width: 100%; aspect-ratio: 16/9; background: #000; display: block; border-radius: 10px; border: 1px solid #25334a; }
+    button, select { background: #172338; color: #e9eef7; border: 1px solid #395070; border-radius: 8px; padding: 8px 12px; }
+    button:hover { background: #20304a; }
+    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 260px; overflow: auto; }
+    .section { margin-top: 16px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>mts_visual — real WebGPU witness</h1>
+  <div class="muted">P4b compute differential + P4c zero-copy renderer on this browser/GPU.</div>
+
+  <section class="grid section">
+    <div class="card"><div class="muted">Build</div><div id="build" class="value">loading…</div></div>
+    <div class="card"><div class="muted">WebGPU</div><div id="webgpu" class="value">pending</div></div>
+    <div class="card"><div class="muted">Baseline</div><div id="baseline" class="value">pending</div></div>
+    <div class="card"><div class="muted">Overall witness</div><div id="overall" class="value">pending</div></div>
+  </section>
+
+  <section class="card section">
+    <div class="toolbar">
+      <h2 style="margin-right:auto">CPU ↔ GPU differential</h2>
+      <button id="rerun">Run differential again</button>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Fixture</th><th>Status</th><th>Steps</th><th>Tolerance</th><th>max Δposition</th><th>max Δvelocity</th></tr>
+      </thead>
+      <tbody id="diff-body"></tbody>
+    </table>
+  </section>
+
+  <section class="card section">
+    <div class="toolbar">
+      <h2 style="margin-right:auto">Real zero-copy live render</h2>
+      <label>Links
+        <select id="link-count">
+          <option value="64">64</option>
+          <option value="333" selected>333</option>
+          <option value="1000">1,000</option>
+        </select>
+      </label>
+      <button id="restart-render">Restart render</button>
+      <button id="pause-render">Pause</button>
+    </div>
+    <canvas id="gpu-canvas"></canvas>
+    <div class="grid" style="margin-top:12px">
+      <div><span class="muted">Compute</span><div id="render-compute" class="value">pending</div></div>
+      <div><span class="muted">Topology</span><div id="render-topology" class="value">pending</div></div>
+      <div><span class="muted">Zero-copy</span><div id="render-zero-copy" class="value">pending</div></div>
+      <div><span class="muted">Frames / steps</span><div id="render-frames" class="value">0 / 0</div></div>
+    </div>
+  </section>
+
+  <section class="card section">
+    <h2>Diagnostic log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
