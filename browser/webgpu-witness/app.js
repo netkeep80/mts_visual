@@ -889,7 +889,7 @@ async function startRender() {
   const network = scene.network;
   const linkCount = network.links.length;
   const physics = selectedPhysics();
-  const compute = await webgpu.createOctahedralWebGpuCompute3D(
+  const compute = await webgpu.createRigidSectionWebGpuCompute3D(
     device,
     network,
     {
@@ -917,7 +917,7 @@ async function startRender() {
     alphaMode: "opaque",
   });
 
-  const renderer = await webgpu.createOctahedralWebGpuZeroCopyRenderer3D(
+  const renderer = await webgpu.createRigidSectionWebGpuZeroCopyRenderer3D(
     device,
     compute,
     {
@@ -928,11 +928,14 @@ async function startRender() {
     },
   );
 
+  const rendererSnapshot = renderer.snapshot();
   const zeroCopy =
-    renderer.positionBuffer === compute.positionBuffer
-    && renderer.snapshot().sharedPositionBuffer === true
-    && renderer.snapshot().dynamicStateUploadBytesPerFrame === 0
-    && renderer.snapshot().rendererDynamicPositionBytes === 0;
+    renderer.centerBuffer === compute.centerBuffer
+    && renderer.orientationBuffer === compute.orientationBuffer
+    && rendererSnapshot.sharedCenterBuffer === true
+    && rendererSnapshot.sharedOrientationBuffer === true
+    && rendererSnapshot.dynamicStateUploadBytesPerFrame === 0
+    && rendererSnapshot.rendererDynamicStateBytes === 0;
 
   if (!zeroCopy) {
     renderer.destroy();
@@ -942,17 +945,36 @@ async function startRender() {
 
   renderPass = true;
   setStatus(ui.renderCompute, "AVAILABLE", "ok");
+  const computeSnapshot = compute.snapshot();
   setStatus(
     ui.renderTopology,
-    `${scene.label} · ${linkCount} Links · ${compute.snapshot().totalPhysicalVertices.toLocaleString()} vertices · ${compute.template.octahedronCount} octa · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    `${scene.label} · ${linkCount} Links · ${computeSnapshot.bodyCount.toLocaleString()} rigid sections · ${compute.template.octahedronCount} octa · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
     "ok",
   );
-  setStatus(ui.renderZeroCopy, "PASS — shared positionBuffer · 0 B dynamic upload", "ok");
+  setStatus(
+    ui.renderZeroCopy,
+    "PASS — shared centerBuffer + orientationBuffer · 0 B dynamic upload",
+    "ok",
+  );
   updateOverall();
 
+  const initialCpu = core.createRigidSectionPhysics3D(network, {
+    aspectRatio: physics.aspectRatio,
+    stiffness: physics.stiffness,
+    simulationSpeed: physics.simulationSpeed,
+  });
+  const initialSemanticCenters = Array.from(
+    { length: linkCount },
+    (_, link) => [...initialCpu.semanticCenter(link)],
+  );
+
   const side = Math.ceil(Math.cbrt(linkCount));
-  const spacing = compute.template.diameter * 1.5;
-  const defaultCameraDistance = Math.max(18, side * spacing * 2.6);
+  const spacing = compute.template.diameter * 2.5;
+  const defaultCameraDistance = Math.max(
+    18,
+    compute.template.restLength * 1.35,
+    side * spacing * 2.6,
+  );
   const state = {
     compute,
     renderer,
@@ -977,6 +999,7 @@ async function startRender() {
     },
     cleanupCameraControls: null,
     centerDrag: null,
+    initialSemanticCenters,
     scene,
     network,
   };
@@ -1010,7 +1033,7 @@ async function startRender() {
       const dragStats = applyCenterDrag(state);
       if (dragStats && state.centerDrag) {
         state.centerDrag.uploadedBytes +=
-          dragStats.positionBytes + dragStats.velocityBytes;
+          dragStats.centerBytes + dragStats.velocityBytes;
       }
 
       const frameDeltaSeconds = Math.min(0.1, Math.max(0, (now - state.lastFrameAt) / 1000));
@@ -1060,7 +1083,7 @@ async function startRender() {
 
   state.raf = requestAnimationFrame(frame);
   log(
-    `zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().totalPhysicalVertices} physical vertices`,
+    `v0.5 rigid zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().bodyCount} rigid sections`,
   );
 }
 
