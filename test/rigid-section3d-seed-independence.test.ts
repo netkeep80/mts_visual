@@ -151,7 +151,7 @@ for (let index = 0; index < controllers.length; index += 1) {
   );
 }
 
-const checkpoints = [0, 1000, 3000, 6000] as const;
+const checkpoints = [0, 1000, 3000, 6000, 12000, 20000] as const;
 const report: string[] = [];
 for (let step = 0; step <= checkpoints.at(-1)!; step += 1) {
   if (checkpoints.includes(step as (typeof checkpoints)[number])) {
