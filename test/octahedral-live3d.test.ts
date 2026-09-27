@@ -11,6 +11,7 @@ import type { VisualLinkNetwork } from "../src/index.js";
 import {
   computeOctahedralSeedCenter3D,
   getOctahedralSeedGrid3D,
+  OCTAHEDRAL_NON_SELF_SEED_RATIO,
   resolveOctahedralSeedCenters3D,
   writeFittedOctahedralTemplate3D,
 } from "../src/octahedral-layout3d.js";
@@ -524,12 +525,12 @@ console.log(
 const rootOpenInitialRatio = rootOpenSamples.get(0)! / halfRestLength;
 const rootOpenFinalRatio = rootOpenSamples.get(1200)! / halfRestLength;
 assert(
-  rootOpenInitialRatio >= 0.8 && rootOpenInitialRatio <= 1.2,
-  `R+O topology-aware seed starts outside the near-collapsed regime: ratio=${rootOpenInitialRatio}`,
+  Math.abs(rootOpenInitialRatio - OCTAHEDRAL_NON_SELF_SEED_RATIO) <= 0.02,
+  `R+O starts at the accepted non-equilibrium seed ratio: ratio=${rootOpenInitialRatio}`,
 );
 assert(
-  rootOpenFinalRatio >= 0.1,
-  `R+O dynamics must not collapse back below 10% of half-rest length: ratio=${rootOpenFinalRatio}`,
+  rootOpenFinalRatio > rootOpenInitialRatio + 0.03,
+  `R+O physics must visibly self-separate from the compressed seed: initial=${rootOpenInitialRatio} final=${rootOpenFinalRatio}`,
 );
 
 const seedRatioSweep = [0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00] as const;
@@ -559,9 +560,10 @@ for (const seedRatio of seedRatioSweep) {
   const scaledCenters = new Float32Array(resolved.length);
   for (let link = 0; link < candidate.topology.linkCount; link += 1) {
     const offset = link * 3;
-    scaledCenters[offset] = meanX + (resolved[offset]! - meanX) * seedRatio;
-    scaledCenters[offset + 1] = meanY + (resolved[offset + 1]! - meanY) * seedRatio;
-    scaledCenters[offset + 2] = meanZ + (resolved[offset + 2]! - meanZ) * seedRatio;
+    const scaleFromAcceptedSeed = seedRatio / OCTAHEDRAL_NON_SELF_SEED_RATIO;
+    scaledCenters[offset] = meanX + (resolved[offset]! - meanX) * scaleFromAcceptedSeed;
+    scaledCenters[offset + 1] = meanY + (resolved[offset + 1]! - meanY) * scaleFromAcceptedSeed;
+    scaledCenters[offset + 2] = meanZ + (resolved[offset + 2]! - meanZ) * scaleFromAcceptedSeed;
   }
 
   for (let link = 0; link < candidate.topology.linkCount; link += 1) {
@@ -642,8 +644,8 @@ for (let link = 0; link < rootBasisTopology.linkCount; link += 1) {
       resolvedSeedCenter(rootBasisSeed, target),
     ) / rootBasisTarget;
     assert(
-      ratioToRest >= 0.8 && ratioToRest <= 1.2,
-      `root-basis non-self incidence ${link}->${target} has non-singular seed ratio ${ratioToRest}`,
+      ratioToRest >= 0.72 && ratioToRest <= 0.88,
+      `root-basis non-self incidence ${link}->${target} starts near the accepted 0.8 seed ratio: ${ratioToRest}`,
     );
   }
 }
