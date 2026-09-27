@@ -170,12 +170,20 @@ fn link_force_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let first_force = half_spring_force(s, c);
   let second_force = half_spring_force(c, e);
 
-  let q = s - 2.0 * c + e;
-  let q2 = dot(q, q);
-  let straight_scale =
-    globals.physics.y
-    * (1.0 + globals.physics.z * q2 / (globals.geometry.x * globals.geometry.x));
-  let straight_gradient = q * straight_scale;
+  // A whole-Link bend requires two independent arms. Semantic
+  // self-incidence aliases START or END with CENTER, so that arm has no
+  // direction and must not turn the straightening term into axial compression.
+  let has_three_point_bend =
+    start_index != link && end_index != link;
+  var straight_gradient = vec3<f32>(0.0);
+  if (has_three_point_bend) {
+    let q = s - 2.0 * c + e;
+    let q2 = dot(q, q);
+    let straight_scale =
+      globals.physics.y
+      * (1.0 + globals.physics.z * q2 / (globals.geometry.x * globals.geometry.x));
+    straight_gradient = q * straight_scale;
+  }
 
   let fs = first_force - straight_gradient;
   let fc = -first_force + second_force + 2.0 * straight_gradient;
