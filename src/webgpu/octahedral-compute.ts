@@ -818,12 +818,14 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
     encoder.copyBufferToBuffer(buffer, 0, readback, 0, logicalBytes);
     this.device.queue.submit([encoder.finish()]);
 
+    let mapped = false;
     try {
       await readback.mapAsync(GPU_MAP_MODE_READ, 0, logicalBytes);
-      const mapped = readback.getMappedRange(0, logicalBytes);
-      return new Float32Array(mapped.slice(0));
+      mapped = true;
+      const range = readback.getMappedRange(0, logicalBytes);
+      return new Float32Array(range.slice(0));
     } finally {
-      readback.unmap();
+      if (mapped) readback.unmap();
       readback.destroy();
     }
   }
