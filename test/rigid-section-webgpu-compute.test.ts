@@ -187,6 +187,16 @@ same(
   9,
   "rigid-section WGSL has exactly nine explicit bindings",
 );
+assert(
+  RIGID_SECTION_WEBGPU_WGSL.includes(
+    "return gid.x + gid.y * 65535u * 64u;",
+  ),
+  "global_invocation_id.x is used directly without a second workgroup-size multiplier",
+);
+assert(
+  !RIGID_SECTION_WEBGPU_WGSL.includes("return gid.x * 64u"),
+  "rigid dispatch cannot skip 63/64 X invocations",
+);
 same(
   [...RIGID_SECTION_WEBGPU_WGSL.matchAll(/var<storage/g)].length,
   7,
