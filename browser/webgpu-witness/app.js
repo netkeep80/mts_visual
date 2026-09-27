@@ -604,40 +604,34 @@ function projectWorldToClient(state, world) {
   ];
 }
 
-function centerDragVertexSet(state, linkIndex, positions, center) {
-  const { template, topology } = state.compute;
-  return webgpu.collectOctahedralCenterDragVertices3D(
-    topology,
-    template,
+function rigidBodyCenter3(centers, bodyIndex) {
+  const offset = bodyIndex * 3;
+  return [centers[offset], centers[offset + 1], centers[offset + 2]];
+}
+
+function rigidSemanticCenter3(template, centers, linkIndex) {
+  const bodyIndex = linkIndex * template.sectionCount + template.centerSection;
+  return rigidBodyCenter3(centers, bodyIndex);
+}
+
+function centerDragBodySet(state, linkIndex) {
+  return webgpu.collectRigidSectionCenterDragBodies3D(
+    state.compute.topology,
+    state.compute.template,
     linkIndex,
-  ).map(({ linkIndex: sourceLink, vertexIndex }) => {
-    const point = readVertex3(template, positions, sourceLink, vertexIndex);
-    return {
-      linkIndex: sourceLink,
-      vertexIndex,
-      offset: [
-        point[0] - center[0],
-        point[1] - center[1],
-        point[2] - center[2],
-      ],
-    };
-  });
+  );
 }
 
 function applyCenterDrag(state) {
   const drag = state.centerDrag;
   if (!drag) return null;
-  const overrides = drag.vertices.map((entry) => ({
-    linkIndex: entry.linkIndex,
-    vertexIndex: entry.vertexIndex,
-    position: [
-      drag.target[0] + entry.offset[0],
-      drag.target[1] + entry.offset[1],
-      drag.target[2] + entry.offset[2],
-    ],
-    velocity: [0, 0, 0],
-  }));
-  return state.compute.writeVertexOverrides(overrides);
+  return state.compute.writeCenterOverrides(
+    drag.bodies.map(({ bodyIndex }) => ({
+      bodyIndex,
+      position: [...drag.target],
+      velocity: [0, 0, 0],
+    })),
+  );
 }
 
 function clamp(value, minimum, maximum) {
