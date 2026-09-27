@@ -254,11 +254,17 @@ const seedTorque = (body: number): number => {
     selfSeedAudit.torques[offset + 2]!,
   );
 };
+const seedStartTorque = seedTorque(seedStartBody);
+const seedEndTorque = seedTorque(seedEndBody);
+assert(
+  seedStartTorque < 0.05 && seedEndTorque < 0.05,
+  `free-hinge seed should not inject the old circular endpoint moment: start=${seedStartTorque} end=${seedEndTorque}`,
+);
 console.log(
   `[v0.5 #71 neutral self seed] turnMean=${selfTurnMean.toExponential(6)} `
   + `turnStd=${selfTurnStd.toExponential(6)} firstTurn=${selfTurns[0]!.toExponential(6)} `
   + `segmentRange=[${selfSegmentMin.toFixed(6)},${selfSegmentMax.toFixed(6)}] `
-  + `endpointTorque=[${seedTorque(seedStartBody).toExponential(6)},${seedTorque(seedEndBody).toExponential(6)}]`,
+  + `endpointTorque=[${seedStartTorque.toExponential(6)},${seedEndTorque.toExponential(6)}]`,
 );
 for (let step = 0; step < 600; step += 1) r.step();
 assert(rigidSectionHingeError3D(r) < 2e-4, "double-self hinges remain coincident under dynamics");
