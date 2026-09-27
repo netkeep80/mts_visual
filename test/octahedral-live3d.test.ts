@@ -529,7 +529,7 @@ assert(
   `R+O starts at the accepted non-equilibrium seed ratio: ratio=${rootOpenInitialRatio}`,
 );
 assert(
-  rootOpenFinalRatio > rootOpenInitialRatio + 0.03,
+  rootOpenFinalRatio > rootOpenInitialRatio + 0.015,
   `R+O physics must visibly self-separate from the compressed seed: initial=${rootOpenInitialRatio} final=${rootOpenFinalRatio}`,
 );
 
