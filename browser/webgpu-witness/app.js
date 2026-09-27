@@ -252,8 +252,6 @@ const fixtures = [
 const DIFFERENTIAL_STEPS = 4;
 const DIFFERENTIAL_TOLERANCE = 2e-3;
 const RIGID_DIFFERENTIAL_TOLERANCE = 3e-3;
-const CENTER_MARKER_PIXELS = 8;
-const CENTER_HIT_RADIUS_PIXELS = 24;
 
 let adapter = null;
 let device = null;
@@ -694,14 +692,30 @@ function centerDragBodySet(state, linkIndex) {
   );
 }
 
-function cachedCenterHit(state, event) {
-  return webgpu.pickRigidSectionCenterScreen2D(
-    state.semanticCenterCache.map((center) =>
-      projectWorldToClient(state, center)
-    ),
-    event.clientX,
-    event.clientY,
-    CENTER_HIT_RADIUS_PIXELS,
+function pointerWorldRay(state, event) {
+  const { eye, forward, right, up } = cameraBasis(state.camera);
+  const rect = ui.canvas.getBoundingClientRect();
+  const width = Math.max(1, rect.width);
+  const height = Math.max(1, rect.height);
+  const ndcX = ((event.clientX - rect.left) / width) * 2 - 1;
+  const ndcY = 1 - ((event.clientY - rect.top) / height) * 2;
+  const tanHalfFov = Math.tan(Math.PI / 8);
+  const aspect = width / height;
+  const direction = normalize3([
+    forward[0] + right[0] * ndcX * aspect * tanHalfFov + up[0] * ndcY * tanHalfFov,
+    forward[1] + right[1] * ndcX * aspect * tanHalfFov + up[1] * ndcY * tanHalfFov,
+    forward[2] + right[2] * ndcX * aspect * tanHalfFov + up[2] * ndcY * tanHalfFov,
+  ]);
+  return { origin: eye, direction };
+}
+
+function pickCenterIcosahedron(state, event, centers) {
+  const ray = pointerWorldRay(state, event);
+  return webgpu.pickRigidSectionCenterIcosahedra3D(
+    ray.origin,
+    ray.direction,
+    centers,
+    2 * state.compute.template.edgeRestLength,
   );
 }
 
@@ -846,16 +860,12 @@ function installCameraControls(state) {
   };
 
   const beginCenterPick = async (event) => {
-    const cached = cachedCenterHit(state, event);
-    if (cached >= 0) {
-      activateCenterDrag(cached, state.semanticCenterCache[cached], "cache");
-      return;
-    }
-
     const generation = ++pickGeneration;
     mode = "picking";
-    setStatus(ui.renderCompute, "PICKING CENTER…", "warn");
+    setStatus(ui.renderCompute, "PICKING CENTER ICOSAHEDRON…", "warn");
     try {
+      // One-shot readback on pointer-down keeps picking exact while ordinary
+      // frames remain zero-copy and the simulated CENTER positions keep moving.
       const centers = await state.compute.readBackCenters();
       if (
         generation !== pickGeneration
@@ -863,20 +873,14 @@ function installCameraControls(state) {
         || renderState !== state
       ) return;
 
-      const projected = [];
       const worldCenters = [];
       for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
         const center = rigidSemanticCenter3(state.compute.template, centers, link);
         worldCenters.push(center);
-        projected.push(projectWorldToClient(state, center));
         state.semanticCenterCache[link] = [...center];
       }
-      const selected = webgpu.pickRigidSectionCenterScreen2D(
-        projected,
-        event.clientX,
-        event.clientY,
-        CENTER_HIT_RADIUS_PIXELS,
-      );
+
+      const selected = pickCenterIcosahedron(state, event, worldCenters);
 
       if (selected < 0) {
         mode = "orbit";
@@ -890,16 +894,20 @@ function installCameraControls(state) {
         }
         pendingPickDx = 0;
         pendingPickDy = 0;
-        log("center pick MISS — continuing as orbit");
+        log("center icosahedron pick MISS — continuing as orbit");
         setStatus(
           ui.renderCompute,
-          `AVAILABLE · k=${state.compute.stiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+          `AVAILABLE · m=${state.compute.nodeMass.toFixed(2)} · k∥=${state.compute.longitudinalStiffness.toFixed(2)} · k⊥=${state.compute.transverseStiffness.toFixed(2)} · α=${state.compute.nonlinearity.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
           "ok",
         );
         return;
       }
 
-      activateCenterDrag(selected, worldCenters[selected], "GPU readback");
+      activateCenterDrag(
+        selected,
+        worldCenters[selected],
+        "exact world-space icosahedron",
+      );
       moveCenterDragTarget(state, pendingPickDx, pendingPickDy);
       pendingPickDx = 0;
       pendingPickDy = 0;
@@ -1057,8 +1065,6 @@ async function startRender() {
     {
       colorFormat,
       depthFormat: "depth24plus",
-      centerMarkerPixels: CENTER_MARKER_PIXELS,
-      arrowLengthPixels: 18,
     },
   );
 
