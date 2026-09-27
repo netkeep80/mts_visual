@@ -5,6 +5,7 @@ import "./geometry3d.test.js";
 import "./physics3d.test.js";
 import "./octahedral-link3d.test.js";
 import "./octahedral-live3d.test.js";
+import "./octahedral-performance3d.test.js";
 import "./live-physics3d.test.js";
 import "./three-scene.test.js";
 import "./three-renderer.test.js";
