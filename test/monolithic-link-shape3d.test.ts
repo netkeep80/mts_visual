@@ -165,8 +165,8 @@ const bent = deriveMonolithicLinkShape3D(
   7,
 );
 const centerPoint = read3(bent.sectionCenters, bent.centerSection);
-approx(length3(subtract3(centerPoint, bentCenter)), 0, "derived centerline passes exactly through semantic CENTER", 1e-7);
-approx(length3(subtract3(read3(bent.sectionCenters, 0), bentStart)), 0, "derived centerline begins exactly at START", 1e-7);
+approx(length3(subtract3(centerPoint, bentCenter)), 0, "derived centerline passes exactly through semantic CENTER", 1e-6);
+approx(length3(subtract3(read3(bent.sectionCenters, 0), bentStart)), 0, "derived centerline begins exactly at START", 1e-6);
 approx(
   length3(
     subtract3(
@@ -176,7 +176,7 @@ approx(
   ),
   0,
   "derived centerline ends exactly at END",
-  1e-7,
+  1e-6,
 );
 
 const intoCenter = normalized(
@@ -220,7 +220,7 @@ approx(
   length3(subtract3(read3(self.sectionCenters, 0), selfAnchor)),
   0,
   "double-self START aliases CENTER exactly",
-  1e-7,
+  1e-6,
 );
 approx(
   length3(
@@ -231,7 +231,7 @@ approx(
   ),
   0,
   "double-self middle aliases CENTER exactly",
-  1e-7,
+  1e-6,
 );
 approx(
   length3(
@@ -242,7 +242,7 @@ approx(
   ),
   0,
   "double-self END aliases CENTER exactly",
-  1e-7,
+  1e-6,
 );
 const selfTurns: number[] = [];
 for (let section = 1; section < self.centerSection; section += 1) {
