@@ -92,7 +92,7 @@ function selectedPhysics() {
 
   return Object.freeze({
     octahedra,
-    aspectRatio: Math.SQRT2 * (octahedra / 2 + 1),
+    aspectRatio: Math.SQRT2 * (octahedra / 2),
     stiffness,
     simulationSpeed,
   });
