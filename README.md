@@ -2,6 +2,13 @@
 
 Standalone presentation/visualization authority for MTS link asets, published as the `@mts/visual` package.
 
+
+## Live WebGPU laboratory
+
+**[Open the real-browser WebGPU witness](https://netkeep80.github.io/mts_visual/)**
+
+The published laboratory runs CPU ↔ WebGPU differential checks and the live zero-copy octahedral renderer on the browser/GPU that opens the page. It also exposes interactive Link length, spring stiffness, and simulation-speed controls.
+
 This repository owns renderer-neutral visual DTOs, blueprint/3D geometry, presentation state, physics, interaction, and the optional Three.js browser companion. It does **not** own MTS semantic truth, proof semantics, parser semantics, or `@mts/core`.
 
 ## Provenance
