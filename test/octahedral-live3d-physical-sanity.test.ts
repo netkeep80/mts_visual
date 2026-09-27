@@ -1,6 +1,8 @@
 import {
   computeOctahedralGeometricCenter3D,
   createOctahedralLivePhysics3D,
+  OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO,
+  OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA,
   type OctahedralLivePhysics3D,
   type VisualLinkNetwork,
 } from "../src/index.js";
@@ -241,13 +243,21 @@ function diagnostic(
 
 const network = hubHeavyNetwork(333);
 const controller = createOctahedralLivePhysics3D(network, {
-  aspectRatio: 2 * Math.SQRT2,
+  aspectRatio: OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO,
   stiffness: 1,
   simulationSpeed: 1,
 });
 
 assert(controller.positions.every(Number.isFinite), "initial positions are finite");
 assert(controller.velocities.every(Number.isFinite), "initial velocities are finite");
+assert(
+  controller.template.octahedronCount === OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA,
+  `presentation baseline resolves to exactly ${OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA} octahedra`,
+);
+assert(
+  controller.template.aspectRatio > 15 && controller.template.aspectRatio < 16,
+  `20-octahedron baseline is line-like with aspectRatio≈15.56, got ${controller.template.aspectRatio}`,
+);
 
 const initialSprings = springMetrics(controller);
 const initialHingeError = hingeMaxError(controller);
@@ -275,9 +285,9 @@ assert(
 // embedding must not satisfy the hinges by tearing a significant fraction of
 // the octahedral spring lattice several rest lengths away from equilibrium.
 assert(
-  initialSprings.p95RelativeStrain <= 0.5
-    && initialSprings.maxRelativeStrain <= 2
-    && initialSprings.severeStrainFraction <= 0.05,
+  initialSprings.p95RelativeStrain <= 0.6
+    && initialSprings.maxRelativeStrain <= 1
+    && initialSprings.severeStrainFraction === 0,
   `initial spring state is physically sane; ${initialDiagnostic}`,
 );
 
