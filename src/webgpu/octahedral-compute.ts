@@ -5,6 +5,7 @@ import {
   type OctahedralLinkTemplate3D,
   type OctahedralLinkTopology3D,
 } from "../octahedral-link3d.js";
+import { getOctahedralSeedGrid3D } from "../octahedral-layout3d.js";
 import { createOctahedralLivePhysics3D } from "../octahedral-live3d.js";
 
 const WORKGROUP_SIZE = 64;
@@ -310,6 +311,7 @@ struct Globals {
   counts: vec4<u32>,          // linkCount, vertexCount, startApex, endApex
   center_rest: vec4<u32>,     // center0, center1, center2, restBase
   bases_total: vec4<u32>,     // edgeABase, edgeBBase, batchEdgesBase, totalVertices
+  layout: vec4<u32>,          // gridSide, gridDepth, reserved, reserved
   physics: vec4<f32>,         // stiffness, dt, damping, spacing
 };
 
@@ -375,6 +377,47 @@ fn center_xyz(link: u32, buffer_kind: u32) -> vec3<f32> {
   return (a + b + c) / 3.0;
 }
 
+fn seed_center(link: u32) -> vec3<f32> {
+  if (globals.counts.x <= 1u) {
+    return vec3<f32>(0.0);
+  }
+
+  let side = globals.layout.x;
+  let depth = globals.layout.y;
+  let plane = side * side;
+  let x_index = link % side;
+  let y_index = (link / side) % side;
+  let z_index = link / plane;
+  let half_side = (f32(side) - 1.0) * 0.5;
+  let half_depth = (f32(depth) - 1.0) * 0.5;
+
+  return vec3<f32>(
+    (f32(x_index) - half_side) * globals.physics.w,
+    (f32(y_index) - half_side) * globals.physics.w,
+    (f32(z_index) - half_depth) * globals.physics.w,
+  );
+}
+
+fn fallback_axis(link: u32) -> vec3<f32> {
+  let role = link % 6u;
+  if (role == 0u) { return vec3<f32>(1.0, 0.0, 0.0); }
+  if (role == 1u) { return vec3<f32>(0.0, 1.0, 0.0); }
+  if (role == 2u) { return vec3<f32>(0.0, 0.0, 1.0); }
+  if (role == 3u) { return vec3<f32>(-1.0, 0.0, 0.0); }
+  if (role == 4u) { return vec3<f32>(0.0, -1.0, 0.0); }
+  return vec3<f32>(0.0, 0.0, -1.0);
+}
+
+fn seed_axis(link: u32) -> vec3<f32> {
+  let start_target = topology[link * 2u];
+  let end_target = topology[link * 2u + 1u];
+  let delta = seed_center(end_target) - seed_center(start_target);
+  if (dot(delta, delta) <= 1e-24) {
+    return fallback_axis(link);
+  }
+  return normalize(delta);
+}
+
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn init_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
@@ -386,14 +429,22 @@ fn init_main(
   let vertex_count = globals.counts.y;
   let link = linear / vertex_count;
   let local = linear % vertex_count;
-  var center_x = 0.0;
-  if (globals.counts.x > 1u) {
-    center_x = (f32(link) - (f32(globals.counts.x) - 1.0) * 0.5) * globals.physics.w;
+  let center = seed_center(link);
+  let axis = seed_axis(link);
+  var helper = vec3<f32>(0.0, 0.0, 1.0);
+  if (abs(axis.z) >= 0.9) {
+    helper = vec3<f32>(0.0, 1.0, 0.0);
   }
+  let basis_x = normalize(cross(helper, axis));
+  let basis_y = cross(axis, basis_x);
 
   let scalar = linear * 3u;
   let rest = rest_xyz(local);
-  store_position(scalar, rest + vec3<f32>(center_x, 0.0, 0.0));
+  let seeded = center
+    + basis_x * rest.x
+    + basis_y * rest.y
+    + axis * rest.z;
+  store_position(scalar, seeded);
   store_velocity(scalar, vec3<f32>(0.0));
   store_force(scalar, vec3<f32>(0.0));
 }
@@ -562,9 +613,10 @@ function globalsData(
   stiffness: number,
   simulationSpeed: number,
 ): ArrayBuffer {
-  const buffer = new ArrayBuffer(64);
+  const buffer = new ArrayBuffer(80);
   const u32 = new Uint32Array(buffer);
   const f32 = new Float32Array(buffer);
+  const grid = getOctahedralSeedGrid3D(template, topology.linkCount);
 
   u32[0] = topology.linkCount;
   u32[1] = template.vertexCount;
@@ -581,11 +633,16 @@ function globalsData(
   u32[10] = packedTemplate.batchEdgesBase;
   u32[11] = topology.linkCount * template.vertexCount;
 
+  u32[12] = grid.side;
+  u32[13] = grid.depth;
+  u32[14] = 0;
+  u32[15] = 0;
+
   const dt = BASE_TIME_STEP * simulationSpeed;
-  f32[12] = stiffness;
-  f32[13] = dt;
-  f32[14] = Math.exp(-INTERNAL_DAMPING_RATE * dt);
-  f32[15] = Math.max(template.diameter * 2.5, template.restLength * 0.75);
+  f32[16] = stiffness;
+  f32[17] = dt;
+  f32[18] = Math.exp(-INTERNAL_DAMPING_RATE * dt);
+  f32[19] = grid.spacing;
 
   return buffer;
 }
