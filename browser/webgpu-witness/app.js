@@ -8,7 +8,9 @@ const ui = {
   diffBody: $("diff-body"),
   rerun: $("rerun"),
   canvas: $("gpu-canvas"),
-  linkCount: $("link-count"),
+  scene: $("scene"),
+  inspectGeometry: $("inspect-geometry"),
+  geometryBody: $("geometry-body"),
   lengthOcta: $("length-octa"),
   lengthValue: $("length-value"),
   stiffness: $("stiffness"),
@@ -111,7 +113,40 @@ function refreshPhysicsControlLabels() {
 
 refreshPhysicsControlLabels();
 
+const ROOT_BASIS = Object.freeze([
+  Object.freeze({ key: "R", startKey: "R", endKey: "R", equation: "R = R ⟼ R" }),
+  Object.freeze({ key: "O", startKey: "O", endKey: "R", equation: "O = O ⟼ R" }),
+  Object.freeze({ key: "C", startKey: "R", endKey: "C", equation: "C = R ⟼ C" }),
+  Object.freeze({ key: "L", startKey: "O", endKey: "C", equation: "L = O ⟼ C" }),
+  Object.freeze({ key: "U", startKey: "C", endKey: "O", equation: "U = C ⟼ O" }),
+]);
+
+function rootBasisNetwork(count) {
+  if (!Number.isSafeInteger(count) || count < 1 || count > ROOT_BASIS.length) {
+    throw new Error(`invalid root-basis stage: ${count}`);
+  }
+  return {
+    links: ROOT_BASIS.slice(0, count).map(({ key, startKey, endKey }) => ({
+      key,
+      startKey,
+      endKey,
+    })),
+  };
+}
+
+function equationForNetworkLink(link) {
+  const root = ROOT_BASIS.find((candidate) => candidate.key === link.key
+    && candidate.startKey === link.startKey
+    && candidate.endKey === link.endKey);
+  return root?.equation ?? `${link.key} = ${link.startKey} ⟼ ${link.endKey}`;
+}
+
 const fixtures = [
+  { name: "root-1-R", network: rootBasisNetwork(1) },
+  { name: "root-2-RO", network: rootBasisNetwork(2) },
+  { name: "root-3-ROC", network: rootBasisNetwork(3) },
+  { name: "root-4-ROCL", network: rootBasisNetwork(4) },
+  { name: "root-5-ROCLU", network: rootBasisNetwork(5) },
   {
     name: "ordinary",
     network: {
@@ -332,6 +367,20 @@ async function runDifferentials() {
   ui.rerun.disabled = false;
   log(`differential parameters: ${physics.octahedra} octa, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`);
   updateOverall();
+}
+
+function selectedScene() {
+  switch (ui.scene.value) {
+    case "root-r": return Object.freeze({ id: "root-r", label: "R only", network: rootBasisNetwork(1) });
+    case "root-ro": return Object.freeze({ id: "root-ro", label: "R + O", network: rootBasisNetwork(2) });
+    case "root-roc": return Object.freeze({ id: "root-roc", label: "R + O + C", network: rootBasisNetwork(3) });
+    case "root-rocl": return Object.freeze({ id: "root-rocl", label: "R + O + C + L", network: rootBasisNetwork(4) });
+    case "root-roclu": return Object.freeze({ id: "root-roclu", label: "R + O + C + L + U", network: rootBasisNetwork(5) });
+    case "hub-64": return Object.freeze({ id: "hub-64", label: "stress 64", network: hubHeavyNetwork(64) });
+    case "hub-333": return Object.freeze({ id: "hub-333", label: "stress 333", network: hubHeavyNetwork(333) });
+    case "hub-1000": return Object.freeze({ id: "hub-1000", label: "stress 1000", network: hubHeavyNetwork(1000) });
+    default: throw new Error(`unknown scene: ${ui.scene.value}`);
+  }
 }
 
 function hubHeavyNetwork(count) {
@@ -574,9 +623,10 @@ async function startRender() {
     return;
   }
 
-  const linkCount = Number(ui.linkCount.value);
+  const scene = selectedScene();
+  const network = scene.network;
+  const linkCount = network.links.length;
   const physics = selectedPhysics();
-  const network = hubHeavyNetwork(linkCount);
   const compute = await webgpu.createOctahedralWebGpuCompute3D(
     device,
     network,
@@ -632,7 +682,7 @@ async function startRender() {
   setStatus(ui.renderCompute, "AVAILABLE", "ok");
   setStatus(
     ui.renderTopology,
-    `${linkCount} Links · ${compute.snapshot().totalPhysicalVertices.toLocaleString()} vertices · ${compute.template.octahedronCount} octa · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    `${scene.label} · ${linkCount} Links · ${compute.snapshot().totalPhysicalVertices.toLocaleString()} vertices · ${compute.template.octahedronCount} octa · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
     "ok",
   );
   setStatus(ui.renderZeroCopy, "PASS — shared positionBuffer · 0 B dynamic upload", "ok");
@@ -664,6 +714,8 @@ async function startRender() {
       target: [0, 0, 0],
     },
     cleanupCameraControls: null,
+    scene,
+    network,
   };
   resetCamera(state.camera, defaultCameraDistance);
   state.cleanupCameraControls = installCameraControls(state);
@@ -747,8 +799,107 @@ async function startRender() {
 
   state.raf = requestAnimationFrame(frame);
   log(
-    `zero-copy render started: ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().totalPhysicalVertices} physical vertices`,
+    `zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().totalPhysicalVertices} physical vertices`,
   );
+}
+
+function packedPositionOffset(template, linkIndex, vertex) {
+  return (linkIndex * template.vertexCount + vertex) * 3;
+}
+
+function readVertex3(template, positions, linkIndex, vertex) {
+  const offset = packedPositionOffset(template, linkIndex, vertex);
+  return [positions[offset], positions[offset + 1], positions[offset + 2]];
+}
+
+function center3(template, positions, linkIndex) {
+  const result = [0, 0, 0];
+  for (const vertex of template.centerTriangle) {
+    const point = readVertex3(template, positions, linkIndex, vertex);
+    result[0] += point[0] / 3;
+    result[1] += point[1] / 3;
+    result[2] += point[2] / 3;
+  }
+  return result;
+}
+
+function distance3(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+function percentile95(sortedValues) {
+  if (sortedValues.length === 0) return 0;
+  return sortedValues[Math.min(sortedValues.length - 1, Math.ceil(sortedValues.length * 0.95) - 1)];
+}
+
+function diagnosticClass(value) {
+  if (value > 0.1) return "fail";
+  if (value > 0.03) return "warn";
+  return "ok";
+}
+
+async function inspectGeometry() {
+  if (!renderState) return;
+
+  const state = renderState;
+  const wasPaused = state.paused;
+  state.paused = true;
+  ui.inspectGeometry.disabled = true;
+
+  try {
+    const positions = await state.compute.readBackPositions();
+    if (renderState !== state) return;
+
+    const { template, topology } = state.compute;
+    const networkByKey = new Map(state.network.links.map((link) => [link.key, link]));
+    const rowsHtml = [];
+
+    for (let linkIndex = 0; linkIndex < topology.linkCount; linkIndex += 1) {
+      const key = topology.keys[linkIndex];
+      const source = networkByKey.get(key);
+      if (!source) throw new Error(`diagnostic source Link missing: ${key}`);
+
+      const ownCenter = center3(template, positions, linkIndex);
+      const startApex = readVertex3(template, positions, linkIndex, template.startApex);
+      const endApex = readVertex3(template, positions, linkIndex, template.endApex);
+      const startCenter = center3(template, positions, topology.startIndices[linkIndex]);
+      const endCenter = center3(template, positions, topology.endIndices[linkIndex]);
+
+      const strains = [];
+      for (let edge = 0; edge < template.edgeCount; edge += 1) {
+        const edgeA = readVertex3(template, positions, linkIndex, template.edgeA[edge]);
+        const edgeB = readVertex3(template, positions, linkIndex, template.edgeB[edge]);
+        strains.push(Math.abs(distance3(edgeA, edgeB) - template.edgeRestLength));
+      }
+      strains.sort((left, right) => left - right);
+      const p95 = percentile95(strains);
+      const maximum = strains.at(-1) ?? 0;
+      const startError = distance3(startApex, startCenter);
+      const endError = distance3(endApex, endCenter);
+
+      rowsHtml.push(`
+        <tr>
+          <td class="value">${key}</td>
+          <td>${equationForNetworkLink(source)}</td>
+          <td class="${diagnosticClass(startError)}">${fmt(startError)}</td>
+          <td class="${diagnosticClass(endError)}">${fmt(endError)}</td>
+          <td>${fmt(distance3(ownCenter, startApex))}</td>
+          <td>${fmt(distance3(ownCenter, endApex))}</td>
+          <td class="${diagnosticClass(p95)}">${fmt(p95)}</td>
+          <td class="${diagnosticClass(maximum)}">${fmt(maximum)}</td>
+        </tr>
+      `);
+    }
+
+    ui.geometryBody.innerHTML = rowsHtml.join("");
+    log(`geometry inspection: scene=${state.scene.label}, ${topology.linkCount} Links, one-shot readback ${positions.byteLength} B`);
+  } catch (error) {
+    ui.geometryBody.innerHTML = `<tr><td colspan="8" class="fail">Inspection ERROR — ${String(error)}</td></tr>`;
+    log(`geometry inspection ERROR — ${error.stack ?? error}`);
+  } finally {
+    if (renderState === state) state.paused = wasPaused;
+    ui.inspectGeometry.disabled = false;
+  }
 }
 
 ui.rerun.addEventListener("click", () => {
@@ -757,6 +908,21 @@ ui.rerun.addEventListener("click", () => {
     log(`differential runner ERROR — ${error.stack ?? error}`);
     updateOverall();
   });
+});
+
+ui.scene.addEventListener("change", () => {
+  ui.geometryBody.innerHTML = '<tr><td colspan="8" class="muted">Press Inspect geometry.</td></tr>';
+  startRender().catch((error) => {
+    renderPass = false;
+    setStatus(ui.renderCompute, "ERROR", "fail");
+    setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
+    log(`scene render restart ERROR — ${error.stack ?? error}`);
+    updateOverall();
+  });
+});
+
+ui.inspectGeometry.addEventListener("click", () => {
+  inspectGeometry();
 });
 
 ui.restartRender.addEventListener("click", () => {
