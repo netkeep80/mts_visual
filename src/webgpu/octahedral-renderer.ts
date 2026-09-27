@@ -206,7 +206,7 @@ export function estimateOctahedralWebGpuRender3D(
     linkCount: count,
     surfaceVerticesPerLink,
     centerVerticesPerLink: OCTAHEDRAL_WEBGPU_CENTER_VERTICES_PER_LINK as 6,
-    arrowVerticesPerLink: OCTAHEDRAL_WEBGPU_ARROW_VERTICES_PER_LINK as 3,
+    arrowVerticesPerLink: OCTAHEDRAL_WEBGPU_ARROW_VERTICES_PER_LINK as 6,
     surfaceVertexInvocations: safeProduct(count, surfaceVerticesPerLink, "surfaceVertexInvocations"),
     centerVertexInvocations: safeProduct(
       count,
