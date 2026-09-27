@@ -217,6 +217,12 @@ function fakeCompute(
     }),
     setStiffness: (_stiffness) => {},
     setSimulationSpeed: (_simulationSpeed) => {},
+    writeVertexOverrides: (overrides) => ({
+      vertexCount: overrides.length,
+      bufferWrites: overrides.length === 0 ? 0 : 2,
+      positionBytes: overrides.length * 12,
+      velocityBytes: overrides.length * 12,
+    }),
     readBackPositions: async () => {
       throw new Error("zero-copy renderer must never call readBackPositions");
     },
