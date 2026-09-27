@@ -187,7 +187,25 @@
         </div>
 
         <div class="physics-control">
+          <label for="center-marker-scale">
+            <span>CENTER size ×</span>
+            <output id="center-marker-scale-value">1.00×</output>
+          </label>
+          <input id="center-marker-scale" type="range" min="0.25" max="8" step="0.05" value="1">
+        </div>
+
+        <div class="physics-control">
+          <label for="end-cone-scale">
+            <span>END cone size ×</span>
+            <output id="end-cone-scale-value">1.00×</output>
+          </label>
+          <input id="end-cone-scale" type="range" min="0.25" max="8" step="0.05" value="1">
+        </div>
+
+        <div class="physics-control">
           <div class="inline-checks">
+            <label><input id="show-center-markers" type="checkbox" checked> CENTER nodes</label>
+            <label><input id="show-end-cones" type="checkbox" checked> END cones</label>
             <label><input id="auto-rotate" type="checkbox"> Auto rotate</label>
             <label><input id="wireframe" type="checkbox" checked> Wireframe</label>
           </div>

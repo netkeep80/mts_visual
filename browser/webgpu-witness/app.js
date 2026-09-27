@@ -32,6 +32,12 @@ const ui = {
   resetView: $("reset-view"),
   autoRotate: $("auto-rotate"),
   wireframe: $("wireframe"),
+  showCenterMarkers: $("show-center-markers"),
+  showEndCones: $("show-end-cones"),
+  centerMarkerScale: $("center-marker-scale"),
+  centerMarkerScaleValue: $("center-marker-scale-value"),
+  endConeScale: $("end-cone-scale"),
+  endConeScaleValue: $("end-cone-scale-value"),
   pauseRender: $("pause-render"),
   fullscreenRender: $("fullscreen-render"),
   viewportShell: $("viewport-shell"),
@@ -176,7 +182,25 @@ function refreshPhysicsControlLabels() {
   ui.simulationSpeedValue.value = `${physics.simulationSpeed.toFixed(2)}×`;
 }
 
+function selectedMarkerControls() {
+  return Object.freeze({
+    showCenterMarkers: ui.showCenterMarkers.checked,
+    showEndCones: ui.showEndCones.checked,
+    centerMarkerScale:
+      controlNumber(ui.centerMarkerScale, "CENTER size", 0.25, 8),
+    endConeScale:
+      controlNumber(ui.endConeScale, "END cone size", 0.25, 8),
+  });
+}
+
+function refreshMarkerControlLabels() {
+  const markers = selectedMarkerControls();
+  ui.centerMarkerScaleValue.value = `${markers.centerMarkerScale.toFixed(2)}×`;
+  ui.endConeScaleValue.value = `${markers.endConeScale.toFixed(2)}×`;
+}
+
 refreshPhysicsControlLabels();
+refreshMarkerControlLabels();
 
 const ROOT_BASIS = Object.freeze([
   Object.freeze({ key: "R", startKey: "R", endKey: "R", equation: "R = R ⟼ R" }),
@@ -715,7 +739,9 @@ function pickCenterIcosahedron(state, event, centers) {
     ray.origin,
     ray.direction,
     centers,
-    2 * state.compute.template.edgeRestLength,
+    2
+      * state.compute.template.edgeRestLength
+      * selectedMarkerControls().centerMarkerScale,
   );
 }
 
@@ -934,7 +960,7 @@ function installCameraControls(state) {
 
     if (event.button === 2 || (event.button === 0 && event.shiftKey)) {
       mode = "pan";
-    } else if (event.button === 0) {
+    } else if (event.button === 0 && ui.showCenterMarkers.checked) {
       void beginCenterPick(event);
     } else {
       mode = "orbit";
@@ -1189,6 +1215,7 @@ async function startRender() {
       }
       const viewProjection = currentViewProjection(state);
 
+      const markers = selectedMarkerControls();
       const stats = state.renderer.render({
         targetView: state.context.getCurrentTexture().createView(),
         depthView: state.depthTexture.createView(),
@@ -1196,18 +1223,26 @@ async function startRender() {
         width: ui.canvas.width,
         height: ui.canvas.height,
         wireframe: ui.wireframe.checked,
+        showCenterMarkers: markers.showCenterMarkers,
+        showEndCones: markers.showEndCones,
+        centerMarkerScale: markers.centerMarkerScale,
+        endConeScale: markers.endConeScale,
         clearColor: { r: 0.005, g: 0.008, b: 0.014, a: 1 },
       });
       state.frames += 1;
 
+      const expectedDrawCalls =
+        1
+        + (markers.showCenterMarkers ? 1 : 0)
+        + (markers.showEndCones ? 1 : 0);
       if (
         stats.dynamicStateUploadBytes !== 0
         || stats.bufferCopies !== 0
         || stats.readbacks !== 0
-        || stats.drawCalls !== 3
+        || stats.drawCalls !== expectedDrawCalls
       ) {
         throw new Error(
-          `zero-copy runtime violation: uploads=${stats.dynamicStateUploadBytes} copies=${stats.bufferCopies} readbacks=${stats.readbacks} draws=${stats.drawCalls}`,
+          `zero-copy runtime violation: uploads=${stats.dynamicStateUploadBytes} copies=${stats.bufferCopies} readbacks=${stats.readbacks} draws=${stats.drawCalls}/${expectedDrawCalls}`,
         );
       }
 
@@ -1440,6 +1475,27 @@ ui.autoRotate.addEventListener("change", () => {
 ui.wireframe.addEventListener("change", () => {
   log(`wireframe ${ui.wireframe.checked ? "enabled" : "disabled"} — physics state preserved`);
 });
+
+ui.showCenterMarkers.addEventListener("change", () => {
+  if (!ui.showCenterMarkers.checked && renderState?.centerDrag) {
+    renderState.centerDrag = null;
+  }
+  log(
+    `CENTER nodes ${ui.showCenterMarkers.checked ? "enabled" : "disabled"} — physics state preserved`,
+  );
+});
+
+ui.showEndCones.addEventListener("change", () => {
+  log(
+    `END cones ${ui.showEndCones.checked ? "enabled" : "disabled"} — physics state preserved`,
+  );
+});
+
+for (const control of [ui.centerMarkerScale, ui.endConeScale]) {
+  control.addEventListener("input", () => {
+    refreshMarkerControlLabels();
+  });
+}
 
 ui.lengthOcta.addEventListener("change", () => {
   refreshPhysicsControlLabels();
