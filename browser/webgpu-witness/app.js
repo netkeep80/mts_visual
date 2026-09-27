@@ -307,7 +307,7 @@ async function acquireDevice() {
       .join(" · ")
     : "adapter acquired";
   setStatus(ui.webgpu, `AVAILABLE — ${label || "adapter acquired"}`, "ok");
-  log(`WebGPU device acquired; maxStorageBufferBindingSize=${device.limits.maxStorageBufferBindingSize}`);
+  log(`WebGPU device acquired; maxStorageBufferBindingSize=${device.limits.maxStorageBufferBindingSize}; maxStorageBuffersPerShaderStage=${device.limits.maxStorageBuffersPerShaderStage}`);
 
   device.lost.then((info) => {
     setStatus(ui.webgpu, `DEVICE LOST — ${info.message || info.reason}`, "fail");
