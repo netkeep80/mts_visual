@@ -226,7 +226,9 @@ fn scratch_velocity_slot(body: u32) -> u32 {
 }
 
 fn linear_index(gid: vec3<u32>) -> u32 {
-  return gid.x * ${WORKGROUP_SIZE}u + gid.y * 65535u * ${WORKGROUP_SIZE}u;
+  // global_invocation_id.x already includes the workgroup-size expansion.
+  // Only the Y slab needs explicit expansion by the maximum X workgroup span.
+  return gid.x + gid.y * 65535u * ${WORKGROUP_SIZE}u;
 }
 
 fn q_normalize(q: vec4<f32>) -> vec4<f32> {
