@@ -7,6 +7,7 @@ const ui = {
   overall: $("overall"),
   diffBody: $("diff-body"),
   rigidDiffBody: $("rigid-diff-body"),
+  monolithicDiffBody: $("monolithic-diff-body"),
   rerun: $("rerun"),
   canvas: $("gpu-canvas"),
   scene: $("scene"),
@@ -276,13 +277,16 @@ const fixtures = [
 const DIFFERENTIAL_STEPS = 4;
 const DIFFERENTIAL_TOLERANCE = 2e-3;
 const RIGID_DIFFERENTIAL_TOLERANCE = 3e-3;
+const MONOLITHIC_DIFFERENTIAL_TOLERANCE = 3e-3;
 
 let adapter = null;
 let device = null;
 let differentialAllPass = false;
 let rigidDifferentialAllPass = false;
+let monolithicDifferentialAllPass = false;
 let differentialPhysicsSignature = null;
 let rigidDifferentialPhysicsSignature = null;
+let monolithicDifferentialPhysicsSignature = null;
 let renderPass = false;
 let renderState = null;
 
@@ -297,7 +301,8 @@ function differentialIsCurrent() {
 function markDifferentialStale() {
   differentialAllPass = false;
   rigidDifferentialAllPass = false;
-  for (const collection of [rows, rigidRows]) {
+  monolithicDifferentialAllPass = false;
+  for (const collection of [rows, rigidRows, monolithicRows]) {
     for (const row of collection.values()) {
       const status = row.querySelector(".status");
       if (status.textContent === "PASS") {
@@ -364,6 +369,26 @@ for (const fixture of fixtures) {
   ui.rigidDiffBody.appendChild(row);
 }
 
+function monolithicDifferentialRow(name) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${name}</td>
+    <td class="status">pending</td>
+    <td>${DIFFERENTIAL_STEPS}</td>
+    <td>${MONOLITHIC_DIFFERENTIAL_TOLERANCE}</td>
+    <td class="center">—</td>
+    <td class="velocity">—</td>
+  `;
+  return tr;
+}
+
+const monolithicRows = new Map();
+for (const fixture of fixtures) {
+  const row = monolithicDifferentialRow(fixture.name);
+  monolithicRows.set(fixture.name, row);
+  ui.monolithicDiffBody.appendChild(row);
+}
+
 async function acquireDevice() {
   if (!("gpu" in navigator)) {
     setStatus(ui.webgpu, "UNAVAILABLE — navigator.gpu missing", "warn");
@@ -409,10 +434,12 @@ async function acquireDevice() {
 
 async function runDifferentials() {
   differentialAllPass = false;
+  rigidDifferentialAllPass = false;
+  monolithicDifferentialAllPass = false;
   updateOverall();
 
   if (!device) {
-    for (const collection of [rows, rigidRows]) {
+    for (const collection of [rows, rigidRows, monolithicRows]) {
       for (const row of collection.values()) {
         const status = row.querySelector(".status");
         status.textContent = "UNAVAILABLE";
@@ -550,11 +577,70 @@ async function runDifferentials() {
 
   rigidDifferentialAllPass = rigidAllPass;
   rigidDifferentialPhysicsSignature = runSignature;
+
+  let monolithicAllPass = true;
+  for (const fixture of fixtures) {
+    const row = monolithicRows.get(fixture.name);
+    const status = row.querySelector(".status");
+    const center = row.querySelector(".center");
+    const velocity = row.querySelector(".velocity");
+    status.textContent = "running…";
+    status.className = "status warn";
+    center.textContent = "—";
+    velocity.textContent = "—";
+
+    try {
+      const result = await webgpu.runMonolithicLinkWebGpuDifferential3D(
+        device,
+        fixture.network,
+        {
+          aspectRatio: rigidAspectRatio,
+          stretchStiffness: physics.longitudinalStiffness,
+          straighteningStiffness: physics.transverseStiffness,
+          nonlinearity: physics.nonlinearity,
+          centerMass: physics.nodeMass,
+          dampingRate: physics.linearDampingRate,
+          simulationSpeed: physics.simulationSpeed,
+        },
+        DIFFERENTIAL_STEPS,
+        MONOLITHIC_DIFFERENTIAL_TOLERANCE,
+      );
+
+      center.textContent = fmt(result.maxCenterDelta);
+      velocity.textContent = fmt(result.maxVelocityDelta);
+
+      if (result.passed) {
+        status.textContent = "PASS";
+        status.className = "status ok";
+        log(
+          `monolithic ${fixture.name}: PASS Δc=${fmt(result.maxCenterDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
+        );
+      } else {
+        status.textContent = "FAIL";
+        status.className = "status fail";
+        monolithicAllPass = false;
+        log(
+          `monolithic ${fixture.name}: FAIL Δc=${fmt(result.maxCenterDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
+        );
+      }
+    } catch (error) {
+      status.textContent = "ERROR";
+      status.className = "status fail";
+      monolithicAllPass = false;
+      log(`monolithic ${fixture.name}: ERROR — ${error.stack ?? error}`);
+    }
+  }
+
+  monolithicDifferentialAllPass = monolithicAllPass;
+  monolithicDifferentialPhysicsSignature = runSignature;
   ui.rerun.disabled = false;
   log(
     `differential parameters: ${physics.octahedra} octa, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, dLin=${physics.linearDampingRate.toFixed(2)}, dAng=${physics.angularDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
   );
   log(`rigid differential aspect=${rigidAspectRatio.toFixed(4)} (capless rigid triangular sections)`);
+  log(
+    `monolithic differential: centerMass=mNode, stretch=kLong, straightening=kTrans, damping=dLin · ${monolithicAllPass ? "PASS" : "FAIL"}`,
+  );
   updateOverall();
 }
 
