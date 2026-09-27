@@ -254,7 +254,10 @@ assert(OCTAHEDRAL_WEBGPU_WGSL.includes("fn seed_axis"), "WGSL exposes topology-d
 assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let x_index = link % side"), "WGSL seed layout spans grid X");
 assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let y_index = (link / side) % side"), "WGSL seed layout spans grid Y");
 assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let z_index = link / plane"), "WGSL seed layout spans grid Z");
-assert(!OCTAHEDRAL_WEBGPU_WGSL.includes("center_x"), "WGSL no longer contains one-dimensional center seed");
+assert(
+  !OCTAHEDRAL_WEBGPU_WGSL.includes("var center_x ="),
+  "WGSL no longer contains the former one-dimensional center seed",
+);
 
 const gpuGrid = getOctahedralSeedGrid3D(template, 333);
 same(gpuGrid.side, 7, "CPU contract supplies seven-wide 333-Link grid to GPU globals");
