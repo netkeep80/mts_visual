@@ -49,8 +49,15 @@ function cross3(left: Vec3, right: Vec3): Vec3 {
   ];
 }
 
+function qAxis(axis: 0 | 1 | 2, angle: number): Quat {
+  const halfSin = Math.sin(angle / 2);
+  const result: [number, number, number, number] = [0, 0, 0, Math.cos(angle / 2)];
+  result[axis] = halfSin;
+  return result;
+}
+
 function qx(angle: number): Quat {
-  return [Math.sin(angle / 2), 0, 0, Math.cos(angle / 2)];
+  return qAxis(0, angle);
 }
 
 const aspect20 = 10 * Math.SQRT2;
@@ -143,37 +150,71 @@ approx(
   2e-3,
 );
 
-const worldRotated = (angle: number): Quat => multiplyRigidSectionQuaternions3D(
-  qx(angle),
-  restOrientation,
-);
-const rotationalEnergy = (angle: number): number => evaluateRigidSectionPotential3D(
-  template,
-  lowerCenter,
-  identity,
-  upperCenter,
-  worldRotated(angle),
-  5,
-).energy;
 const gradientAngle = 0.15;
-const rotationalAtGradient = evaluateRigidSectionPotential3D(
-  template,
-  lowerCenter,
-  identity,
-  upperCenter,
-  worldRotated(gradientAngle),
-  5,
-);
-const numericDTheta = (
-  rotationalEnergy(gradientAngle + gradientEpsilon)
-  - rotationalEnergy(gradientAngle - gradientEpsilon)
-) / (2 * gradientEpsilon);
-approx(
-  rotationalAtGradient.upperTorque[0],
-  -numericDTheta,
-  "world-X restoring torque is the negative rotational energy gradient",
-  3e-3,
-);
+const rotationalGradientMeasurements: string[] = [];
+for (const axis of [0, 1, 2] as const) {
+  const upperOrientationAt = (angle: number): Quat =>
+    multiplyRigidSectionQuaternions3D(qAxis(axis, angle), restOrientation);
+  const upperEnergyAt = (angle: number): number =>
+    evaluateRigidSectionPotential3D(
+      template,
+      lowerCenter,
+      identity,
+      upperCenter,
+      upperOrientationAt(angle),
+      5,
+    ).energy;
+  const upperAtGradient = evaluateRigidSectionPotential3D(
+    template,
+    lowerCenter,
+    identity,
+    upperCenter,
+    upperOrientationAt(gradientAngle),
+    5,
+  );
+  const numericUpper = (
+    upperEnergyAt(gradientAngle + gradientEpsilon)
+    - upperEnergyAt(gradientAngle - gradientEpsilon)
+  ) / (2 * gradientEpsilon);
+  approx(
+    upperAtGradient.upperTorque[axis],
+    -numericUpper,
+    `world-axis ${axis} upper restoring torque is the negative rotational energy gradient`,
+    3e-3,
+  );
+
+  const lowerOrientationAt = (angle: number): Quat => qAxis(axis, angle);
+  const lowerEnergyAt = (angle: number): number =>
+    evaluateRigidSectionPotential3D(
+      template,
+      lowerCenter,
+      lowerOrientationAt(angle),
+      upperCenter,
+      restOrientation,
+      5,
+    ).energy;
+  const lowerAtGradient = evaluateRigidSectionPotential3D(
+    template,
+    lowerCenter,
+    lowerOrientationAt(gradientAngle),
+    upperCenter,
+    restOrientation,
+    5,
+  );
+  const numericLower = (
+    lowerEnergyAt(gradientAngle + gradientEpsilon)
+    - lowerEnergyAt(gradientAngle - gradientEpsilon)
+  ) / (2 * gradientEpsilon);
+  approx(
+    lowerAtGradient.lowerTorque[axis],
+    -numericLower,
+    `world-axis ${axis} lower restoring torque is the negative rotational energy gradient`,
+    3e-3,
+  );
+  rotationalGradientMeasurements.push(
+    `axis=${axis}:upper=${numericUpper.toFixed(6)},lower=${numericLower.toFixed(6)}`,
+  );
+}
 
 const root: VisualLinkNetwork = {
   links: [{ key: "R", startKey: "R", endKey: "R" }],
@@ -502,7 +543,8 @@ console.log(
   + `ROCLU-bodies=${basis.bodyCount} relationPoints=${evaluations.relationPointEvaluations}`,
 );
 console.log(
-  `[v0.5 P2 contracts] PASS numericDx=${numericDx.toFixed(6)} numericDTheta=${numericDTheta.toFixed(6)} `
+  `[v0.5 P2 contracts] PASS numericDx=${numericDx.toFixed(6)} `
+  + `rotGrad=[${rotationalGradientMeasurements.join(" ")}] `
   + `settled=${settledEnergy.toFixed(6)} perturbed=${perturbedEnergy.toFixed(6)} relaxed=${relaxedEnergy.toFixed(6)} `
   + `largeRelationPoints=${largeEvaluation.relationPointEvaluations}`,
 );
