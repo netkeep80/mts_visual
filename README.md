@@ -98,4 +98,12 @@ The batched surface stores one cached template topology and reads deformed packe
 
 The legacy `Physics3D` / `createVisualThreeLiveRenderer` APIs remain available for compatibility. New high-scale consumers should use the octahedral path.
 
+### 0.4.1 live-initialization correction
+
+Package version `0.4.1` fixes the accepted octahedral live path's initial embedding for large networks. `0.4.0` placed every Link center on one X axis, which could trap real A-networks in a string-like configuration.
+
+The corrected initializer is still deterministic and O(N), but places centers in a compact centered 3D lattice with extent O(cuberoot(N)). Before hinge projection, each mast is rotated so its local longitudinal axis follows the seed direction from its START target center to its END target center; coincident/self targets use a deterministic finite fallback orientation.
+
+This is presentation initialization only. START/END hinge projection, Link semantics, the two Link physics parameters, and the no-all-pairs scalable-path contract are unchanged.
+
 The development and migration roadmap is tracked in issue #1.
