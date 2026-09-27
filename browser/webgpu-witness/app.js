@@ -6,6 +6,7 @@ const ui = {
   baseline: $("baseline"),
   overall: $("overall"),
   diffBody: $("diff-body"),
+  rigidDiffBody: $("rigid-diff-body"),
   rerun: $("rerun"),
   canvas: $("gpu-canvas"),
   scene: $("scene"),
@@ -186,26 +187,35 @@ const fixtures = [
 
 const DIFFERENTIAL_STEPS = 4;
 const DIFFERENTIAL_TOLERANCE = 2e-3;
+const RIGID_DIFFERENTIAL_TOLERANCE = 3e-3;
 
 let adapter = null;
 let device = null;
 let differentialAllPass = false;
+let rigidDifferentialAllPass = false;
 let differentialPhysicsSignature = null;
+let rigidDifferentialPhysicsSignature = null;
 let renderPass = false;
 let renderState = null;
 
 function differentialIsCurrent() {
+  const signature = physicsSignature();
   return differentialAllPass
-    && differentialPhysicsSignature === physicsSignature();
+    && rigidDifferentialAllPass
+    && differentialPhysicsSignature === signature
+    && rigidDifferentialPhysicsSignature === signature;
 }
 
 function markDifferentialStale() {
   differentialAllPass = false;
-  for (const row of rows.values()) {
-    const status = row.querySelector(".status");
-    if (status.textContent === "PASS") {
-      status.textContent = "STALE";
-      status.className = "status warn";
+  rigidDifferentialAllPass = false;
+  for (const collection of [rows, rigidRows]) {
+    for (const row of collection.values()) {
+      const status = row.querySelector(".status");
+      if (status.textContent === "PASS") {
+        status.textContent = "STALE";
+        status.className = "status warn";
+      }
     }
   }
   updateOverall();
@@ -242,6 +252,28 @@ for (const fixture of fixtures) {
   const row = differentialRow(fixture.name);
   rows.set(fixture.name, row);
   ui.diffBody.appendChild(row);
+}
+
+function rigidDifferentialRow(name) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${name}</td>
+    <td class="status">pending</td>
+    <td>${DIFFERENTIAL_STEPS}</td>
+    <td>${RIGID_DIFFERENTIAL_TOLERANCE}</td>
+    <td class="center">—</td>
+    <td class="quat">—</td>
+    <td class="linear">—</td>
+    <td class="angular">—</td>
+  `;
+  return tr;
+}
+
+const rigidRows = new Map();
+for (const fixture of fixtures) {
+  const row = rigidDifferentialRow(fixture.name);
+  rigidRows.set(fixture.name, row);
+  ui.rigidDiffBody.appendChild(row);
 }
 
 async function acquireDevice() {
@@ -292,10 +324,12 @@ async function runDifferentials() {
   updateOverall();
 
   if (!device) {
-    for (const row of rows.values()) {
-      const status = row.querySelector(".status");
-      status.textContent = "UNAVAILABLE";
-      status.className = "status warn";
+    for (const collection of [rows, rigidRows]) {
+      for (const row of collection.values()) {
+        const status = row.querySelector(".status");
+        status.textContent = "UNAVAILABLE";
+        status.className = "status warn";
+      }
     }
     return;
   }
@@ -364,8 +398,68 @@ async function runDifferentials() {
 
   differentialAllPass = allPass;
   differentialPhysicsSignature = runSignature;
+
+  let rigidAllPass = true;
+  const rigidAspectRatio = Math.SQRT2 * (physics.octahedra / 2);
+  for (const fixture of fixtures) {
+    const row = rigidRows.get(fixture.name);
+    const status = row.querySelector(".status");
+    const center = row.querySelector(".center");
+    const quat = row.querySelector(".quat");
+    const linear = row.querySelector(".linear");
+    const angular = row.querySelector(".angular");
+    status.textContent = "running…";
+    status.className = "status warn";
+    center.textContent = "—";
+    quat.textContent = "—";
+    linear.textContent = "—";
+    angular.textContent = "—";
+
+    try {
+      const result = await webgpu.runRigidSectionWebGpuDifferential3D(
+        device,
+        fixture.network,
+        {
+          aspectRatio: rigidAspectRatio,
+          stiffness: physics.stiffness,
+          simulationSpeed: physics.simulationSpeed,
+        },
+        DIFFERENTIAL_STEPS,
+        RIGID_DIFFERENTIAL_TOLERANCE,
+      );
+
+      center.textContent = fmt(result.maxCenterDelta);
+      quat.textContent = fmt(result.maxOrientationDelta);
+      linear.textContent = fmt(result.maxLinearVelocityDelta);
+      angular.textContent = fmt(result.maxAngularVelocityDelta);
+
+      if (result.passed) {
+        status.textContent = "PASS";
+        status.className = "status ok";
+        log(
+          `rigid ${fixture.name}: PASS Δc=${fmt(result.maxCenterDelta)} Δq=${fmt(result.maxOrientationDelta)} Δv=${fmt(result.maxLinearVelocityDelta)} Δω=${fmt(result.maxAngularVelocityDelta)}`,
+        );
+      } else {
+        status.textContent = "FAIL";
+        status.className = "status fail";
+        rigidAllPass = false;
+        log(
+          `rigid ${fixture.name}: FAIL Δc=${fmt(result.maxCenterDelta)} Δq=${fmt(result.maxOrientationDelta)} Δv=${fmt(result.maxLinearVelocityDelta)} Δω=${fmt(result.maxAngularVelocityDelta)}`,
+        );
+      }
+    } catch (error) {
+      status.textContent = "ERROR";
+      status.className = "status fail";
+      rigidAllPass = false;
+      log(`rigid ${fixture.name}: ERROR — ${error.stack ?? error}`);
+    }
+  }
+
+  rigidDifferentialAllPass = rigidAllPass;
+  rigidDifferentialPhysicsSignature = runSignature;
   ui.rerun.disabled = false;
   log(`differential parameters: ${physics.octahedra} octa, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`);
+  log(`rigid differential aspect=${rigidAspectRatio.toFixed(4)} (flattened end tetrahedra)`);
   updateOverall();
 }
 
