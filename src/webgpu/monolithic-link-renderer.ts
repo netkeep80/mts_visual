@@ -76,6 +76,7 @@ export interface MonolithicLinkWebGpuRenderer3D {
   readonly semanticCenterBuffer: WebGpuBufferLike;
   readonly shapeParameterBuffer: WebGpuBufferLike;
   readonly shapeGaugeBuffer: WebGpuBufferLike;
+  readonly shapeSectionFrameBuffer: WebGpuBufferLike;
   render(
     frame: MonolithicLinkWebGpuRenderFrame3D,
   ): MonolithicLinkWebGpuRenderStats3D;
@@ -266,16 +267,16 @@ struct AxisFrame {
 struct ShapeSample {
   point: vec3<f32>,
   tangent: vec3<f32>,
-  reference: vec3<f32>,
 };
 
 @group(0) @binding(0) var<storage, read> semantic_centers: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read> shape_parameters: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> roll_gauge: array<vec4<f32>>;
-@group(0) @binding(3) var<storage, read> topology_data: array<u32>;
-@group(0) @binding(4) var<storage, read> surface_indices: array<u32>;
-@group(0) @binding(5) var<storage, read> gradient_t: array<f32>;
-@group(0) @binding(6) var<uniform> scene: SceneUniforms;
+@group(0) @binding(3) var<storage, read> section_frames: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read> topology_data: array<u32>;
+@group(0) @binding(5) var<storage, read> surface_indices: array<u32>;
+@group(0) @binding(6) var<storage, read> gradient_t: array<f32>;
+@group(0) @binding(7) var<uniform> scene: SceneUniforms;
 
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
@@ -432,7 +433,7 @@ fn self_sample(
     frame.z * (scale * derivative.z)
     + frame.x * (lobe_sign * scale * derivative.x)
     + frame.y * (lobe_sign * scale * derivative.y);
-  return ShapeSample(point, tangent, frame.y);
+  return ShapeSample(point, tangent);
 }
 
 fn ordinary_sample(
@@ -462,10 +463,12 @@ fn ordinary_sample(
     end_tangent,
     t,
   ) + bend_direction * (amplitude * buckling_basis_derivative(t));
-  return ShapeSample(point, tangent, bend_direction);
+  return ShapeSample(point, tangent);
 }
 
 fn sample_section(link: u32, section: u32) -> ShapeSample {
+  let descriptor = section_frames[link * scene.counts.w + section];
+  let t = descriptor.w;
   let start_index = topology_data[link * 2u];
   let end_index = topology_data[link * 2u + 1u];
   let s = semantic_centers[start_index].xyz;
@@ -489,7 +492,6 @@ fn sample_section(link: u32, section: u32) -> ShapeSample {
   );
 
   if (section <= scene.counts.z) {
-    let t = f32(section) / f32(scene.counts.z);
     if (params.z > 0.5) {
       return self_sample(s, link, t, -1.0);
     }
@@ -504,8 +506,6 @@ fn sample_section(link: u32, section: u32) -> ShapeSample {
     );
   }
 
-  let local = section - scene.counts.z;
-  let t = f32(local) / f32(scene.counts.z);
   if (params.w > 0.5) {
     return self_sample(c, link, t, 1.0);
   }
@@ -529,19 +529,22 @@ fn section_axes(
     sample.tangent,
     deterministic_frame(link).z,
   );
-  var x = cross(sample.reference, tangent);
-  if (length(x) <= 1e-8) {
-    x = deterministic_perpendicular(tangent, link + section);
-  } else {
-    x = normalize(x);
-  }
+  let stored_x = section_frames[
+    link * scene.counts.w + section
+  ].xyz;
+  var x = safe_normalize(
+    stored_x - tangent * dot(stored_x, tangent),
+    deterministic_perpendicular(tangent, link + section),
+  );
   var y = safe_normalize(
     cross(tangent, x),
     deterministic_frame(link).y,
   );
   x = safe_normalize(cross(y, tangent), x);
 
-  let twist = f32(section) * PI / 3.0;
+  // Canonical labeled octahedral sections alternate 0/60 degrees.
+  // Cumulative 60-degree twist would cyclically relabel triangle corners.
+  let twist = select(0.0, PI / 3.0, (section & 1u) == 1u);
   let cosine = cos(twist);
   let sine = sin(twist);
   let twisted_x = x * cosine + y * sine;
@@ -668,6 +671,7 @@ implements MonolithicLinkWebGpuRenderer3D {
   readonly semanticCenterBuffer: WebGpuBufferLike;
   readonly shapeParameterBuffer: WebGpuBufferLike;
   readonly shapeGaugeBuffer: WebGpuBufferLike;
+  readonly shapeSectionFrameBuffer: WebGpuBufferLike;
 
   private readonly topologyBuffer: WebGpuBufferLike;
   private readonly surfaceIndicesBuffer: WebGpuBufferLike;
@@ -706,6 +710,7 @@ implements MonolithicLinkWebGpuRenderer3D {
     this.semanticCenterBuffer = compute.centerBuffer;
     this.shapeParameterBuffer = shape.parameterBuffer;
     this.shapeGaugeBuffer = shape.gaugeBuffer;
+    this.shapeSectionFrameBuffer = shape.sectionFrameBuffer;
     this.topologyBuffer = args.topologyBuffer;
     this.surfaceIndicesBuffer = args.surfaceIndicesBuffer;
     this.wireframeIndicesBuffer = args.wireframeIndicesBuffer;
@@ -1022,6 +1027,11 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
       {
         binding: 6,
         visibility: GPU_SHADER_STAGE_VERTEX,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 7,
+        visibility: GPU_SHADER_STAGE_VERTEX,
         buffer: { type: "uniform" },
       },
     ],
@@ -1120,6 +1130,10 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     },
     {
       binding: 3,
+      resource: { buffer: shape.sectionFrameBuffer },
+    },
+    {
+      binding: 4,
       resource: { buffer: topologyBuffer },
     },
   ] as const;
@@ -1130,15 +1144,15 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     entries: [
       ...commonEntries,
       {
-        binding: 4,
+        binding: 5,
         resource: { buffer: surfaceIndicesBuffer },
       },
       {
-        binding: 5,
+        binding: 6,
         resource: { buffer: gradientBuffer },
       },
       {
-        binding: 6,
+        binding: 7,
         resource: { buffer: uniformBuffer },
       },
     ],
@@ -1149,15 +1163,15 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     entries: [
       ...commonEntries,
       {
-        binding: 4,
+        binding: 5,
         resource: { buffer: wireframeIndicesBuffer },
       },
       {
-        binding: 5,
+        binding: 6,
         resource: { buffer: gradientBuffer },
       },
       {
-        binding: 6,
+        binding: 7,
         resource: { buffer: uniformBuffer },
       },
     ],

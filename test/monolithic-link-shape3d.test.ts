@@ -9,6 +9,7 @@ import {
   resolveMonolithicLinkRollGauge3D,
 } from "../src/monolithic-link-shape3d.js";
 import type { VisualLinkNetwork } from "../src/index.js";
+import { getOctahedralLinkTemplate3D } from "../src/octahedral-link3d.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -33,8 +34,24 @@ function read3(values: Float32Array, index: number): MonolithicLinkVec3 {
   return [values[offset]!, values[offset + 1]!, values[offset + 2]!];
 }
 
+function add3(a: MonolithicLinkVec3, b: MonolithicLinkVec3): MonolithicLinkVec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
 function subtract3(a: MonolithicLinkVec3, b: MonolithicLinkVec3): MonolithicLinkVec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function scale3(a: MonolithicLinkVec3, scale: number): MonolithicLinkVec3 {
+  return [a[0] * scale, a[1] * scale, a[2] * scale];
+}
+
+function cross3(a: MonolithicLinkVec3, b: MonolithicLinkVec3): MonolithicLinkVec3 {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
 }
 
 function length3(value: MonolithicLinkVec3): number {
@@ -69,6 +86,49 @@ function pointDelta(
   index: number,
 ): number {
   return length3(subtract3(read3(left, index), read3(right, index)));
+}
+
+function rotateByQuaternion(
+  value: MonolithicLinkVec3,
+  q: readonly [number, number, number, number],
+): MonolithicLinkVec3 {
+  const qv: MonolithicLinkVec3 = [q[0], q[1], q[2]];
+  const twiceCross = scale3(cross3(qv, value), 2);
+  return add3(
+    add3(value, scale3(twiceCross, q[3])),
+    cross3(qv, twiceCross),
+  );
+}
+
+function straightMaterialVertices(
+  shape: ReturnType<typeof deriveMonolithicLinkShape3D>,
+  radius: number,
+): Float32Array {
+  const result = new Float32Array(shape.sectionCount * 3 * 3);
+  for (let section = 0; section < shape.sectionCount; section += 1) {
+    const center = read3(shape.sectionCenters, section);
+    const qOffset = section * 4;
+    const q = [
+      shape.sectionOrientations[qOffset]!,
+      shape.sectionOrientations[qOffset + 1]!,
+      shape.sectionOrientations[qOffset + 2]!,
+      shape.sectionOrientations[qOffset + 3]!,
+    ] as const;
+    for (let corner = 0; corner < 3; corner += 1) {
+      const angle = corner * 2 * Math.PI / 3;
+      const local: MonolithicLinkVec3 = [
+        radius * Math.cos(angle),
+        radius * Math.sin(angle),
+        0,
+      ];
+      const world = add3(center, rotateByQuaternion(local, q));
+      const offset = (section * 3 + corner) * 3;
+      result[offset] = world[0];
+      result[offset + 1] = world[1];
+      result[offset + 2] = world[2];
+    }
+  }
+  return result;
 }
 
 const template = getMonolithicLinkSpringTemplate3D(16 * Math.SQRT2);
@@ -190,6 +250,24 @@ approx(
   "straight second half reproduces rest arc length",
   2e-4,
 );
+
+const canonicalStraight = getOctahedralLinkTemplate3D(template.aspectRatio);
+const straightMaterial = straightMaterialVertices(
+  straight,
+  canonicalStraight.diameter / 2,
+);
+for (let edge = 0; edge < canonicalStraight.edgeCount; edge += 1) {
+  const a = canonicalStraight.edgeA[edge]!;
+  const b = canonicalStraight.edgeB[edge]!;
+  const pa = read3(straightMaterial, a);
+  const pb = read3(straightMaterial, b);
+  approx(
+    length3(subtract3(pb, pa)),
+    canonicalStraight.edgeRestLength,
+    `straight labeled material edge ${edge} stays canonical`,
+    3e-5,
+  );
+}
 
 const compressedStart: MonolithicLinkVec3 = [0, 0, 0];
 const compressedCenter: MonolithicLinkVec3 = [h * 0.64, 0, 0];

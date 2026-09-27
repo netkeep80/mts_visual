@@ -284,7 +284,11 @@ for (const needle of [
   "for (var iteration = 0u; iteration < 24u;",
   "shape_parameters[link] = vec4<f32>(",
   "var<storage, read_write> roll_gauge",
+  "var<storage, read_write> section_frames",
   "fn update_roll_gauge",
+  "fn curve_polyline_length",
+  "fn transport_x",
+  "let arc_samples = max(256u, half_segments * 8u);",
   "if (dot(geometric, previous) < 0.0)",
   "let raw_weight = (bend_sine - 0.015) / (0.08 - 0.015);",
 ]) {
@@ -295,8 +299,8 @@ for (const needle of [
 }
 same(
   [...MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL.matchAll(/var<storage/g)].length,
-  4,
-  "shape solve needs centers, topology, compact parameters and one persistent roll gauge",
+  5,
+  "shape solve needs centers, topology, compact parameters, roll gauge and derived section frames",
 );
 assert(
   !/velocity|mass|damping|integrate/i.test(MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL),
@@ -320,11 +324,21 @@ same(snapshot.sectionCount, 33, "derived presentation has N+1 connecting triangl
 same(snapshot.parameterBytes, 5 * 16, "one vec4 shape parameter record per Link");
 same(snapshot.gaugeBytes, 5 * 16, "one vec4 persistent roll gauge per Link");
 same(
+  snapshot.sectionFrameBytes,
+  5 * 33 * 16,
+  "one vec4 transported frame/arc parameter per derived section",
+);
+same(
   snapshot.dynamicStateBytes,
-  5 * 32,
-  "derived GPU state stays O(linkCount): shape vec4 + gauge vec4",
+  5 * 32 + 5 * 33 * 16,
+  "derived GPU state is compact per-Link data plus section presentation frames",
 );
 same(shape.gaugeBuffer.size, 5 * 16, "gauge buffer is exactly one vec4 per Link");
+same(
+  shape.sectionFrameBuffer.size,
+  5 * 33 * 16,
+  "section frame buffer has exact derived-section extent",
+);
 
 const setupWriteCount = device.queue.writes.length;
 const step = shape.update();
@@ -360,12 +374,17 @@ same(
   "1000-Link roll gauge state adds only 16 kB",
 );
 same(
+  largeShape.snapshot().sectionFrameBytes,
+  1000 * 33 * 16,
+  "1000-Link derived section-frame state is explicit and resolution-linear",
+);
+same(
   largeShape.snapshot().dynamicStateBytes,
-  1000 * 32,
-  "1000-Link total derived shape+gauge state is 32 kB",
+  1000 * 32 + 1000 * 33 * 16,
+  "1000-Link total derived state includes compact Link state plus presentation frames",
 );
 largeShape.destroy();
 
 console.log(
-  `[v0.5 #100 monolithic GPU gauge] PASS links=${snapshot.linkCount} params=${snapshot.parameterBytes}B gauge=${snapshot.gaugeBytes}B large=${1000 * 32}B`,
+  `[v0.5 #102 monolithic GPU carrier] PASS links=${snapshot.linkCount} params=${snapshot.parameterBytes}B gauge=${snapshot.gaugeBytes}B sectionFrames=${snapshot.sectionFrameBytes}B`,
 );

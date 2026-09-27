@@ -530,6 +530,7 @@ export function resolveMonolithicLinkRollGauge3D(
 function parallelTransportOrientations(
   centers: readonly MonolithicLinkVec3[],
   linkIndex: number,
+  initialNormal?: MonolithicLinkVec3,
 ): Float32Array {
   const count = centers.length;
   const result = new Float32Array(count * 4);
@@ -549,8 +550,15 @@ function parallelTransportOrientations(
   }
 
   let z = tangents[0]!;
-  let x = deterministicPerpendicular(z, linkIndex);
-  let y = normalize3(cross3(z, x), deterministicAxes(linkIndex)[1]);
+  const deterministic = deterministicPerpendicular(z, linkIndex);
+  const roll = initialNormal === undefined
+    ? deterministic
+    : normalize3(
+      subtract3(initialNormal, scale3(z, dot3(initialNormal, z))),
+      deterministic,
+    );
+  let x = normalize3(cross3(roll, z), deterministic);
+  let y = normalize3(cross3(z, x), roll);
   x = normalize3(cross3(y, z), x);
 
   for (let index = 0; index < count; index += 1) {
@@ -575,7 +583,10 @@ function parallelTransportOrientations(
       z = nextZ;
     }
 
-    const twist = index * Math.PI / 3;
+    // Canonical labeled octahedral sections alternate 0/60 degrees.
+    // Cumulative 60-degree phase permutes corner identities every 120 degrees
+    // and therefore disagrees with the static template edge topology.
+    const twist = (index & 1) * Math.PI / 3;
     const cosineTwist = Math.cos(twist);
     const sineTwist = Math.sin(twist);
     const twistedX = add3(
@@ -677,7 +688,11 @@ export function deriveMonolithicLinkShape3D(
 
   return Object.freeze({
     sectionCenters: packedCenters,
-    sectionOrientations: parallelTransportOrientations(centers, linkIndex),
+    sectionOrientations: parallelTransportOrientations(
+      centers,
+      linkIndex,
+      macroNormal,
+    ),
     sectionCount: centers.length,
     centerSection: halfSegments,
     firstHalfArcLength: firstCurve.arcLength,
