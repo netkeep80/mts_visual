@@ -784,22 +784,9 @@ function projectWorldToClient(state, world) {
   ];
 }
 
-function rigidBodyCenter3(centers, bodyIndex) {
-  const offset = bodyIndex * 3;
-  return [centers[offset], centers[offset + 1], centers[offset + 2]];
-}
-
-function rigidSemanticCenter3(template, centers, linkIndex) {
-  const bodyIndex = linkIndex * template.sectionCount + template.centerSection;
-  return rigidBodyCenter3(centers, bodyIndex);
-}
-
-function centerDragBodySet(state, linkIndex) {
-  return webgpu.collectRigidSectionCenterDragBodies3D(
-    state.compute.topology,
-    state.compute.template,
-    linkIndex,
-  );
+function packedVec3(values, index) {
+  const offset = index * 3;
+  return [values[offset], values[offset + 1], values[offset + 2]];
 }
 
 function pointerWorldRay(state, event) {
@@ -826,7 +813,7 @@ function pickCenterIcosahedron(state, event, centers) {
     ray.direction,
     centers,
     2
-      * state.compute.template.edgeRestLength
+      * state.shape.template.edgeRestLength
       * selectedMarkerControls().centerMarkerScale,
   );
 }
@@ -853,13 +840,13 @@ function moveCenterDragTarget(state, dx, dy) {
 function applyCenterDrag(state) {
   const drag = state.centerDrag;
   if (!drag) return null;
-  return state.compute.writeCenterOverrides(
-    drag.bodies.map(({ bodyIndex }) => ({
-      bodyIndex,
+  return state.compute.writeCenterOverrides([
+    {
+      linkIndex: drag.linkIndex,
       position: [...drag.target],
       velocity: [0, 0, 0],
-    })),
-  );
+    },
+  ]);
 }
 
 function clamp(value, minimum, maximum) {
@@ -932,7 +919,7 @@ function installCameraControls(state) {
       log(`center drag released: ${releasedDrag.key}`);
       setStatus(
         ui.renderCompute,
-        `AVAILABLE · k=${state.compute.stiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+        `AVAILABLE · mC=${state.compute.centerMass.toFixed(2)} · kS=${state.compute.stretchStiffness.toFixed(2)} · kB=${state.compute.straighteningStiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
         "ok",
       );
     }
@@ -956,17 +943,16 @@ function installCameraControls(state) {
       key: state.compute.topology.keys[selected],
       target: [...center],
       depth,
-      bodies: centerDragBodySet(state, selected),
       uploadedBytes: 0,
     };
     state.semanticCenterCache[selected] = [...center];
     mode = "center";
     log(
-      `center drag selected: ${state.centerDrag.key} · source=${source} · ${state.centerDrag.bodies.length} rigid sections`,
+      `center drag selected: ${state.centerDrag.key} · source=${source} · one semantic CENTER`,
     );
     setStatus(
       ui.renderCompute,
-      `DRAG ${state.centerDrag.key} · sparse rigid-center override`,
+      `DRAG ${state.centerDrag.key} · semantic CENTER override`,
       "warn",
     );
   };
@@ -978,7 +964,7 @@ function installCameraControls(state) {
     try {
       // One-shot readback on pointer-down keeps picking exact while ordinary
       // frames remain zero-copy and the simulated CENTER positions keep moving.
-      const centers = await state.compute.readBackCenters();
+      const gpuState = await state.compute.readBackState();
       if (
         generation !== pickGeneration
         || pointerId !== event.pointerId
@@ -987,7 +973,7 @@ function installCameraControls(state) {
 
       const worldCenters = [];
       for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
-        const center = rigidSemanticCenter3(state.compute.template, centers, link);
+        const center = packedVec3(gpuState.centers, link);
         worldCenters.push(center);
         state.semanticCenterCache[link] = [...center];
       }
@@ -1009,7 +995,7 @@ function installCameraControls(state) {
         log("center icosahedron pick MISS — continuing as orbit");
         setStatus(
           ui.renderCompute,
-          `AVAILABLE · m=${state.compute.nodeMass.toFixed(2)} · k∥=${state.compute.longitudinalStiffness.toFixed(2)} · k⊥=${state.compute.transverseStiffness.toFixed(2)} · α=${state.compute.nonlinearity.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+          `AVAILABLE · mC=${state.compute.centerMass.toFixed(2)} · kS=${state.compute.stretchStiffness.toFixed(2)} · kB=${state.compute.straighteningStiffness.toFixed(2)} · α=${state.compute.nonlinearity.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
           "ok",
         );
         return;
