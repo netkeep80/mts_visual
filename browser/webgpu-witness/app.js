@@ -58,6 +58,16 @@ const [core, webgpu, buildInfo] = await Promise.all([
   }),
 ]);
 
+for (const exportName of [
+  "createOctahedralWebGpuZeroCopyRenderer3D",
+  "createRigidSectionWebGpuZeroCopyRenderer3D",
+  "createRigidSectionWebGpuCompute3D",
+]) {
+  if (typeof webgpu[exportName] !== "function") {
+    throw new Error(`published WebGPU bundle missing export: ${exportName}`);
+  }
+}
+
 const baselineAspectRatio = core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO;
 const baselineOctahedra = core.OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA;
 if (!Number.isFinite(baselineAspectRatio) || baselineOctahedra !== 20) {
@@ -460,7 +470,7 @@ async function runDifferentials() {
   rigidDifferentialPhysicsSignature = runSignature;
   ui.rerun.disabled = false;
   log(`differential parameters: ${physics.octahedra} octa, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`);
-  log(`rigid differential aspect=${rigidAspectRatio.toFixed(4)} (flattened end tetrahedra)`);
+  log(`rigid differential aspect=${rigidAspectRatio.toFixed(4)} (capless rigid triangular sections)`);
   updateOverall();
 }
 
