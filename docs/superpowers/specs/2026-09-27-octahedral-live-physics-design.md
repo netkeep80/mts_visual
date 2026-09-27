@@ -27,6 +27,15 @@ aspectRatio
 stiffness
 ```
 
+The low-level template remains legal down to two octahedra, but the accepted live/presentation baseline is **20 octahedra**:
+
+```text
+OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA = 20
+OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO = sqrt(2) * 11 ≈ 15.56
+```
+
+This is a recommended baseline, not a third physical parameter.
+
 Runtime adds one global control:
 
 ```text
@@ -46,28 +55,49 @@ The accepted seed layout is a centered cubic lattice:
 ```text
 side  = ceil(cuberoot(linkCount))
 depth = ceil(linkCount / (side * side))
-spacing = max(template.diameter * 2.5, template.restLength * 0.75)
+spacing = template.diameter * 1.5
 
 x = linkIndex % side
 y = floor(linkIndex / side) % side
 z = floor(linkIndex / (side * side))
 ```
 
-Coordinates are centered around the used lattice extents. For fixed template geometry this is O(N) to materialize and the scene extent grows O(cuberoot(N)), not O(N).
+Coordinates are centered around the used lattice extents. Seed density depends only on Link cross-section diameter, never on mast rest length. This is essential: increasing octahedron count must make a Link longer/slenderer instead of expanding the whole seed volume by the same factor.
+
+For fixed template geometry this is O(N) to materialize and the scene extent grows O(cuberoot(N)), not O(N).
 
 A one-dimensional seed such as `[(i-(N-1)/2)*spacing,0,0]` is forbidden: it creates a symmetry trap in which large A-networks initialize as a string.
 
-Before hinge projection, the normalized mast local +Z axis is rotated toward:
+The normalized mast transverse frame is oriented from:
 
 ```text
 seedCenter(end[i]) - seedCenter(start[i])
 ```
 
-when that vector is nonzero. Coincident target centers, including self-incidence, use a deterministic finite fallback axis based only on Link index. This orientation is presentation initialization only; it does not constrain later hinge orientation.
+when that vector is nonzero. Coincident target centers, including self-incidence, use a deterministic finite fallback axis based only on Link index.
 
 The mast's virtual center remains exactly at its own seeded center.
 
-After placement/orientation, START and END apexes are projected to the virtual geometric centers named by `start[i]` and `end[i]`.
+The longitudinal fit is **distributed across the complete two half-masts before hinge projection**. For every rest vertex with longitudinal coordinate `z`:
+
+```text
+halfLength = template.restLength / 2
+fraction   = abs(z) / halfLength
+
+target = z < 0 ? seedCenter(start[i]) : seedCenter(end[i])
+centerline(z) = seedCenter(i)
+              + fraction * (target - seedCenter(i))
+
+position = centerline(z) + unchanged transverse rest offset
+```
+
+Therefore:
+- the central triangle remains centered on `seedCenter(i)`;
+- START/END apexes already land on their target seed centers;
+- required incidence deformation is spread across every longitudinal module;
+- a late hinge projection is only the authoritative positional constraint, not the mechanism that tears three cap springs across the entire target distance.
+
+This replaces the rejected initialization in which an undeformed rigid mast was placed at its own center and then only the two apexes were teleported to semantic targets.
 
 Self-incidence therefore starts finite:
 
@@ -146,6 +176,9 @@ Tests must prove:
 - packed array sizes are exact;
 - initial double-self Link is finite and non-collapsed;
 - representative multi-Link seed centers are non-collinear and have genuine 3D span;
+- seed spacing is exactly 1.5x diameter and independent of mast rest length;
+- the 20-octahedron 333-Link hub-heavy witness has initial p95 relative spring strain <= 0.6, max <= 1.0, and zero edges above 100% strain;
+- after 360 damped ticks hub-heavy spring energy does not exceed its initial value by more than 5%;
 - seed spatial extent follows the cubic O(cuberoot(N)) bound rather than the former linear string layout;
 - non-self mast longitudinal orientation follows START-target -> END-target seed direction before apex projection;
 - zero stiffness produces no free internal motion;
