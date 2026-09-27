@@ -21,6 +21,7 @@ import {
 
 const WORKGROUP_SIZE = 64;
 const DEFAULT_MAX_WORKGROUPS_PER_DIMENSION = 65_535;
+const REQUIRED_STORAGE_BUFFERS_PER_STAGE = 7;
 
 const GPU_BUFFER_USAGE = Object.freeze({
   MAP_READ: 0x0001,
@@ -144,15 +145,27 @@ struct Globals {
 @group(0) @binding(1) var<storage, read_write> orientations: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> linear_velocities: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> angular_velocities: array<vec4<f32>>;
-@group(0) @binding(4) var<storage, read_write> forces: array<vec4<f32>>;
-@group(0) @binding(5) var<storage, read_write> torques: array<vec4<f32>>;
-@group(0) @binding(6) var<storage, read> topology: array<u32>;
-@group(0) @binding(7) var<storage, read> incoming_offsets: array<u32>;
-@group(0) @binding(8) var<storage, read> incoming_refs: array<u32>;
-@group(0) @binding(9) var<uniform> globals: Globals;
-@group(0) @binding(10) var<storage, read_write> scratch_centers: array<vec4<f32>>;
-@group(0) @binding(11) var<storage, read_write> scratch_linear_velocities: array<vec4<f32>>;
-@group(0) @binding(12) var<uniform> control: vec4<u32>;
+@group(0) @binding(4) var<storage, read_write> accumulation: array<vec4<f32>>;
+@group(0) @binding(5) var<storage, read> topology_data: array<u32>;
+@group(0) @binding(6) var<storage, read_write> scratch: array<vec4<f32>>;
+@group(0) @binding(7) var<uniform> globals: Globals;
+@group(0) @binding(8) var<uniform> control: vec4<u32>;
+
+fn force_slot(body: u32) -> u32 {
+  return body * 2u;
+}
+
+fn torque_slot(body: u32) -> u32 {
+  return body * 2u + 1u;
+}
+
+fn scratch_center_slot(body: u32) -> u32 {
+  return body * 2u;
+}
+
+fn scratch_velocity_slot(body: u32) -> u32 {
+  return body * 2u + 1u;
+}
 
 fn linear_index(gid: vec3<u32>) -> u32 {
   return gid.x * ${WORKGROUP_SIZE}u + gid.y * 65535u * ${WORKGROUP_SIZE}u;
@@ -204,8 +217,8 @@ fn clear_force_torque_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (body >= globals.counts.w) {
     return;
   }
-  forces[body] = vec4<f32>(0.0);
-  torques[body] = vec4<f32>(0.0);
+  accumulation[force_slot(body)] = vec4<f32>(0.0);
+  accumulation[torque_slot(body)] = vec4<f32>(0.0);
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE})
@@ -230,10 +243,10 @@ fn relation_batch_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let upper_q = orientations[upper];
   let k = globals.physics.x;
 
-  var lower_force = forces[lower].xyz;
-  var upper_force = forces[upper].xyz;
-  var lower_torque = torques[lower].xyz;
-  var upper_torque = torques[upper].xyz;
+  var lower_force = accumulation[force_slot(lower)].xyz;
+  var upper_force = accumulation[force_slot(upper)].xyz;
+  var lower_torque = accumulation[torque_slot(lower)].xyz;
+  var upper_torque = accumulation[torque_slot(upper)].xyz;
 
   for (var corner = 0u; corner < 3u; corner = corner + 1u) {
     let local_upper = local_triangle_vertex(corner);
@@ -250,10 +263,10 @@ fn relation_batch_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     lower_torque = lower_torque + cross(target_point - lower_center, force_lower);
   }
 
-  forces[lower] = vec4<f32>(lower_force, 0.0);
-  forces[upper] = vec4<f32>(upper_force, 0.0);
-  torques[lower] = vec4<f32>(lower_torque, 0.0);
-  torques[upper] = vec4<f32>(upper_torque, 0.0);
+  accumulation[force_slot(lower)] = vec4<f32>(lower_force, 0.0);
+  accumulation[force_slot(upper)] = vec4<f32>(upper_force, 0.0);
+  accumulation[torque_slot(lower)] = vec4<f32>(lower_torque, 0.0);
+  accumulation[torque_slot(upper)] = vec4<f32>(upper_torque, 0.0);
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE})
@@ -269,11 +282,11 @@ fn integrate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   var v = linear_velocities[body].xyz;
-  v = (v + forces[body].xyz * globals.geometry.z * dt) * globals.physics.z;
+  v = (v + accumulation[force_slot(body)].xyz * globals.geometry.z * dt) * globals.physics.z;
   let next_center = centers[body].xyz + v * dt;
 
   let q = q_normalize(orientations[body]);
-  let torque_local = q_rotate(q_conjugate(q), torques[body].xyz);
+  let torque_local = q_rotate(q_conjugate(q), accumulation[torque_slot(body)].xyz);
   let alpha_local = torque_local * globals.inverse_inertia.xyz;
   let alpha_world = q_rotate(q, alpha_local);
 
@@ -292,14 +305,14 @@ fn hinge_read_center(body: u32, direction: u32) -> vec3<f32> {
   if (direction == 0u) {
     return centers[body].xyz;
   }
-  return scratch_centers[body].xyz;
+  return scratch[scratch_center_slot(body)].xyz;
 }
 
 fn hinge_read_velocity(body: u32, direction: u32) -> vec3<f32> {
   if (direction == 0u) {
     return linear_velocities[body].xyz;
   }
-  return scratch_linear_velocities[body].xyz;
+  return scratch[scratch_velocity_slot(body)].xyz;
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE})
@@ -323,7 +336,7 @@ fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var degree = 0u;
 
   if (local == 0u) {
-    let target_link = topology[link * 2u];
+    let target_link = topology_data[link * 2u];
     let other = target_link * section_count + middle;
     correction = correction + 0.5 * (hinge_read_center(other, direction) - self_center);
     velocity_correction = velocity_correction
@@ -332,7 +345,7 @@ fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   if (local == end_section) {
-    let target_link = topology[link * 2u + 1u];
+    let target_link = topology_data[link * 2u + 1u];
     let other = target_link * section_count + middle;
     correction = correction + 0.5 * (hinge_read_center(other, direction) - self_center);
     velocity_correction = velocity_correction
@@ -341,10 +354,10 @@ fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   if (local == middle) {
-    let begin = incoming_offsets[link];
-    let finish = incoming_offsets[link + 1u];
+    let begin = topology_data[globals.counts2.z + link];
+    let finish = topology_data[globals.counts2.z + link + 1u];
     for (var cursor = begin; cursor < finish; cursor = cursor + 1u) {
-      let encoded = incoming_refs[cursor];
+      let encoded = topology_data[globals.counts2.w + cursor];
       let source_link = encoded / 2u;
       let role = encoded & 1u;
       let source_local = select(0u, end_section, role == 1u);
@@ -365,8 +378,8 @@ fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   if (direction == 0u) {
-    scratch_centers[body] = vec4<f32>(next_center, 0.0);
-    scratch_linear_velocities[body] = vec4<f32>(next_velocity, 0.0);
+    scratch[scratch_center_slot(body)] = vec4<f32>(next_center, 0.0);
+    scratch[scratch_velocity_slot(body)] = vec4<f32>(next_velocity, 0.0);
   } else {
     centers[body] = vec4<f32>(next_center, 0.0);
     linear_velocities[body] = vec4<f32>(next_velocity, 0.0);
@@ -433,6 +446,21 @@ function topologyWords(topology: OctahedralLinkTopology3D): Uint32Array {
   return words;
 }
 
+function packedTopologyData(
+  topology: OctahedralLinkTopology3D,
+  incomingOffsets: Uint32Array,
+  incomingRefs: Uint32Array,
+): Uint32Array {
+  const topologyPart = topologyWords(topology);
+  const packed = new Uint32Array(
+    topologyPart.length + incomingOffsets.length + incomingRefs.length,
+  );
+  packed.set(topologyPart, 0);
+  packed.set(incomingOffsets, topologyPart.length);
+  packed.set(incomingRefs, topologyPart.length + incomingOffsets.length);
+  return packed;
+}
+
 function globalsData(
   topology: OctahedralLinkTopology3D,
   template: RigidSectionTemplate3D,
@@ -450,8 +478,8 @@ function globalsData(
   u32[3] = bodyCount;
   u32[4] = template.octahedronCount;
   u32[5] = template.pairCount;
-  u32[6] = RIGID_SECTION_HINGE_SOLVER_ITERATIONS;
-  u32[7] = 0;
+  u32[6] = topology.linkCount * 2;
+  u32[7] = u32[6]! + topology.linkCount + 1;
 
   const dt = RIGID_SECTION_BASE_TIME_STEP * simulationSpeed;
   f32[8] = stiffness;
@@ -551,14 +579,10 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
   readonly angularVelocityBuffer: WebGpuBufferLike;
 
   private readonly device: WebGpuDeviceLike;
-  private readonly forceBuffer: WebGpuBufferLike;
-  private readonly torqueBuffer: WebGpuBufferLike;
-  private readonly topologyBuffer: WebGpuBufferLike;
-  private readonly incomingOffsetsBuffer: WebGpuBufferLike;
-  private readonly incomingRefsBuffer: WebGpuBufferLike;
+  private readonly accumulationBuffer: WebGpuBufferLike;
+  private readonly topologyDataBuffer: WebGpuBufferLike;
   private readonly globalsBuffer: WebGpuBufferLike;
-  private readonly scratchCenterBuffer: WebGpuBufferLike;
-  private readonly scratchLinearVelocityBuffer: WebGpuBufferLike;
+  private readonly scratchBuffer: WebGpuBufferLike;
   private readonly controlBuffers: readonly WebGpuBufferLike[];
   private readonly bindGroups: readonly object[];
   private readonly pipelines: Readonly<Record<string, WebGpuComputePipelineLike>>;
@@ -577,14 +601,10 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
     orientationBuffer: WebGpuBufferLike;
     linearVelocityBuffer: WebGpuBufferLike;
     angularVelocityBuffer: WebGpuBufferLike;
-    forceBuffer: WebGpuBufferLike;
-    torqueBuffer: WebGpuBufferLike;
-    topologyBuffer: WebGpuBufferLike;
-    incomingOffsetsBuffer: WebGpuBufferLike;
-    incomingRefsBuffer: WebGpuBufferLike;
+    accumulationBuffer: WebGpuBufferLike;
+    topologyDataBuffer: WebGpuBufferLike;
     globalsBuffer: WebGpuBufferLike;
-    scratchCenterBuffer: WebGpuBufferLike;
-    scratchLinearVelocityBuffer: WebGpuBufferLike;
+    scratchBuffer: WebGpuBufferLike;
     controlBuffers: readonly WebGpuBufferLike[];
     bindGroups: readonly object[];
     pipelines: Readonly<Record<string, WebGpuComputePipelineLike>>;
@@ -598,14 +618,10 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
     this.orientationBuffer = args.orientationBuffer;
     this.linearVelocityBuffer = args.linearVelocityBuffer;
     this.angularVelocityBuffer = args.angularVelocityBuffer;
-    this.forceBuffer = args.forceBuffer;
-    this.torqueBuffer = args.torqueBuffer;
-    this.topologyBuffer = args.topologyBuffer;
-    this.incomingOffsetsBuffer = args.incomingOffsetsBuffer;
-    this.incomingRefsBuffer = args.incomingRefsBuffer;
+    this.accumulationBuffer = args.accumulationBuffer;
+    this.topologyDataBuffer = args.topologyDataBuffer;
     this.globalsBuffer = args.globalsBuffer;
-    this.scratchCenterBuffer = args.scratchCenterBuffer;
-    this.scratchLinearVelocityBuffer = args.scratchLinearVelocityBuffer;
+    this.scratchBuffer = args.scratchBuffer;
     this.controlBuffers = args.controlBuffers;
     this.bindGroups = args.bindGroups;
     this.pipelines = args.pipelines;
@@ -769,14 +785,10 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
       this.orientationBuffer,
       this.linearVelocityBuffer,
       this.angularVelocityBuffer,
-      this.forceBuffer,
-      this.torqueBuffer,
-      this.topologyBuffer,
-      this.incomingOffsetsBuffer,
-      this.incomingRefsBuffer,
+      this.accumulationBuffer,
+      this.topologyDataBuffer,
       this.globalsBuffer,
-      this.scratchCenterBuffer,
-      this.scratchLinearVelocityBuffer,
+      this.scratchBuffer,
       ...this.controlBuffers,
     ]) buffer.destroy();
   }
@@ -791,14 +803,10 @@ function buildEntries(args: {
   orientationBuffer: WebGpuBufferLike;
   linearVelocityBuffer: WebGpuBufferLike;
   angularVelocityBuffer: WebGpuBufferLike;
-  forceBuffer: WebGpuBufferLike;
-  torqueBuffer: WebGpuBufferLike;
-  topologyBuffer: WebGpuBufferLike;
-  incomingOffsetsBuffer: WebGpuBufferLike;
-  incomingRefsBuffer: WebGpuBufferLike;
+  accumulationBuffer: WebGpuBufferLike;
+  topologyDataBuffer: WebGpuBufferLike;
+  scratchBuffer: WebGpuBufferLike;
   globalsBuffer: WebGpuBufferLike;
-  scratchCenterBuffer: WebGpuBufferLike;
-  scratchLinearVelocityBuffer: WebGpuBufferLike;
   controlBuffer: WebGpuBufferLike;
 }): readonly object[] {
   return [
@@ -806,15 +814,11 @@ function buildEntries(args: {
     { binding: 1, resource: { buffer: args.orientationBuffer } },
     { binding: 2, resource: { buffer: args.linearVelocityBuffer } },
     { binding: 3, resource: { buffer: args.angularVelocityBuffer } },
-    { binding: 4, resource: { buffer: args.forceBuffer } },
-    { binding: 5, resource: { buffer: args.torqueBuffer } },
-    { binding: 6, resource: { buffer: args.topologyBuffer } },
-    { binding: 7, resource: { buffer: args.incomingOffsetsBuffer } },
-    { binding: 8, resource: { buffer: args.incomingRefsBuffer } },
-    { binding: 9, resource: { buffer: args.globalsBuffer } },
-    { binding: 10, resource: { buffer: args.scratchCenterBuffer } },
-    { binding: 11, resource: { buffer: args.scratchLinearVelocityBuffer } },
-    { binding: 12, resource: { buffer: args.controlBuffer } },
+    { binding: 4, resource: { buffer: args.accumulationBuffer } },
+    { binding: 5, resource: { buffer: args.topologyDataBuffer } },
+    { binding: 6, resource: { buffer: args.scratchBuffer } },
+    { binding: 7, resource: { buffer: args.globalsBuffer } },
+    { binding: 8, resource: { buffer: args.controlBuffer } },
   ];
 }
 
@@ -835,6 +839,15 @@ export async function createRigidSectionWebGpuCompute3D(
   const reverse = buildRigidSectionReverseIncidence3D(topology);
   const bodyCount = topology.linkCount * template.sectionCount;
   const vec4Bytes = bodyCount * 4 * 4;
+  const maxStorageBuffers = device.limits?.maxStorageBuffersPerShaderStage;
+  if (
+    maxStorageBuffers !== undefined
+    && maxStorageBuffers < REQUIRED_STORAGE_BUFFERS_PER_STAGE
+  ) {
+    throw new Error(
+      `rigid-section WebGPU requires ${REQUIRED_STORAGE_BUFFERS_PER_STAGE} storage buffers per shader stage; adapter exposes ${maxStorageBuffers}`,
+    );
+  }
 
   const centerBuffer = createBuffer(device, "rigid-section-centers", vec4Bytes,
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC | GPU_BUFFER_USAGE.COPY_DST);
@@ -844,20 +857,29 @@ export async function createRigidSectionWebGpuCompute3D(
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC | GPU_BUFFER_USAGE.COPY_DST);
   const angularVelocityBuffer = createBuffer(device, "rigid-section-angular-velocities", vec4Bytes,
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC | GPU_BUFFER_USAGE.COPY_DST);
-  const forceBuffer = createBuffer(device, "rigid-section-forces", vec4Bytes,
-    GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST);
-  const torqueBuffer = createBuffer(device, "rigid-section-torques", vec4Bytes,
-    GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST);
-  const scratchCenterBuffer = createBuffer(device, "rigid-section-scratch-centers", vec4Bytes,
-    GPU_BUFFER_USAGE.STORAGE);
-  const scratchLinearVelocityBuffer = createBuffer(device, "rigid-section-scratch-linear-velocities", vec4Bytes,
-    GPU_BUFFER_USAGE.STORAGE);
-  const topologyBuffer = createBuffer(device, "rigid-section-topology", topology.linkCount * 2 * 4,
-    GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST);
-  const incomingOffsetsBuffer = createBuffer(device, "rigid-section-incoming-offsets",
-    reverse.incomingOffsets.byteLength, GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST);
-  const incomingRefsBuffer = createBuffer(device, "rigid-section-incoming-refs",
-    reverse.incomingRefs.byteLength, GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST);
+  const accumulationBuffer = createBuffer(
+    device,
+    "rigid-section-accumulation",
+    vec4Bytes * 2,
+    GPU_BUFFER_USAGE.STORAGE,
+  );
+  const scratchBuffer = createBuffer(
+    device,
+    "rigid-section-scratch",
+    vec4Bytes * 2,
+    GPU_BUFFER_USAGE.STORAGE,
+  );
+  const topologyData = packedTopologyData(
+    topology,
+    reverse.incomingOffsets,
+    reverse.incomingRefs,
+  );
+  const topologyDataBuffer = createBuffer(
+    device,
+    "rigid-section-topology-data",
+    topologyData.byteLength,
+    GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST,
+  );
   const globalsBuffer = createBuffer(device, "rigid-section-globals", 80,
     GPU_BUFFER_USAGE.UNIFORM | GPU_BUFFER_USAGE.COPY_DST);
 
@@ -865,9 +887,7 @@ export async function createRigidSectionWebGpuCompute3D(
   writeWhole(device, orientationBuffer, cpuSeed.orientations);
   writeWhole(device, linearVelocityBuffer, packVec3ToVec4(cpuSeed.linearVelocities));
   writeWhole(device, angularVelocityBuffer, packVec3ToVec4(cpuSeed.angularVelocities));
-  writeWhole(device, topologyBuffer, topologyWords(topology));
-  writeWhole(device, incomingOffsetsBuffer, reverse.incomingOffsets);
-  writeWhole(device, incomingRefsBuffer, reverse.incomingRefs);
+  writeWhole(device, topologyDataBuffer, topologyData);
   writeWhole(device, globalsBuffer, globalsData(topology, template, stiffness, simulationSpeed));
 
   const controlValues = [0, 1, 0, 1] as const;
@@ -896,14 +916,10 @@ export async function createRigidSectionWebGpuCompute3D(
       { binding: 2, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
       { binding: 3, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
       { binding: 4, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
-      { binding: 5, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
-      { binding: 6, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
-      { binding: 7, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
-      { binding: 8, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
-      { binding: 9, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
-      { binding: 10, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
-      { binding: 11, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
-      { binding: 12, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
+      { binding: 5, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 6, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
+      { binding: 7, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
+      { binding: 8, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
     ],
   });
   const pipelineLayout = device.createPipelineLayout({
@@ -932,14 +948,10 @@ export async function createRigidSectionWebGpuCompute3D(
     orientationBuffer,
     linearVelocityBuffer,
     angularVelocityBuffer,
-    forceBuffer,
-    torqueBuffer,
-    topologyBuffer,
-    incomingOffsetsBuffer,
-    incomingRefsBuffer,
+    accumulationBuffer,
+    topologyDataBuffer,
+    scratchBuffer,
     globalsBuffer,
-    scratchCenterBuffer,
-    scratchLinearVelocityBuffer,
   };
   const bindGroups = controlBuffers.map((controlBuffer, index) => device.createBindGroup({
     label: `rigid-section-bind-${index}`,
