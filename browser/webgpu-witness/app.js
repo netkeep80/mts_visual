@@ -14,8 +14,18 @@ const ui = {
   geometryBody: $("geometry-body"),
   lengthOcta: $("length-octa"),
   lengthValue: $("length-value"),
-  stiffness: $("stiffness"),
-  stiffnessValue: $("stiffness-value"),
+  nodeMass: $("node-mass"),
+  nodeMassValue: $("node-mass-value"),
+  longitudinalStiffness: $("longitudinal-stiffness"),
+  longitudinalStiffnessValue: $("longitudinal-stiffness-value"),
+  transverseStiffness: $("transverse-stiffness"),
+  transverseStiffnessValue: $("transverse-stiffness-value"),
+  nonlinearity: $("nonlinearity"),
+  nonlinearityValue: $("nonlinearity-value"),
+  linearDamping: $("linear-damping"),
+  linearDampingValue: $("linear-damping-value"),
+  angularDamping: $("angular-damping"),
+  angularDampingValue: $("angular-damping-value"),
   simulationSpeed: $("simulation-speed"),
   simulationSpeedValue: $("simulation-speed-value"),
   restartRender: $("restart-render"),
@@ -23,6 +33,8 @@ const ui = {
   autoRotate: $("auto-rotate"),
   wireframe: $("wireframe"),
   pauseRender: $("pause-render"),
+  fullscreenRender: $("fullscreen-render"),
+  viewportShell: $("viewport-shell"),
   renderCompute: $("render-compute"),
   renderTopology: $("render-topology"),
   renderZeroCopy: $("render-zero-copy"),
@@ -94,25 +106,44 @@ setStatus(
   "ok",
 );
 
+const LINK_OCTAHEDRON_CHOICES = Object.freeze([16, 32, 64, 128, 256]);
+
+function controlNumber(element, label, minimum, maximum) {
+  const value = Number(element.value);
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`invalid ${label} control value: ${element.value}`);
+  }
+  return value;
+}
+
 function selectedPhysics() {
   const octahedra = Number(ui.lengthOcta.value);
-  if (!Number.isSafeInteger(octahedra) || octahedra < 10 || octahedra > 100 || octahedra % 2 !== 0) {
+  if (!LINK_OCTAHEDRON_CHOICES.includes(octahedra)) {
     throw new Error(`invalid octahedron control value: ${ui.lengthOcta.value}`);
   }
 
-  const stiffness = Number(ui.stiffness.value);
-  const simulationSpeed = Number(ui.simulationSpeed.value);
-  if (!Number.isFinite(stiffness) || stiffness < 0 || stiffness > 5) {
-    throw new Error(`invalid stiffness control value: ${ui.stiffness.value}`);
-  }
-  if (!Number.isFinite(simulationSpeed) || simulationSpeed < 0 || simulationSpeed > 4) {
-    throw new Error(`invalid simulation speed control value: ${ui.simulationSpeed.value}`);
-  }
+  const nodeMass = controlNumber(ui.nodeMass, "node mass", 0.05, 20);
+  const longitudinalStiffness =
+    controlNumber(ui.longitudinalStiffness, "longitudinal stiffness", 0, 100);
+  const transverseStiffness =
+    controlNumber(ui.transverseStiffness, "transverse stiffness", 0, 100);
+  const nonlinearity = controlNumber(ui.nonlinearity, "nonlinearity", 0, 50);
+  const linearDampingRate =
+    controlNumber(ui.linearDamping, "linear damping", 0, 10);
+  const angularDampingRate =
+    controlNumber(ui.angularDamping, "angular damping", 0, 10);
+  const simulationSpeed =
+    controlNumber(ui.simulationSpeed, "simulation speed", 0, 8);
 
   return Object.freeze({
     octahedra,
     aspectRatio: Math.SQRT2 * (octahedra / 2),
-    stiffness,
+    nodeMass,
+    longitudinalStiffness,
+    transverseStiffness,
+    nonlinearity,
+    linearDampingRate,
+    angularDampingRate,
     simulationSpeed,
   });
 }
@@ -120,15 +151,28 @@ function selectedPhysics() {
 function physicsSignature(physics = selectedPhysics()) {
   return [
     physics.octahedra,
-    physics.stiffness.toFixed(4),
+    physics.nodeMass.toFixed(4),
+    physics.longitudinalStiffness.toFixed(4),
+    physics.transverseStiffness.toFixed(4),
+    physics.nonlinearity.toFixed(4),
+    physics.linearDampingRate.toFixed(4),
+    physics.angularDampingRate.toFixed(4),
     physics.simulationSpeed.toFixed(4),
   ].join(":");
 }
 
 function refreshPhysicsControlLabels() {
   const physics = selectedPhysics();
-  ui.lengthValue.value = `${physics.octahedra} octa · aspect ${physics.aspectRatio.toFixed(3)}`;
-  ui.stiffnessValue.value = physics.stiffness.toFixed(2);
+  ui.lengthValue.value =
+    `${physics.octahedra} octa · aspect ${physics.aspectRatio.toFixed(3)}`;
+  ui.nodeMassValue.value = physics.nodeMass.toFixed(2);
+  ui.longitudinalStiffnessValue.value =
+    physics.longitudinalStiffness.toFixed(2);
+  ui.transverseStiffnessValue.value =
+    physics.transverseStiffness.toFixed(2);
+  ui.nonlinearityValue.value = physics.nonlinearity.toFixed(2);
+  ui.linearDampingValue.value = physics.linearDampingRate.toFixed(2);
+  ui.angularDampingValue.value = physics.angularDampingRate.toFixed(2);
   ui.simulationSpeedValue.value = `${physics.simulationSpeed.toFixed(2)}×`;
 }
 
