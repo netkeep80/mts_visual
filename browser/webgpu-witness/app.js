@@ -9,6 +9,12 @@ const ui = {
   rerun: $("rerun"),
   canvas: $("gpu-canvas"),
   linkCount: $("link-count"),
+  lengthOcta: $("length-octa"),
+  lengthValue: $("length-value"),
+  stiffness: $("stiffness"),
+  stiffnessValue: $("stiffness-value"),
+  simulationSpeed: $("simulation-speed"),
+  simulationSpeedValue: $("simulation-speed-value"),
   restartRender: $("restart-render"),
   pauseRender: $("pause-render"),
   renderCompute: $("render-compute"),
@@ -63,6 +69,46 @@ setStatus(
   "ok",
 );
 
+function selectedPhysics() {
+  const octahedra = Number(ui.lengthOcta.value);
+  if (!Number.isSafeInteger(octahedra) || octahedra < 10 || octahedra > 100 || octahedra % 2 !== 0) {
+    throw new Error(`invalid octahedron control value: ${ui.lengthOcta.value}`);
+  }
+
+  const stiffness = Number(ui.stiffness.value);
+  const simulationSpeed = Number(ui.simulationSpeed.value);
+  if (!Number.isFinite(stiffness) || stiffness < 0 || stiffness > 5) {
+    throw new Error(`invalid stiffness control value: ${ui.stiffness.value}`);
+  }
+  if (!Number.isFinite(simulationSpeed) || simulationSpeed < 0 || simulationSpeed > 4) {
+    throw new Error(`invalid simulation speed control value: ${ui.simulationSpeed.value}`);
+  }
+
+  return Object.freeze({
+    octahedra,
+    aspectRatio: Math.SQRT2 * (octahedra / 2 + 1),
+    stiffness,
+    simulationSpeed,
+  });
+}
+
+function physicsSignature(physics = selectedPhysics()) {
+  return [
+    physics.octahedra,
+    physics.stiffness.toFixed(4),
+    physics.simulationSpeed.toFixed(4),
+  ].join(":");
+}
+
+function refreshPhysicsControlLabels() {
+  const physics = selectedPhysics();
+  ui.lengthValue.value = `${physics.octahedra} octa · aspect ${physics.aspectRatio.toFixed(3)}`;
+  ui.stiffnessValue.value = physics.stiffness.toFixed(2);
+  ui.simulationSpeedValue.value = `${physics.simulationSpeed.toFixed(2)}×`;
+}
+
+refreshPhysicsControlLabels();
+
 const fixtures = [
   {
     name: "ordinary",
@@ -107,15 +153,34 @@ const DIFFERENTIAL_TOLERANCE = 2e-3;
 let adapter = null;
 let device = null;
 let differentialAllPass = false;
+let differentialPhysicsSignature = null;
 let renderPass = false;
 let renderState = null;
 
+function differentialIsCurrent() {
+  return differentialAllPass
+    && differentialPhysicsSignature === physicsSignature();
+}
+
+function markDifferentialStale() {
+  differentialAllPass = false;
+  for (const row of rows.values()) {
+    const status = row.querySelector(".status");
+    if (status.textContent === "PASS") {
+      status.textContent = "STALE";
+      status.className = "status warn";
+    }
+  }
+  updateOverall();
+}
+
 function updateOverall() {
-  if (differentialAllPass && renderPass) {
+  const differentialCurrent = differentialIsCurrent();
+  if (differentialCurrent && renderPass) {
     setStatus(ui.overall, "PASS — compute differential + zero-copy render", "ok");
   } else if (device === null) {
     setStatus(ui.overall, "UNAVAILABLE", "warn");
-  } else if (differentialAllPass || renderPass) {
+  } else if (differentialCurrent || renderPass) {
     setStatus(ui.overall, "PARTIAL — see diagnostics", "warn");
   } else {
     setStatus(ui.overall, "FAIL / pending", "fail");
@@ -199,6 +264,8 @@ async function runDifferentials() {
   }
 
   ui.rerun.disabled = true;
+  const physics = selectedPhysics();
+  const runSignature = physicsSignature(physics);
   let allPass = true;
 
   for (const fixture of fixtures) {
@@ -215,9 +282,9 @@ async function runDifferentials() {
       const result = await webgpu.runOctahedralWebGpuDifferentialWitness3D(
         fixture.network,
         {
-          aspectRatio: baselineAspectRatio,
-          stiffness: 1,
-          simulationSpeed: 1,
+          aspectRatio: physics.aspectRatio,
+          stiffness: physics.stiffness,
+          simulationSpeed: physics.simulationSpeed,
         },
         {
           device,
@@ -259,7 +326,9 @@ async function runDifferentials() {
   }
 
   differentialAllPass = allPass;
+  differentialPhysicsSignature = runSignature;
   ui.rerun.disabled = false;
+  log(`differential parameters: ${physics.octahedra} octa, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`);
   updateOverall();
 }
 
@@ -387,14 +456,15 @@ async function startRender() {
   }
 
   const linkCount = Number(ui.linkCount.value);
+  const physics = selectedPhysics();
   const network = hubHeavyNetwork(linkCount);
   const compute = await webgpu.createOctahedralWebGpuCompute3D(
     device,
     network,
     {
-      aspectRatio: baselineAspectRatio,
-      stiffness: 1,
-      simulationSpeed: 1,
+      aspectRatio: physics.aspectRatio,
+      stiffness: physics.stiffness,
+      simulationSpeed: physics.simulationSpeed,
     },
   );
 
@@ -438,7 +508,7 @@ async function startRender() {
   setStatus(ui.renderCompute, "AVAILABLE", "ok");
   setStatus(
     ui.renderTopology,
-    `${linkCount} Links · ${compute.snapshot().totalPhysicalVertices.toLocaleString()} vertices · ${compute.template.octahedronCount} octa`,
+    `${linkCount} Links · ${compute.snapshot().totalPhysicalVertices.toLocaleString()} vertices · ${compute.template.octahedronCount} octa · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
     "ok",
   );
   setStatus(ui.renderZeroCopy, "PASS — shared positionBuffer · 0 B dynamic upload", "ok");
@@ -540,7 +610,7 @@ async function startRender() {
 
   state.raf = requestAnimationFrame(frame);
   log(
-    `zero-copy render started: ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, ${compute.snapshot().totalPhysicalVertices} physical vertices`,
+    `zero-copy render started: ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().totalPhysicalVertices} physical vertices`,
   );
 }
 
@@ -560,6 +630,39 @@ ui.restartRender.addEventListener("click", () => {
     log(`render setup ERROR — ${error.stack ?? error}`);
     updateOverall();
   });
+});
+
+ui.lengthOcta.addEventListener("input", () => {
+  refreshPhysicsControlLabels();
+  markDifferentialStale();
+});
+
+ui.lengthOcta.addEventListener("change", () => {
+  startRender().catch((error) => {
+    renderPass = false;
+    setStatus(ui.renderCompute, "ERROR", "fail");
+    setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
+    log(`length-control render restart ERROR — ${error.stack ?? error}`);
+    updateOverall();
+  });
+});
+
+ui.stiffness.addEventListener("input", () => {
+  refreshPhysicsControlLabels();
+  markDifferentialStale();
+  if (!renderState) return;
+  const physics = selectedPhysics();
+  renderState.compute.setStiffness(physics.stiffness);
+  setStatus(ui.renderCompute, `AVAILABLE · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`, "ok");
+});
+
+ui.simulationSpeed.addEventListener("input", () => {
+  refreshPhysicsControlLabels();
+  markDifferentialStale();
+  if (!renderState) return;
+  const physics = selectedPhysics();
+  renderState.compute.setSimulationSpeed(physics.simulationSpeed);
+  setStatus(ui.renderCompute, `AVAILABLE · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`, "ok");
 });
 
 ui.pauseRender.addEventListener("click", () => {
