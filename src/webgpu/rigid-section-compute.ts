@@ -140,19 +140,25 @@ struct Globals {
   inverse_inertia: vec4<f32>,
 };
 
+struct Accum {
+  force: vec4<f32>,
+  torque: vec4<f32>,
+};
+
+struct Scratch {
+  center: vec4<f32>,
+  linear_velocity: vec4<f32>,
+};
+
 @group(0) @binding(0) var<storage, read_write> centers: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read_write> orientations: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> linear_velocities: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> angular_velocities: array<vec4<f32>>;
-@group(0) @binding(4) var<storage, read_write> forces: array<vec4<f32>>;
-@group(0) @binding(5) var<storage, read_write> torques: array<vec4<f32>>;
-@group(0) @binding(6) var<storage, read> topology: array<u32>;
-@group(0) @binding(7) var<storage, read> incoming_offsets: array<u32>;
-@group(0) @binding(8) var<storage, read> incoming_refs: array<u32>;
-@group(0) @binding(9) var<uniform> globals: Globals;
-@group(0) @binding(10) var<storage, read_write> scratch_centers: array<vec4<f32>>;
-@group(0) @binding(11) var<storage, read_write> scratch_linear_velocities: array<vec4<f32>>;
-@group(0) @binding(12) var<uniform> control: vec4<u32>;
+@group(0) @binding(4) var<storage, read_write> accum: array<Accum>;
+@group(0) @binding(5) var<storage, read> topology_data: array<u32>;
+@group(0) @binding(6) var<storage, read_write> scratch: array<Scratch>;
+@group(0) @binding(7) var<uniform> globals: Globals;
+@group(0) @binding(8) var<uniform> control: vec4<u32>;
 
 fn linear_index(gid: vec3<u32>) -> u32 {
   return gid.x * ${WORKGROUP_SIZE}u + gid.y * 65535u * ${WORKGROUP_SIZE}u;
@@ -204,8 +210,8 @@ fn clear_force_torque_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (body >= globals.counts.w) {
     return;
   }
-  forces[body] = vec4<f32>(0.0);
-  torques[body] = vec4<f32>(0.0);
+  accum[body].force = vec4<f32>(0.0);
+  accum[body].torque = vec4<f32>(0.0);
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE})
@@ -230,10 +236,10 @@ fn relation_batch_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let upper_q = orientations[upper];
   let k = globals.physics.x;
 
-  var lower_force = forces[lower].xyz;
-  var upper_force = forces[upper].xyz;
-  var lower_torque = torques[lower].xyz;
-  var upper_torque = torques[upper].xyz;
+  var lower_force = accum[lower].force.xyz;
+  var upper_force = accum[upper].force.xyz;
+  var lower_torque = accum[lower].torque.xyz;
+  var upper_torque = accum[upper].torque.xyz;
 
   for (var corner = 0u; corner < 3u; corner = corner + 1u) {
     let local_upper = local_triangle_vertex(corner);
@@ -250,10 +256,10 @@ fn relation_batch_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     lower_torque = lower_torque + cross(target_point - lower_center, force_lower);
   }
 
-  forces[lower] = vec4<f32>(lower_force, 0.0);
-  forces[upper] = vec4<f32>(upper_force, 0.0);
-  torques[lower] = vec4<f32>(lower_torque, 0.0);
-  torques[upper] = vec4<f32>(upper_torque, 0.0);
+  accum[lower].force = vec4<f32>(lower_force, 0.0);
+  accum[upper].force = vec4<f32>(upper_force, 0.0);
+  accum[lower].torque = vec4<f32>(lower_torque, 0.0);
+  accum[upper].torque = vec4<f32>(upper_torque, 0.0);
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE})
@@ -269,11 +275,11 @@ fn integrate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   var v = linear_velocities[body].xyz;
-  v = (v + forces[body].xyz * globals.geometry.z * dt) * globals.physics.z;
+  v = (v + accum[body].force.xyz * globals.geometry.z * dt) * globals.physics.z;
   let next_center = centers[body].xyz + v * dt;
 
   let q = q_normalize(orientations[body]);
-  let torque_local = q_rotate(q_conjugate(q), torques[body].xyz);
+  let torque_local = q_rotate(q_conjugate(q), accum[body].torque.xyz);
   let alpha_local = torque_local * globals.inverse_inertia.xyz;
   let alpha_world = q_rotate(q, alpha_local);
 
@@ -292,14 +298,14 @@ fn hinge_read_center(body: u32, direction: u32) -> vec3<f32> {
   if (direction == 0u) {
     return centers[body].xyz;
   }
-  return scratch_centers[body].xyz;
+  return scratch[body].center.xyz;
 }
 
 fn hinge_read_velocity(body: u32, direction: u32) -> vec3<f32> {
   if (direction == 0u) {
     return linear_velocities[body].xyz;
   }
-  return scratch_linear_velocities[body].xyz;
+  return scratch[body].linear_velocity.xyz;
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE})
@@ -323,7 +329,7 @@ fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var degree = 0u;
 
   if (local == 0u) {
-    let target_link = topology[link * 2u];
+    let target_link = topology_data[link * 2u];
     let other = target_link * section_count + middle;
     correction = correction + 0.5 * (hinge_read_center(other, direction) - self_center);
     velocity_correction = velocity_correction
@@ -332,7 +338,7 @@ fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   if (local == end_section) {
-    let target_link = topology[link * 2u + 1u];
+    let target_link = topology_data[link * 2u + 1u];
     let other = target_link * section_count + middle;
     correction = correction + 0.5 * (hinge_read_center(other, direction) - self_center);
     velocity_correction = velocity_correction
@@ -341,10 +347,12 @@ fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   if (local == middle) {
-    let begin = incoming_offsets[link];
-    let finish = incoming_offsets[link + 1u];
+    let offsets_base = globals.counts.x * 2u;
+    let refs_base = offsets_base + globals.counts.x + 1u;
+    let begin = topology_data[offsets_base + link];
+    let finish = topology_data[offsets_base + link + 1u];
     for (var cursor = begin; cursor < finish; cursor = cursor + 1u) {
-      let encoded = incoming_refs[cursor];
+      let encoded = topology_data[refs_base + cursor];
       let source_link = encoded / 2u;
       let role = encoded & 1u;
       let source_local = select(0u, end_section, role == 1u);
@@ -365,8 +373,8 @@ fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   if (direction == 0u) {
-    scratch_centers[body] = vec4<f32>(next_center, 0.0);
-    scratch_linear_velocities[body] = vec4<f32>(next_velocity, 0.0);
+    scratch[body].center = vec4<f32>(next_center, 0.0);
+    scratch[body].linear_velocity = vec4<f32>(next_velocity, 0.0);
   } else {
     centers[body] = vec4<f32>(next_center, 0.0);
     linear_velocities[body] = vec4<f32>(next_velocity, 0.0);
