@@ -45,13 +45,38 @@ function centerVelocity(controller: OctahedralLivePhysics3D, link: number): read
   return [x / 3, y / 3, z / 3];
 }
 
-function apexPosition(controller: OctahedralLivePhysics3D, link: number, vertex: number): readonly [number, number, number] {
+function vertexPosition(controller: OctahedralLivePhysics3D, link: number, vertex: number): readonly [number, number, number] {
   const offset = packedVertexOffset(controller, link, vertex);
   return [
     controller.positions[offset]!,
     controller.positions[offset + 1]!,
     controller.positions[offset + 2]!,
   ];
+}
+
+function trianglePositionCentroid(
+  controller: OctahedralLivePhysics3D,
+  link: number,
+  triangle: readonly [number, number, number],
+): readonly [number, number, number] {
+  return centroidOfVertices(controller, link, triangle);
+}
+
+function triangleVelocityCentroid(
+  controller: OctahedralLivePhysics3D,
+  link: number,
+  triangle: readonly [number, number, number],
+): readonly [number, number, number] {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const vertex of triangle) {
+    const offset = packedVertexOffset(controller, link, vertex);
+    x += controller.velocities[offset]!;
+    y += controller.velocities[offset + 1]!;
+    z += controller.velocities[offset + 2]!;
+  }
+  return [x / 3, y / 3, z / 3];
 }
 
 function maxPositionDelta(left: Float32Array, right: Float32Array): number {
@@ -147,17 +172,16 @@ assert(self.positions.every(Number.isFinite), "initial double-self positions are
 assert(self.velocities.every(Number.isFinite), "initial double-self velocities are finite");
 
 const initialCenter = computeOctahedralGeometricCenter3D(self.template, self.positions, 0);
-for (const apex of [self.template.startApex, self.template.endApex]) {
-  const position = apexPosition(self, 0, apex);
-  approx(position[0], initialCenter[0], "self apex x equals virtual center");
-  approx(position[1], initialCenter[1], "self apex y equals virtual center");
-  approx(position[2], initialCenter[2], "self apex z equals virtual center");
+for (const triangle of [self.template.startTriangle, self.template.endTriangle] as const) {
+  const position = trianglePositionCentroid(self, 0, triangle);
+  approx(position[0], initialCenter[0], "self terminal centroid x equals virtual center");
+  approx(position[1], initialCenter[1], "self terminal centroid y equals virtual center");
+  approx(position[2], initialCenter[2], "self terminal centroid z equals virtual center");
 }
 
 let extent = 0;
 for (let vertex = 0; vertex < self.template.vertexCount; vertex += 1) {
-  if (vertex === self.template.startApex || vertex === self.template.endApex) continue;
-  const position = apexPosition(self, 0, vertex);
+  const position = vertexPosition(self, 0, vertex);
   extent = Math.max(
     extent,
     Math.hypot(
@@ -188,7 +212,7 @@ assert(
 );
 
 const baselineSelf = createOctahedralLivePhysics3D(selfNetwork, {
-  aspectRatio: Math.SQRT2 * (20 / 2 + 1),
+  aspectRatio: Math.SQRT2 * (20 / 2),
   stiffness: 1,
   simulationSpeed: 0,
 });
@@ -204,15 +228,15 @@ assert(
 );
 
 const attractor = createOctahedralLivePhysics3D(selfNetwork, {
-  aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+  aspectRatio: Math.SQRT2 * (100 / 2),
   stiffness: 5,
   simulationSpeed: 4,
 });
 same(attractor.template.octahedronCount, 100, "self-loop attractor witness uses 100 octahedra");
 const attractorReference = sampledRingDistanceSignature(attractor, 10);
 const excludedVertices = new Set<number>([
-  attractor.template.startApex,
-  attractor.template.endApex,
+  ...attractor.template.startTriangle,
+  ...attractor.template.endTriangle,
   ...attractor.template.centerTriangle,
 ]);
 
@@ -315,20 +339,20 @@ assert(moving.velocities === velocitiesIdentity, "ordinary tick reuses packed ve
 same(movingStats.springEdgeEvaluations, moving.template.edgeCount, "tick evaluates every spring once");
 same(movingStats.hingeTransfers, 2, "tick transfers two hinge reactions");
 same(movingStats.hingeProjections, 2, "tick projects two hinge positions");
-same(movingStats.integratedVertices, moving.template.vertexCount - 2, "apex vertices are not independently integrated");
+same(movingStats.integratedVertices, moving.template.vertexCount, "every capless material vertex is independently integrated before hinge projection");
 same(movingStats.pairwiseSemanticLinkEvaluations, 0, "tick has no semantic all-pairs path");
 
 const movingCenter = computeOctahedralGeometricCenter3D(moving.template, moving.positions, 0);
 const movingCenterVelocity = centerVelocity(moving, 0);
-for (const apex of [moving.template.startApex, moving.template.endApex]) {
-  const position = apexPosition(moving, 0, apex);
-  const offset = packedVertexOffset(moving, 0, apex);
-  approx(position[0], movingCenter[0], "post-step self apex x equals virtual center");
-  approx(position[1], movingCenter[1], "post-step self apex y equals virtual center");
-  approx(position[2], movingCenter[2], "post-step self apex z equals virtual center");
-  approx(moving.velocities[offset]!, movingCenterVelocity[0], "apex vx follows virtual center");
-  approx(moving.velocities[offset + 1]!, movingCenterVelocity[1], "apex vy follows virtual center");
-  approx(moving.velocities[offset + 2]!, movingCenterVelocity[2], "apex vz follows virtual center");
+for (const triangle of [moving.template.startTriangle, moving.template.endTriangle] as const) {
+  const position = trianglePositionCentroid(moving, 0, triangle);
+  const velocity = triangleVelocityCentroid(moving, 0, triangle);
+  approx(position[0], movingCenter[0], "post-step self terminal centroid x equals virtual center");
+  approx(position[1], movingCenter[1], "post-step self terminal centroid y equals virtual center");
+  approx(position[2], movingCenter[2], "post-step self terminal centroid z equals virtual center");
+  approx(velocity[0], movingCenterVelocity[0], "terminal centroid vx follows virtual center");
+  approx(velocity[1], movingCenterVelocity[1], "terminal centroid vy follows virtual center");
+  approx(velocity[2], movingCenterVelocity[2], "terminal centroid vz follows virtual center");
 }
 
 const slow = createOctahedralLivePhysics3D(selfNetwork, {
@@ -366,18 +390,18 @@ const stats = live.step();
 same(stats.springEdgeEvaluations, 2 * live.template.edgeCount, "spring work is N*E");
 same(stats.hingeTransfers, 4, "hinge transfers are exactly 2N");
 same(stats.hingeProjections, 4, "hinge projections are exactly 2N");
-same(stats.integratedVertices, 2 * (live.template.vertexCount - 2), "integrated vertices are N*(V-2)");
+same(stats.integratedVertices, 2 * live.template.vertexCount, "integrated vertices are N*V for capless material");
 
 for (let link = 0; link < live.topology.linkCount; link += 1) {
   const startTarget = live.topology.startIndices[link]!;
   const endTarget = live.topology.endIndices[link]!;
   const startCenter = computeOctahedralGeometricCenter3D(live.template, live.positions, startTarget);
   const endCenter = computeOctahedralGeometricCenter3D(live.template, live.positions, endTarget);
-  const startApex = apexPosition(live, link, live.template.startApex);
-  const endApex = apexPosition(live, link, live.template.endApex);
+  const startPoint = trianglePositionCentroid(live, link, live.template.startTriangle);
+  const endPoint = trianglePositionCentroid(live, link, live.template.endTriangle);
   for (let axis = 0; axis < 3; axis += 1) {
-    approx(startApex[axis]!, startCenter[axis]!, `Link ${link} START hinge axis ${axis}`);
-    approx(endApex[axis]!, endCenter[axis]!, `Link ${link} END hinge axis ${axis}`);
+    approx(startPoint[axis]!, startCenter[axis]!, `Link ${link} START centroid hinge axis ${axis}`);
+    approx(endPoint[axis]!, endCenter[axis]!, `Link ${link} END centroid hinge axis ${axis}`);
   }
 }
 
@@ -403,16 +427,20 @@ assert(live.velocities.every(Number.isFinite), "transition velocities finite");
 const nextAIndex = live.topology.keys.indexOf("A");
 assert(nextAIndex >= 0, "A retained after transition");
 const nextAOffset = nextAIndex * live.template.vertexCount * 3;
+const projectedTerminalVertices = new Set<number>([
+  ...live.template.startTriangle,
+  ...live.template.endTriangle,
+]);
 let retainedInteriorMatches = true;
 for (let vertex = 0; vertex < live.template.vertexCount; vertex += 1) {
-  if (vertex === live.template.startApex || vertex === live.template.endApex) continue;
+  if (projectedTerminalVertices.has(vertex)) continue;
   for (let axis = 0; axis < 3; axis += 1) {
     const before = retainedAState[vertex * 3 + axis]!;
     const after = live.positions[nextAOffset + vertex * 3 + axis]!;
     if (Math.abs(before - after) > 1e-6) retainedInteriorMatches = false;
   }
 }
-assert(retainedInteriorMatches, "retained Link preserves all non-apex material positions across transition");
+assert(retainedInteriorMatches, "retained Link preserves all non-terminal material positions across transition");
 
 live.setSimulationSpeed(0);
 same(live.simulationSpeed, 0, "simulation speed can be changed without rebuilding state");
