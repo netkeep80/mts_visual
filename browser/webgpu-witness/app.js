@@ -14,8 +14,18 @@ const ui = {
   geometryBody: $("geometry-body"),
   lengthOcta: $("length-octa"),
   lengthValue: $("length-value"),
-  stiffness: $("stiffness"),
-  stiffnessValue: $("stiffness-value"),
+  nodeMass: $("node-mass"),
+  nodeMassValue: $("node-mass-value"),
+  longitudinalStiffness: $("longitudinal-stiffness"),
+  longitudinalStiffnessValue: $("longitudinal-stiffness-value"),
+  transverseStiffness: $("transverse-stiffness"),
+  transverseStiffnessValue: $("transverse-stiffness-value"),
+  nonlinearity: $("nonlinearity"),
+  nonlinearityValue: $("nonlinearity-value"),
+  linearDamping: $("linear-damping"),
+  linearDampingValue: $("linear-damping-value"),
+  angularDamping: $("angular-damping"),
+  angularDampingValue: $("angular-damping-value"),
   simulationSpeed: $("simulation-speed"),
   simulationSpeedValue: $("simulation-speed-value"),
   restartRender: $("restart-render"),
@@ -23,6 +33,8 @@ const ui = {
   autoRotate: $("auto-rotate"),
   wireframe: $("wireframe"),
   pauseRender: $("pause-render"),
+  fullscreenRender: $("fullscreen-render"),
+  viewportShell: $("viewport-shell"),
   renderCompute: $("render-compute"),
   renderTopology: $("render-topology"),
   renderZeroCopy: $("render-zero-copy"),
@@ -94,25 +106,44 @@ setStatus(
   "ok",
 );
 
+const LINK_OCTAHEDRON_CHOICES = Object.freeze([16, 32, 64, 128, 256]);
+
+function controlNumber(element, label, minimum, maximum) {
+  const value = Number(element.value);
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`invalid ${label} control value: ${element.value}`);
+  }
+  return value;
+}
+
 function selectedPhysics() {
   const octahedra = Number(ui.lengthOcta.value);
-  if (!Number.isSafeInteger(octahedra) || octahedra < 10 || octahedra > 100 || octahedra % 2 !== 0) {
+  if (!LINK_OCTAHEDRON_CHOICES.includes(octahedra)) {
     throw new Error(`invalid octahedron control value: ${ui.lengthOcta.value}`);
   }
 
-  const stiffness = Number(ui.stiffness.value);
-  const simulationSpeed = Number(ui.simulationSpeed.value);
-  if (!Number.isFinite(stiffness) || stiffness < 0 || stiffness > 5) {
-    throw new Error(`invalid stiffness control value: ${ui.stiffness.value}`);
-  }
-  if (!Number.isFinite(simulationSpeed) || simulationSpeed < 0 || simulationSpeed > 4) {
-    throw new Error(`invalid simulation speed control value: ${ui.simulationSpeed.value}`);
-  }
+  const nodeMass = controlNumber(ui.nodeMass, "node mass", 0.05, 20);
+  const longitudinalStiffness =
+    controlNumber(ui.longitudinalStiffness, "longitudinal stiffness", 0, 100);
+  const transverseStiffness =
+    controlNumber(ui.transverseStiffness, "transverse stiffness", 0, 100);
+  const nonlinearity = controlNumber(ui.nonlinearity, "nonlinearity", 0, 50);
+  const linearDampingRate =
+    controlNumber(ui.linearDamping, "linear damping", 0, 10);
+  const angularDampingRate =
+    controlNumber(ui.angularDamping, "angular damping", 0, 10);
+  const simulationSpeed =
+    controlNumber(ui.simulationSpeed, "simulation speed", 0, 8);
 
   return Object.freeze({
     octahedra,
     aspectRatio: Math.SQRT2 * (octahedra / 2),
-    stiffness,
+    nodeMass,
+    longitudinalStiffness,
+    transverseStiffness,
+    nonlinearity,
+    linearDampingRate,
+    angularDampingRate,
     simulationSpeed,
   });
 }
@@ -120,15 +151,28 @@ function selectedPhysics() {
 function physicsSignature(physics = selectedPhysics()) {
   return [
     physics.octahedra,
-    physics.stiffness.toFixed(4),
+    physics.nodeMass.toFixed(4),
+    physics.longitudinalStiffness.toFixed(4),
+    physics.transverseStiffness.toFixed(4),
+    physics.nonlinearity.toFixed(4),
+    physics.linearDampingRate.toFixed(4),
+    physics.angularDampingRate.toFixed(4),
     physics.simulationSpeed.toFixed(4),
   ].join(":");
 }
 
 function refreshPhysicsControlLabels() {
   const physics = selectedPhysics();
-  ui.lengthValue.value = `${physics.octahedra} octa · aspect ${physics.aspectRatio.toFixed(3)}`;
-  ui.stiffnessValue.value = physics.stiffness.toFixed(2);
+  ui.lengthValue.value =
+    `${physics.octahedra} octa · aspect ${physics.aspectRatio.toFixed(3)}`;
+  ui.nodeMassValue.value = physics.nodeMass.toFixed(2);
+  ui.longitudinalStiffnessValue.value =
+    physics.longitudinalStiffness.toFixed(2);
+  ui.transverseStiffnessValue.value =
+    physics.transverseStiffness.toFixed(2);
+  ui.nonlinearityValue.value = physics.nonlinearity.toFixed(2);
+  ui.linearDampingValue.value = physics.linearDampingRate.toFixed(2);
+  ui.angularDampingValue.value = physics.angularDampingRate.toFixed(2);
   ui.simulationSpeedValue.value = `${physics.simulationSpeed.toFixed(2)}×`;
 }
 
@@ -208,8 +252,6 @@ const fixtures = [
 const DIFFERENTIAL_STEPS = 4;
 const DIFFERENTIAL_TOLERANCE = 2e-3;
 const RIGID_DIFFERENTIAL_TOLERANCE = 3e-3;
-const CENTER_MARKER_PIXELS = 8;
-const CENTER_HIT_RADIUS_PIXELS = 24;
 
 let adapter = null;
 let device = null;
@@ -376,7 +418,7 @@ async function runDifferentials() {
         fixture.network,
         {
           aspectRatio: physics.aspectRatio,
-          stiffness: physics.stiffness,
+          stiffness: physics.longitudinalStiffness,
           simulationSpeed: physics.simulationSpeed,
         },
         {
@@ -443,7 +485,12 @@ async function runDifferentials() {
         fixture.network,
         {
           aspectRatio: rigidAspectRatio,
-          stiffness: physics.stiffness,
+          longitudinalStiffness: physics.longitudinalStiffness,
+          transverseStiffness: physics.transverseStiffness,
+          nonlinearity: physics.nonlinearity,
+          nodeMass: physics.nodeMass,
+          linearDampingRate: physics.linearDampingRate,
+          angularDampingRate: physics.angularDampingRate,
           simulationSpeed: physics.simulationSpeed,
         },
         DIFFERENTIAL_STEPS,
@@ -480,7 +527,9 @@ async function runDifferentials() {
   rigidDifferentialAllPass = rigidAllPass;
   rigidDifferentialPhysicsSignature = runSignature;
   ui.rerun.disabled = false;
-  log(`differential parameters: ${physics.octahedra} octa, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`);
+  log(
+    `differential parameters: ${physics.octahedra} octa, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, dLin=${physics.linearDampingRate.toFixed(2)}, dAng=${physics.angularDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
+  );
   log(`rigid differential aspect=${rigidAspectRatio.toFixed(4)} (capless rigid triangular sections)`);
   updateOverall();
 }
@@ -643,14 +692,30 @@ function centerDragBodySet(state, linkIndex) {
   );
 }
 
-function cachedCenterHit(state, event) {
-  return webgpu.pickRigidSectionCenterScreen2D(
-    state.semanticCenterCache.map((center) =>
-      projectWorldToClient(state, center)
-    ),
-    event.clientX,
-    event.clientY,
-    CENTER_HIT_RADIUS_PIXELS,
+function pointerWorldRay(state, event) {
+  const { eye, forward, right, up } = cameraBasis(state.camera);
+  const rect = ui.canvas.getBoundingClientRect();
+  const width = Math.max(1, rect.width);
+  const height = Math.max(1, rect.height);
+  const ndcX = ((event.clientX - rect.left) / width) * 2 - 1;
+  const ndcY = 1 - ((event.clientY - rect.top) / height) * 2;
+  const tanHalfFov = Math.tan(Math.PI / 8);
+  const aspect = width / height;
+  const direction = normalize3([
+    forward[0] + right[0] * ndcX * aspect * tanHalfFov + up[0] * ndcY * tanHalfFov,
+    forward[1] + right[1] * ndcX * aspect * tanHalfFov + up[1] * ndcY * tanHalfFov,
+    forward[2] + right[2] * ndcX * aspect * tanHalfFov + up[2] * ndcY * tanHalfFov,
+  ]);
+  return { origin: eye, direction };
+}
+
+function pickCenterIcosahedron(state, event, centers) {
+  const ray = pointerWorldRay(state, event);
+  return webgpu.pickRigidSectionCenterIcosahedra3D(
+    ray.origin,
+    ray.direction,
+    centers,
+    2 * state.compute.template.edgeRestLength,
   );
 }
 
@@ -795,16 +860,12 @@ function installCameraControls(state) {
   };
 
   const beginCenterPick = async (event) => {
-    const cached = cachedCenterHit(state, event);
-    if (cached >= 0) {
-      activateCenterDrag(cached, state.semanticCenterCache[cached], "cache");
-      return;
-    }
-
     const generation = ++pickGeneration;
     mode = "picking";
-    setStatus(ui.renderCompute, "PICKING CENTER…", "warn");
+    setStatus(ui.renderCompute, "PICKING CENTER ICOSAHEDRON…", "warn");
     try {
+      // One-shot readback on pointer-down keeps picking exact while ordinary
+      // frames remain zero-copy and the simulated CENTER positions keep moving.
       const centers = await state.compute.readBackCenters();
       if (
         generation !== pickGeneration
@@ -812,20 +873,14 @@ function installCameraControls(state) {
         || renderState !== state
       ) return;
 
-      const projected = [];
       const worldCenters = [];
       for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
         const center = rigidSemanticCenter3(state.compute.template, centers, link);
         worldCenters.push(center);
-        projected.push(projectWorldToClient(state, center));
         state.semanticCenterCache[link] = [...center];
       }
-      const selected = webgpu.pickRigidSectionCenterScreen2D(
-        projected,
-        event.clientX,
-        event.clientY,
-        CENTER_HIT_RADIUS_PIXELS,
-      );
+
+      const selected = pickCenterIcosahedron(state, event, worldCenters);
 
       if (selected < 0) {
         mode = "orbit";
@@ -839,16 +894,20 @@ function installCameraControls(state) {
         }
         pendingPickDx = 0;
         pendingPickDy = 0;
-        log("center pick MISS — continuing as orbit");
+        log("center icosahedron pick MISS — continuing as orbit");
         setStatus(
           ui.renderCompute,
-          `AVAILABLE · k=${state.compute.stiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+          `AVAILABLE · m=${state.compute.nodeMass.toFixed(2)} · k∥=${state.compute.longitudinalStiffness.toFixed(2)} · k⊥=${state.compute.transverseStiffness.toFixed(2)} · α=${state.compute.nonlinearity.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
           "ok",
         );
         return;
       }
 
-      activateCenterDrag(selected, worldCenters[selected], "GPU readback");
+      activateCenterDrag(
+        selected,
+        worldCenters[selected],
+        "exact world-space icosahedron",
+      );
       moveCenterDragTarget(state, pendingPickDx, pendingPickDy);
       pendingPickDx = 0;
       pendingPickDy = 0;
@@ -972,7 +1031,12 @@ async function startRender() {
     network,
     {
       aspectRatio: physics.aspectRatio,
-      stiffness: physics.stiffness,
+      longitudinalStiffness: physics.longitudinalStiffness,
+      transverseStiffness: physics.transverseStiffness,
+      nonlinearity: physics.nonlinearity,
+      nodeMass: physics.nodeMass,
+      linearDampingRate: physics.linearDampingRate,
+      angularDampingRate: physics.angularDampingRate,
       simulationSpeed: physics.simulationSpeed,
     },
   );
@@ -1001,8 +1065,6 @@ async function startRender() {
     {
       colorFormat,
       depthFormat: "depth24plus",
-      centerMarkerPixels: CENTER_MARKER_PIXELS,
-      arrowLengthPixels: 18,
     },
   );
 
@@ -1026,7 +1088,7 @@ async function startRender() {
   const computeSnapshot = compute.snapshot();
   setStatus(
     ui.renderTopology,
-    `${scene.label} · ${linkCount} Links · ${computeSnapshot.bodyCount.toLocaleString()} rigid sections · ${compute.template.octahedronCount} octa · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    `${scene.label} · ${linkCount} Links · ${computeSnapshot.bodyCount.toLocaleString()} rigid sections · ${compute.template.octahedronCount} octa · m=${physics.nodeMass.toFixed(2)} · k∥=${physics.longitudinalStiffness.toFixed(2)} · k⊥=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
     "ok",
   );
   setStatus(
@@ -1038,7 +1100,12 @@ async function startRender() {
 
   const initialCpu = core.createRigidSectionPhysics3D(network, {
     aspectRatio: physics.aspectRatio,
-    stiffness: physics.stiffness,
+    longitudinalStiffness: physics.longitudinalStiffness,
+    transverseStiffness: physics.transverseStiffness,
+    nonlinearity: physics.nonlinearity,
+    nodeMass: physics.nodeMass,
+    linearDampingRate: physics.linearDampingRate,
+    angularDampingRate: physics.angularDampingRate,
     simulationSpeed: physics.simulationSpeed,
   });
   const initialSemanticCenters = Array.from(
@@ -1162,7 +1229,7 @@ async function startRender() {
 
   state.raf = requestAnimationFrame(frame);
   log(
-    `v0.5 rigid zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().bodyCount} rigid sections`,
+    `v0.5 rigid zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().bodyCount} rigid sections`,
   );
 }
 
@@ -1195,7 +1262,7 @@ function diagnosticClass(value, warn = 1e-3, fail = 1e-2) {
   return "ok";
 }
 
-function rigidLinkPotentialEnergy(template, state, linkIndex, stiffness) {
+function rigidLinkPotentialEnergy(template, state, linkIndex, elasticity) {
   let energy = 0;
   const base = linkIndex * template.sectionCount;
   for (let local = 0; local < template.octahedronCount; local += 1) {
@@ -1207,7 +1274,7 @@ function rigidLinkPotentialEnergy(template, state, linkIndex, stiffness) {
       rigidBodyQuat4(state.orientations, lower),
       rigidBodyCenter3(state.centers, upper),
       rigidBodyQuat4(state.orientations, upper),
-      stiffness,
+      elasticity,
     ).energy;
   }
   return energy;
@@ -1267,7 +1334,11 @@ async function inspectGeometry() {
         template,
         gpuState,
         linkIndex,
-        render.compute.stiffness,
+        {
+          longitudinalStiffness: render.compute.longitudinalStiffness,
+          transverseStiffness: render.compute.transverseStiffness,
+          nonlinearity: render.compute.nonlinearity,
+        },
       );
 
       let maxLinearSpeed = 0;
@@ -1370,14 +1441,11 @@ ui.wireframe.addEventListener("change", () => {
   log(`wireframe ${ui.wireframe.checked ? "enabled" : "disabled"} — physics state preserved`);
 });
 
-ui.lengthOcta.addEventListener("input", () => {
+ui.lengthOcta.addEventListener("change", () => {
   refreshPhysicsControlLabels();
   markDifferentialStale();
   renderPass = false;
   updateOverall();
-});
-
-ui.lengthOcta.addEventListener("change", () => {
   startRender().catch((error) => {
     renderPass = false;
     setStatus(ui.renderCompute, "ERROR", "fail");
@@ -1387,36 +1455,81 @@ ui.lengthOcta.addEventListener("change", () => {
   });
 });
 
-ui.stiffness.addEventListener("input", () => {
+function applyLivePhysicsControls() {
   refreshPhysicsControlLabels();
   markDifferentialStale();
   if (!renderState) return;
-  const physics = selectedPhysics();
-  renderState.compute.setStiffness(physics.stiffness);
-  const snapshot = renderState.compute.snapshot();
-  if (Math.abs(snapshot.stiffness - physics.stiffness) > 1e-12) {
-    throw new Error(`stiffness control mismatch: requested ${physics.stiffness}, got ${snapshot.stiffness}`);
-  }
-  setStatus(ui.renderCompute, `AVAILABLE · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`, "ok");
-});
 
-ui.simulationSpeed.addEventListener("input", () => {
-  refreshPhysicsControlLabels();
-  markDifferentialStale();
-  if (!renderState) return;
   const physics = selectedPhysics();
-  renderState.compute.setSimulationSpeed(physics.simulationSpeed);
-  const snapshot = renderState.compute.snapshot();
-  if (Math.abs(snapshot.simulationSpeed - physics.simulationSpeed) > 1e-12) {
-    throw new Error(`simulation-speed control mismatch: requested ${physics.simulationSpeed}, got ${snapshot.simulationSpeed}`);
+  const compute = renderState.compute;
+  compute.setNodeMass(physics.nodeMass);
+  compute.setLongitudinalStiffness(physics.longitudinalStiffness);
+  compute.setTransverseStiffness(physics.transverseStiffness);
+  compute.setNonlinearity(physics.nonlinearity);
+  compute.setLinearDampingRate(physics.linearDampingRate);
+  compute.setAngularDampingRate(physics.angularDampingRate);
+  compute.setSimulationSpeed(physics.simulationSpeed);
+
+  const snapshot = compute.snapshot();
+  const checks = [
+    ["nodeMass", snapshot.nodeMass, physics.nodeMass],
+    ["longitudinalStiffness", snapshot.longitudinalStiffness, physics.longitudinalStiffness],
+    ["transverseStiffness", snapshot.transverseStiffness, physics.transverseStiffness],
+    ["nonlinearity", snapshot.nonlinearity, physics.nonlinearity],
+    ["linearDampingRate", snapshot.linearDampingRate, physics.linearDampingRate],
+    ["angularDampingRate", snapshot.angularDampingRate, physics.angularDampingRate],
+    ["simulationSpeed", snapshot.simulationSpeed, physics.simulationSpeed],
+  ];
+  for (const [label, actual, expected] of checks) {
+    if (Math.abs(actual - expected) > 1e-12) {
+      throw new Error(
+        `${label} control mismatch: requested ${expected}, got ${actual}`,
+      );
+    }
   }
-  setStatus(ui.renderCompute, `AVAILABLE · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`, "ok");
-});
+
+  setStatus(
+    ui.renderCompute,
+    `AVAILABLE · m=${physics.nodeMass.toFixed(2)} · k∥=${physics.longitudinalStiffness.toFixed(2)} · k⊥=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    "ok",
+  );
+}
+
+for (const control of [
+  ui.nodeMass,
+  ui.longitudinalStiffness,
+  ui.transverseStiffness,
+  ui.nonlinearity,
+  ui.linearDamping,
+  ui.angularDamping,
+  ui.simulationSpeed,
+]) {
+  control.addEventListener("input", applyLivePhysicsControls);
+}
 
 ui.pauseRender.addEventListener("click", () => {
   if (!renderState) return;
   renderState.paused = !renderState.paused;
   ui.pauseRender.textContent = renderState.paused ? "Resume" : "Pause";
+});
+
+ui.fullscreenRender.addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement === ui.viewportShell) {
+      await document.exitFullscreen();
+    } else {
+      await ui.viewportShell.requestFullscreen();
+    }
+  } catch (error) {
+    log(`fullscreen ERROR — ${error.stack ?? error}`);
+  }
+});
+
+document.addEventListener("fullscreenchange", () => {
+  ui.fullscreenRender.textContent =
+    document.fullscreenElement === ui.viewportShell
+      ? "Exit fullscreen"
+      : "Fullscreen";
 });
 
 try {

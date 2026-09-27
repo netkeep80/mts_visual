@@ -220,6 +220,12 @@ function fakeCompute(): RigidSectionWebGpuCompute3D {
     linearVelocityBuffer,
     angularVelocityBuffer,
     stiffness: 5,
+    longitudinalStiffness: 5,
+    transverseStiffness: 5,
+    nonlinearity: 0,
+    nodeMass: 1,
+    linearDampingRate: 1.5,
+    angularDampingRate: 1.5,
     simulationSpeed: 1,
     step: () => ({
       relationBatchDispatches: 2,
@@ -228,6 +234,12 @@ function fakeCompute(): RigidSectionWebGpuCompute3D {
       dynamicStateUploadBytes: 0,
     }),
     setStiffness: () => {},
+    setLongitudinalStiffness: () => {},
+    setTransverseStiffness: () => {},
+    setNonlinearity: () => {},
+    setNodeMass: () => {},
+    setLinearDampingRate: () => {},
+    setAngularDampingRate: () => {},
     setSimulationSpeed: () => {},
     writeCenterOverrides: () => ({
       bodyCount: 0,
@@ -254,6 +266,12 @@ function fakeCompute(): RigidSectionWebGpuCompute3D {
       forceBytes: bodyCount * 4 * 4,
       torqueBytes: bodyCount * 4 * 4,
       stiffness: 5,
+      longitudinalStiffness: 5,
+      transverseStiffness: 5,
+      nonlinearity: 0,
+      nodeMass: 1,
+      linearDampingRate: 1.5,
+      angularDampingRate: 1.5,
       simulationSpeed: 1,
     }),
     destroy: () => {
@@ -273,8 +291,8 @@ same(compute.template.sectionCount, 3, "two octahedra have three rigid triangula
 const million = estimateRigidSectionWebGpuRender3D(1_000_000, compute.template);
 same(million.surfaceVerticesPerLink, 42, "two-octa capless rigid surface uses 42 triangle-list vertices");
 same(million.surfaceVertexInvocations, 42_000_000, "million rigid Links imply 42M surface vertex invocations");
-same(million.centerVertexInvocations, 6_000_000, "million rigid Links imply 6M center marker vertices");
-same(million.arrowVertexInvocations, 6_000_000, "million rigid Links imply 6M END arrow vertices");
+same(million.centerVertexInvocations, 60_000_000, "million rigid Links imply 60M solid CENTER icosahedron vertices");
+same(million.arrowVertexInvocations, 18_000_000, "million rigid Links imply 18M six-sided END cone vertices");
 same(million.drawCalls, 3, "non-empty rigid renderer stays at three draw calls");
 same(million.rendererDynamicStateBytes, 0, "renderer owns zero duplicated dynamic rigid state");
 same(million.dynamicStateUploadBytesPerFrame, 0, "ordinary rigid frames upload zero dynamic state");
@@ -284,13 +302,21 @@ for (const needle of [
   "@group(0) @binding(1) var<storage, read> orientations",
   "fn material_vertex",
   "q_rotate(orientations[body], local_triangle_vertex(corner))",
-  "diameter_pixels * 3.0",
+  "let radius = 2.0 * scene.geometry.w;",
+  "let axis = safe_normalize3(",
+  "tip - lower_center",
+  "let height = 3.0 * edge;",
+  "let base_radius = 1.5 * edge;",
 ]) {
   assert(
     RIGID_SECTION_WEBGPU_RENDER_WGSL.includes(needle),
     `rigid renderer shader contains ${needle}`,
   );
 }
+assert(
+  !RIGID_SECTION_WEBGPU_RENDER_WGSL.includes("projected_pixel_distance"),
+  "CENTER and END marker size no longer depends on projected pixel scale",
+);
 
 const device = new FakeRenderDevice();
 const renderer = await createRigidSectionWebGpuZeroCopyRenderer3D(
@@ -381,8 +407,8 @@ same(stats.readbacks, 0, "filled rigid frame performs no readbacks");
 same(device.draws.length, 3, "device sees exactly three filled draws");
 same(device.draws[0]!.vertexCount, 42, "surface draw reconstructs capless two-octa material");
 same(device.draws[0]!.instanceCount, 2, "surface draw instances equal semantic Link count");
-same(device.draws[1]!.vertexCount, 6, "center marker is one six-vertex billboard per Link");
-same(device.draws[2]!.vertexCount, 6, "END marker is one six-vertex kite per Link");
+same(device.draws[1]!.vertexCount, 60, "CENTER marker is one solid 20-triangle icosahedron per Link");
+same(device.draws[2]!.vertexCount, 18, "END marker is one six-triangle cone per Link");
 same(device.queue.writes.length, 1, "ordinary frame writes only renderer control uniforms");
 same(device.queue.writes[0]!.label, "rigid-section-render-uniforms", "ordinary control upload targets only uniform buffer");
 same(device.queue.writes[0]!.bytes, RIGID_SECTION_WEBGPU_RENDER_UNIFORM_BYTES, "uniform upload has fixed size");

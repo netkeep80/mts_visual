@@ -1,4 +1,8 @@
 import {
+  RIGID_SECTION_CENTER_ICOSAHEDRON_FACES,
+  RIGID_SECTION_CENTER_ICOSAHEDRON_VERTEX_COUNT,
+  RIGID_SECTION_END_CONE_VERTEX_COUNT,
+  pickRigidSectionCenterIcosahedra3D,
   pickRigidSectionCenterScreen2D,
   rigidSectionScreenDragDelta3D,
 } from "../src/webgpu/index.js";
@@ -29,6 +33,52 @@ assert(
 assert(
   pickRigidSectionCenterScreen2D(projected, 100, 100, 24) === 0,
   "exact CENTER hit remains deterministic",
+);
+
+assert(
+  RIGID_SECTION_CENTER_ICOSAHEDRON_FACES.length === 20,
+  "CENTER marker is a 20-face regular icosahedron",
+);
+assert(
+  RIGID_SECTION_CENTER_ICOSAHEDRON_VERTEX_COUNT === 60,
+  "solid CENTER icosahedron renders 60 triangle-list vertices",
+);
+assert(
+  RIGID_SECTION_END_CONE_VERTEX_COUNT === 18,
+  "six-sided END cone renders exactly six side triangles",
+);
+
+const worldCenters = [
+  [0, 0, 0] as const,
+  [0, 0, -6] as const,
+  [8, 0, 0] as const,
+];
+assert(
+  pickRigidSectionCenterIcosahedra3D(
+    [0, 0, 8],
+    [0, 0, -1],
+    worldCenters,
+    2,
+  ) === 0,
+  "world-space ray selects nearest visible CENTER icosahedron",
+);
+assert(
+  pickRigidSectionCenterIcosahedra3D(
+    [8, 0, 8],
+    [0, 0, -1],
+    worldCenters,
+    2,
+  ) === 2,
+  "world-space picking follows marker position instead of screen-space pixels",
+);
+assert(
+  pickRigidSectionCenterIcosahedra3D(
+    [0, 0, 8],
+    [1, 0, 0],
+    worldCenters,
+    2,
+  ) === -1,
+  "ray missing every CENTER icosahedron returns no selection",
 );
 
 const delta = rigidSectionScreenDragDelta3D(

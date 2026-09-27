@@ -21,18 +21,34 @@
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 8px; border-bottom: 1px solid #25334a; text-align: left; }
     th { color: #9fb1c9; font-weight: 600; }
-    canvas { width: 100%; aspect-ratio: 16/9; background: #000; display: block; border-radius: 10px; border: 1px solid #25334a; cursor: grab; touch-action: none; user-select: none; }
+    canvas { width: 100%; height: 100%; background: #000; display: block; border-radius: 10px; border: 1px solid #25334a; cursor: grab; touch-action: none; user-select: none; }
     canvas.dragging { cursor: grabbing; }
     .camera-hint { margin-top: 8px; font-size: 12px; color: #98a7bd; }
     button, select { background: #172338; color: #e9eef7; border: 1px solid #395070; border-radius: 8px; padding: 8px 12px; }
     button:hover { background: #20304a; }
     .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-    .physics-controls { display: grid; grid-template-columns: repeat(3,minmax(220px,1fr)); gap: 12px; margin: 10px 0 14px; }
-    .physics-control { background: #0d1521; border: 1px solid #25334a; border-radius: 9px; padding: 10px 12px; }
-    .physics-control label { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 7px; color: #9fb1c9; }
-    .physics-control output { color: #65d98b; font: 600 13px ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .physics-control input[type="range"] { width: 100%; accent-color: #65d98b; }
-    @media (max-width: 850px) { .physics-controls { grid-template-columns: 1fr; } }
+    .live-lab { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
+    .control-sidebar { display: grid; gap: 9px; align-content: start; }
+    .control-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .control-actions button { width: 100%; }
+    .physics-control { background: #0d1521; border: 1px solid #25334a; border-radius: 9px; padding: 9px 10px; }
+    .physics-control label { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; margin-bottom: 6px; color: #9fb1c9; }
+    .physics-control output { color: #65d98b; font: 600 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .physics-control input[type="range"], .physics-control select { width: 100%; accent-color: #65d98b; }
+    .viewport-column { min-width: 0; }
+    .viewport-shell { width: 100%; height: clamp(380px, 58vh, 640px); background: #000; border-radius: 10px; overflow: hidden; }
+    .viewport-shell:fullscreen { width: 100vw; height: 100vh; border-radius: 0; background: #000; padding: 0; }
+    .viewport-shell:fullscreen canvas { border: 0; border-radius: 0; }
+    .inline-checks { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: #9fb1c9; }
+    @media (max-width: 950px) {
+      .live-lab { grid-template-columns: 1fr; }
+      .control-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .viewport-shell { height: min(56vh, 560px); }
+    }
+    @media (max-width: 640px) {
+      .control-sidebar { grid-template-columns: 1fr; }
+      .viewport-shell { height: 55vh; min-height: 320px; }
+    }
     pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 260px; overflow: auto; }
     .section { margin-top: 16px; }
   </style>
@@ -81,56 +97,125 @@
   <section class="card section">
     <div class="toolbar">
       <h2 style="margin-right:auto">v0.5 rigid-section zero-copy live render</h2>
-      <label>Scene
-        <select id="scene">
-          <option value="root-r" selected>1 · R only</option>
-          <option value="root-ro">2 · R + O</option>
-          <option value="root-roc">3 · R + O + C</option>
-          <option value="root-rocl">4 · R + O + C + L</option>
-          <option value="root-roclu">5 · R + O + C + L + U</option>
-          <option value="hub-64">stress · 64 Links</option>
-          <option value="hub-333">stress · 333 Links</option>
-          <option value="hub-1000">stress · 1,000 Links</option>
-        </select>
-      </label>
-      <button id="restart-render">Restart render</button>
-      <button id="inspect-geometry">Inspect geometry</button>
-      <button id="reset-view">Reset view</button>
-      <label><input id="auto-rotate" type="checkbox"> Auto rotate</label>
-      <label><input id="wireframe" type="checkbox"> Wireframe</label>
-      <button id="pause-render">Pause</button>
+      <span class="muted">tunable CPU/WebGPU physical contract</span>
     </div>
-    <div class="physics-controls" aria-label="Live physics controls">
-      <div class="physics-control">
-        <label for="length-octa">
-          <span>Link length</span>
-          <output id="length-value">20 octa · aspect 14.142</output>
-        </label>
-        <input id="length-octa" type="range" min="10" max="100" step="2" value="20">
-      </div>
-      <div class="physics-control">
-        <label for="stiffness">
-          <span>Spring stiffness</span>
-          <output id="stiffness-value">1.00</output>
-        </label>
-        <input id="stiffness" type="range" min="0" max="5" step="0.05" value="1">
-      </div>
-      <div class="physics-control">
-        <label for="simulation-speed">
-          <span>Simulation speed</span>
-          <output id="simulation-speed-value">1.00×</output>
-        </label>
-        <input id="simulation-speed" type="range" min="0" max="4" step="0.05" value="1">
+
+    <div class="live-lab">
+      <aside class="control-sidebar" aria-label="Live physics controls">
+        <div class="physics-control">
+          <label for="scene"><span>Scene</span></label>
+          <select id="scene">
+            <option value="root-r" selected>1 · R only</option>
+            <option value="root-ro">2 · R + O</option>
+            <option value="root-roc">3 · R + O + C</option>
+            <option value="root-rocl">4 · R + O + C + L</option>
+            <option value="root-roclu">5 · R + O + C + L + U</option>
+            <option value="hub-64">stress · 64 Links</option>
+            <option value="hub-333">stress · 333 Links</option>
+            <option value="hub-1000">stress · 1,000 Links</option>
+          </select>
+        </div>
+
+        <div class="physics-control">
+          <label for="length-octa">
+            <span>Link length</span>
+            <output id="length-value">32 octa</output>
+          </label>
+          <select id="length-octa">
+            <option value="16">16 octa</option>
+            <option value="32" selected>32 octa</option>
+            <option value="64">64 octa</option>
+            <option value="128">128 octa</option>
+            <option value="256">256 octa</option>
+          </select>
+        </div>
+
+        <div class="physics-control">
+          <label for="node-mass">
+            <span>Node mass</span>
+            <output id="node-mass-value">1.00</output>
+          </label>
+          <input id="node-mass" type="range" min="0.05" max="20" step="0.05" value="1">
+        </div>
+
+        <div class="physics-control">
+          <label for="longitudinal-stiffness">
+            <span>Longitudinal k</span>
+            <output id="longitudinal-stiffness-value">1.00</output>
+          </label>
+          <input id="longitudinal-stiffness" type="range" min="0" max="100" step="0.1" value="1">
+        </div>
+
+        <div class="physics-control">
+          <label for="transverse-stiffness">
+            <span>Transverse k</span>
+            <output id="transverse-stiffness-value">1.00</output>
+          </label>
+          <input id="transverse-stiffness" type="range" min="0" max="100" step="0.1" value="1">
+        </div>
+
+        <div class="physics-control">
+          <label for="nonlinearity">
+            <span>Nonlinearity α</span>
+            <output id="nonlinearity-value">0.00</output>
+          </label>
+          <input id="nonlinearity" type="range" min="0" max="50" step="0.1" value="0">
+        </div>
+
+        <div class="physics-control">
+          <label for="linear-damping">
+            <span>Linear damping</span>
+            <output id="linear-damping-value">1.50</output>
+          </label>
+          <input id="linear-damping" type="range" min="0" max="10" step="0.05" value="1.5">
+        </div>
+
+        <div class="physics-control">
+          <label for="angular-damping">
+            <span>Angular damping</span>
+            <output id="angular-damping-value">1.50</output>
+          </label>
+          <input id="angular-damping" type="range" min="0" max="10" step="0.05" value="1.5">
+        </div>
+
+        <div class="physics-control">
+          <label for="simulation-speed">
+            <span>Simulation speed</span>
+            <output id="simulation-speed-value">1.00×</output>
+          </label>
+          <input id="simulation-speed" type="range" min="0" max="8" step="0.05" value="1">
+        </div>
+
+        <div class="physics-control">
+          <div class="inline-checks">
+            <label><input id="auto-rotate" type="checkbox"> Auto rotate</label>
+            <label><input id="wireframe" type="checkbox" checked> Wireframe</label>
+          </div>
+        </div>
+
+        <div class="control-actions">
+          <button id="restart-render">Restart</button>
+          <button id="pause-render">Pause</button>
+          <button id="reset-view">Reset view</button>
+          <button id="fullscreen-render">Fullscreen</button>
+          <button id="inspect-geometry">Inspect</button>
+        </div>
+      </aside>
+
+      <div class="viewport-column">
+        <div id="viewport-shell" class="viewport-shell">
+          <canvas id="gpu-canvas"></canvas>
+        </div>
+        <div class="camera-hint">Mouse: left drag on green CENTER = move Link center · left drag elsewhere = orbit · wheel = zoom · right drag or Shift+left drag = pan</div>
+        <div class="grid" style="margin-top:12px">
+          <div><span class="muted">Compute</span><div id="render-compute" class="value">pending</div></div>
+          <div><span class="muted">Topology</span><div id="render-topology" class="value">pending</div></div>
+          <div><span class="muted">Zero-copy</span><div id="render-zero-copy" class="value">pending</div></div>
+          <div><span class="muted">Frames / steps</span><div id="render-frames" class="value">0 / 0</div></div>
+        </div>
       </div>
     </div>
-    <canvas id="gpu-canvas"></canvas>
-    <div class="camera-hint">Mouse: left drag on green CENTER = move Link center · left drag elsewhere = orbit · wheel = zoom · right drag or Shift+left drag = pan</div>
-    <div class="grid" style="margin-top:12px">
-      <div><span class="muted">Compute</span><div id="render-compute" class="value">pending</div></div>
-      <div><span class="muted">Topology</span><div id="render-topology" class="value">pending</div></div>
-      <div><span class="muted">Zero-copy</span><div id="render-zero-copy" class="value">pending</div></div>
-      <div><span class="muted">Frames / steps</span><div id="render-frames" class="value">0 / 0</div></div>
-    </div>
+
     <div class="card" style="margin-top:12px">
       <div class="toolbar">
         <h2 style="margin-right:auto">Geometry inspection</h2>
