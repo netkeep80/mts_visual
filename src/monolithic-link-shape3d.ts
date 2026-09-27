@@ -8,6 +8,8 @@ const EPSILON = 1e-9;
 const TWO_PI = 2 * Math.PI;
 const ARC_INTEGRATION_STEPS = 96;
 const ARC_BISECTION_STEPS = 40;
+const ROLL_GAUGE_WEAK_BEND_SINE = 0.015;
+const ROLL_GAUGE_STRONG_BEND_SINE = 0.08;
 
 export type MonolithicLinkQuat = readonly [number, number, number, number];
 
@@ -26,6 +28,12 @@ export interface MonolithicNetworkShape3D {
   readonly linkCount: number;
   readonly sectionCount: number;
   readonly derivedSectionCount: number;
+}
+
+export interface MonolithicLinkRollGauge3D {
+  readonly normal: MonolithicLinkVec3;
+  readonly bendSine: number;
+  readonly geometricWeight: number;
 }
 
 function add3(a: MonolithicLinkVec3, b: MonolithicLinkVec3): MonolithicLinkVec3 {
@@ -443,22 +451,80 @@ function resampleCurveByArcLength(
   return Object.freeze(result);
 }
 
-function chooseMacroPlaneNormal(
+function smoothStep01(value: number): number {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * (3 - 2 * t);
+}
+
+export function resolveMonolithicLinkRollGauge3D(
   start: MonolithicLinkVec3,
   center: MonolithicLinkVec3,
   end: MonolithicLinkVec3,
   linkIndex: number,
-): MonolithicLinkVec3 {
+  previousNormal?: MonolithicLinkVec3,
+): MonolithicLinkRollGauge3D {
   const first = subtract3(center, start);
   const second = subtract3(end, center);
-  const cross = cross3(first, second);
-  if (length3(cross) > EPSILON) return normalize3(cross);
-
+  const firstLength = length3(first);
+  const secondLength = length3(second);
   const overall = subtract3(end, start);
-  if (length3(overall) > EPSILON) {
-    return deterministicPerpendicular(normalize3(overall), linkIndex);
+
+  const axis = normalize3(
+    overall,
+    normalize3(
+      first,
+      normalize3(second, deterministicAxes(linkIndex)[2]),
+    ),
+  );
+
+  const deterministic = deterministicPerpendicular(axis, linkIndex);
+  const previous = previousNormal === undefined
+    ? deterministic
+    : normalize3(
+      subtract3(
+        previousNormal,
+        scale3(axis, dot3(previousNormal, axis)),
+      ),
+      deterministic,
+    );
+
+  const crossed = cross3(first, second);
+  const crossedLength = length3(crossed);
+  const denominator = firstLength * secondLength;
+  const bendSine = denominator > EPSILON
+    ? Math.max(0, Math.min(1, crossedLength / denominator))
+    : 0;
+
+  if (!(crossedLength > EPSILON)) {
+    return Object.freeze({
+      normal: previous,
+      bendSine,
+      geometricWeight: 0,
+    });
   }
-  return deterministicAxes(linkIndex)[1];
+
+  let geometric = scale3(crossed, 1 / crossedLength);
+  if (dot3(geometric, previous) < 0) {
+    geometric = scale3(geometric, -1);
+  }
+
+  const rawWeight =
+    (bendSine - ROLL_GAUGE_WEAK_BEND_SINE)
+    / (ROLL_GAUGE_STRONG_BEND_SINE - ROLL_GAUGE_WEAK_BEND_SINE);
+  const geometricWeight = smoothStep01(rawWeight);
+  const normal = normalize3(
+    add3(
+      scale3(previous, 1 - geometricWeight),
+      scale3(geometric, geometricWeight),
+    ),
+    previous,
+  );
+
+  return Object.freeze({
+    normal,
+    bendSine,
+    geometricWeight,
+  });
 }
 
 function parallelTransportOrientations(
@@ -562,7 +628,12 @@ export function deriveMonolithicLinkShape3D(
   );
   if (!(length3(sharedDirection) > EPSILON)) sharedDirection = firstDirection;
 
-  const macroNormal = chooseMacroPlaneNormal(start, center, end, linkIndex);
+  const macroNormal = resolveMonolithicLinkRollGauge3D(
+    start,
+    center,
+    end,
+    linkIndex,
+  ).normal;
   const axes = deterministicAxes(linkIndex);
 
   const firstCurve = firstLength <= EPSILON
