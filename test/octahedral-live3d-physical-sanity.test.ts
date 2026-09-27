@@ -259,6 +259,12 @@ assert(
   `20-octahedron baseline is line-like with aspectRatio≈15.56, got ${controller.template.aspectRatio}`,
 );
 
+const seedSpacing = controller.template.diameter * 1.5;
+assert(
+  Math.abs(seedSpacing - controller.template.diameter * 1.5) <= 1e-12,
+  "hub-heavy baseline uses diameter-derived seed spacing",
+);
+
 const initialSprings = springMetrics(controller);
 const initialHingeError = hingeMaxError(controller);
 const initialBounds = centerBounds(controller);
