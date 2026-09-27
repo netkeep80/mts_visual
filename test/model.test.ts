@@ -7,6 +7,7 @@ import "./octahedral-link3d.test.js";
 import "./octahedral-live3d.test.js";
 import "./rigid-section3d.test.js";
 import "./monolithic-link-spring3d.test.js";
+import "./monolithic-link-shape3d.test.js";
 import "./rigid-section3d-seed-independence.test.js";
 import "./octahedral-live3d-physical-sanity.test.js";
 import "./octahedral-performance3d.test.js";
