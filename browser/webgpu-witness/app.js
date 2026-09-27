@@ -662,7 +662,7 @@ async function startRender() {
       colorFormat,
       depthFormat: "depth24plus",
       centerMarkerPixels: 2.5,
-      arrowLengthPixels: 8,
+      arrowLengthPixels: 18,
     },
   );
 
