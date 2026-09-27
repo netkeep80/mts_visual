@@ -291,6 +291,10 @@ for (const needle of [
   "let arc_samples = max(256u, half_segments * 8u);",
   "if (dot(geometric, previous) < 0.0)",
   "let raw_weight = (bend_sine - 0.015) / (0.08 - 0.015);",
+  "if (first_self && !second_self)",
+  "shared_direction = second_direction;",
+  "else if (second_self && !first_self)",
+  "shared_direction = first_direction;",
 ]) {
   assert(
     MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL.includes(needle),
