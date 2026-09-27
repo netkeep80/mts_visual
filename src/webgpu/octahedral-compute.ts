@@ -204,8 +204,10 @@ export function buildOctahedralReverseIncidence3D(
   const counts = new Uint32Array(linkCount);
 
   for (let source = 0; source < linkCount; source += 1) {
-    counts[topology.startIndices[source]!] += 1;
-    counts[topology.endIndices[source]!] += 1;
+    const startTarget = topology.startIndices[source]!;
+    const endTarget = topology.endIndices[source]!;
+    counts[startTarget] = counts[startTarget]! + 1;
+    counts[endTarget] = counts[endTarget]! + 1;
   }
 
   const incomingOffsets = new Uint32Array(linkCount + 1);
@@ -219,11 +221,11 @@ export function buildOctahedralReverseIncidence3D(
   for (let source = 0; source < linkCount; source += 1) {
     const startTarget = topology.startIndices[source]!;
     incomingRefs[cursors[startTarget]!] = source * 2;
-    cursors[startTarget] += 1;
+    cursors[startTarget] = cursors[startTarget]! + 1;
 
     const endTarget = topology.endIndices[source]!;
     incomingRefs[cursors[endTarget]!] = source * 2 + 1;
-    cursors[endTarget] += 1;
+    cursors[endTarget] = cursors[endTarget]! + 1;
   }
 
   return Object.freeze({ incomingOffsets, incomingRefs });
