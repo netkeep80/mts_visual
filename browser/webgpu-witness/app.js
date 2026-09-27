@@ -208,6 +208,8 @@ const fixtures = [
 const DIFFERENTIAL_STEPS = 4;
 const DIFFERENTIAL_TOLERANCE = 2e-3;
 const RIGID_DIFFERENTIAL_TOLERANCE = 3e-3;
+const CENTER_MARKER_PIXELS = 8;
+const CENTER_HIT_RADIUS_PIXELS = 24;
 
 let adapter = null;
 let device = null;
@@ -641,6 +643,36 @@ function centerDragBodySet(state, linkIndex) {
   );
 }
 
+function cachedCenterHit(state, event) {
+  return webgpu.pickRigidSectionCenterScreen2D(
+    state.semanticCenterCache.map((center) =>
+      projectWorldToClient(state, center)
+    ),
+    event.clientX,
+    event.clientY,
+    CENTER_HIT_RADIUS_PIXELS,
+  );
+}
+
+function moveCenterDragTarget(state, dx, dy) {
+  const drag = state.centerDrag;
+  if (!drag || (dx === 0 && dy === 0)) return;
+  const { right, up } = cameraBasis(state.camera);
+  const rect = ui.canvas.getBoundingClientRect();
+  const delta = webgpu.rigidSectionScreenDragDelta3D(
+    right,
+    up,
+    drag.depth,
+    Math.max(1, rect.height),
+    dx,
+    dy,
+  );
+  for (let axis = 0; axis < 3; axis += 1) {
+    drag.target[axis] += delta[axis];
+  }
+  state.semanticCenterCache[drag.linkIndex] = [...drag.target];
+}
+
 function applyCenterDrag(state) {
   const drag = state.centerDrag;
   if (!drag) return null;
@@ -707,6 +739,8 @@ function installCameraControls(state) {
   let lastX = 0;
   let lastY = 0;
   let pickGeneration = 0;
+  let pendingPickDx = 0;
+  let pendingPickDy = 0;
 
   const finishPointer = (event) => {
     if (pointerId !== event.pointerId) return;
@@ -727,9 +761,49 @@ function installCameraControls(state) {
     }
   };
 
+  const activateCenterDrag = (selected, center, source) => {
+    const basis = cameraBasis(state.camera);
+    const depth = Math.max(
+      0.1,
+      dot(
+        [
+          center[0] - basis.eye[0],
+          center[1] - basis.eye[1],
+          center[2] - basis.eye[2],
+        ],
+        basis.forward,
+      ),
+    );
+    state.centerDrag = {
+      linkIndex: selected,
+      key: state.compute.topology.keys[selected],
+      target: [...center],
+      depth,
+      bodies: centerDragBodySet(state, selected),
+      uploadedBytes: 0,
+    };
+    state.semanticCenterCache[selected] = [...center];
+    mode = "center";
+    log(
+      `center drag selected: ${state.centerDrag.key} · source=${source} · ${state.centerDrag.bodies.length} rigid sections`,
+    );
+    setStatus(
+      ui.renderCompute,
+      `DRAG ${state.centerDrag.key} · sparse rigid-center override`,
+      "warn",
+    );
+  };
+
   const beginCenterPick = async (event) => {
+    const cached = cachedCenterHit(state, event);
+    if (cached >= 0) {
+      activateCenterDrag(cached, state.semanticCenterCache[cached], "cache");
+      return;
+    }
+
     const generation = ++pickGeneration;
     mode = "picking";
+    setStatus(ui.renderCompute, "PICKING CENTER…", "warn");
     try {
       const centers = await state.compute.readBackCenters();
       if (
@@ -738,63 +812,52 @@ function installCameraControls(state) {
         || renderState !== state
       ) return;
 
-      let selected = -1;
-      let selectedDistance = Number.POSITIVE_INFINITY;
-      const hitRadius = 16;
+      const projected = [];
+      const worldCenters = [];
       for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
         const center = rigidSemanticCenter3(state.compute.template, centers, link);
-        const screen = projectWorldToClient(state, center);
-        if (!screen) continue;
-        const distance = Math.hypot(event.clientX - screen[0], event.clientY - screen[1]);
-        if (distance <= hitRadius && distance < selectedDistance) {
-          selected = link;
-          selectedDistance = distance;
-        }
+        worldCenters.push(center);
+        projected.push(projectWorldToClient(state, center));
+        state.semanticCenterCache[link] = [...center];
       }
+      const selected = webgpu.pickRigidSectionCenterScreen2D(
+        projected,
+        event.clientX,
+        event.clientY,
+        CENTER_HIT_RADIUS_PIXELS,
+      );
 
       if (selected < 0) {
         mode = "orbit";
+        if (pendingPickDx !== 0 || pendingPickDy !== 0) {
+          state.camera.yaw -= pendingPickDx * 0.006;
+          state.camera.pitch = clamp(
+            state.camera.pitch - pendingPickDy * 0.006,
+            -Math.PI * 0.48,
+            Math.PI * 0.48,
+          );
+        }
+        pendingPickDx = 0;
+        pendingPickDy = 0;
+        log("center pick MISS — continuing as orbit");
+        setStatus(
+          ui.renderCompute,
+          `AVAILABLE · k=${state.compute.stiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+          "ok",
+        );
         return;
       }
 
-      const center = rigidSemanticCenter3(
-        state.compute.template,
-        centers,
-        selected,
-      );
-      const basis = cameraBasis(state.camera);
-      const depth = Math.max(
-        0.1,
-        dot(
-          [
-            center[0] - basis.eye[0],
-            center[1] - basis.eye[1],
-            center[2] - basis.eye[2],
-          ],
-          basis.forward,
-        ),
-      );
-      state.centerDrag = {
-        linkIndex: selected,
-        key: state.compute.topology.keys[selected],
-        target: [...center],
-        depth,
-        bodies: centerDragBodySet(state, selected),
-        uploadedBytes: 0,
-      };
-      mode = "center";
-      log(
-        `center drag selected: ${state.centerDrag.key} · ${state.centerDrag.bodies.length} rigid sections · one-shot center readback ${centers.byteLength} B`,
-      );
-      setStatus(
-        ui.renderCompute,
-        `DRAG ${state.centerDrag.key} · sparse rigid-center override`,
-        "warn",
-      );
+      activateCenterDrag(selected, worldCenters[selected], "GPU readback");
+      moveCenterDragTarget(state, pendingPickDx, pendingPickDy);
+      pendingPickDx = 0;
+      pendingPickDy = 0;
     } catch (error) {
       if (generation !== pickGeneration || renderState !== state) return;
       log(`center pick ERROR — ${error.stack ?? error}`);
       mode = "orbit";
+      pendingPickDx = 0;
+      pendingPickDy = 0;
     }
   };
 
@@ -805,6 +868,8 @@ function installCameraControls(state) {
     pointerId = event.pointerId;
     lastX = event.clientX;
     lastY = event.clientY;
+    pendingPickDx = 0;
+    pendingPickDy = 0;
     canvas.setPointerCapture(pointerId);
     canvas.classList.add("dragging");
 
@@ -834,17 +899,11 @@ function installCameraControls(state) {
       );
     } else if (mode === "pan") {
       panCamera(state.camera, dx, dy);
+    } else if (mode === "picking") {
+      pendingPickDx += dx;
+      pendingPickDy += dy;
     } else if (mode === "center" && state.centerDrag) {
-      const { right, up } = cameraBasis(state.camera);
-      const rect = canvas.getBoundingClientRect();
-      const worldPerPixel =
-        2 * state.centerDrag.depth * Math.tan(Math.PI / 8)
-        / Math.max(1, rect.height);
-      for (let axis = 0; axis < 3; axis += 1) {
-        state.centerDrag.target[axis] +=
-          right[axis] * dx * worldPerPixel
-          - up[axis] * dy * worldPerPixel;
-      }
+      moveCenterDragTarget(state, dx, dy);
     }
     event.preventDefault();
   }, listenerOptions);
@@ -942,7 +1001,7 @@ async function startRender() {
     {
       colorFormat,
       depthFormat: "depth24plus",
-      centerMarkerPixels: 2.5,
+      centerMarkerPixels: CENTER_MARKER_PIXELS,
       arrowLengthPixels: 18,
     },
   );
@@ -1019,6 +1078,7 @@ async function startRender() {
     cleanupCameraControls: null,
     centerDrag: null,
     initialSemanticCenters,
+    semanticCenterCache: initialSemanticCenters.map((center) => [...center]),
     scene,
     network,
   };
