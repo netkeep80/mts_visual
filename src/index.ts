@@ -111,3 +111,4 @@ export * from "./octahedral-link3d.js";
 
 export * from "./octahedral-live3d.js";
 export * from "./octahedral-performance3d.js";
+export * from "./rigid-section3d.js";
