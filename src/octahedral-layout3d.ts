@@ -147,14 +147,16 @@ export function writeFittedOctahedralTemplate3D(
   }
 
   const center = computeOctahedralSeedCenter3D(template, index, topology.linkCount);
+  const startTarget = topology.startIndices[index]!;
+  const endTarget = topology.endIndices[index]!;
   const startCenter = computeOctahedralSeedCenter3D(
     template,
-    topology.startIndices[index]!,
+    startTarget,
     topology.linkCount,
   );
   const endCenter = computeOctahedralSeedCenter3D(
     template,
-    topology.endIndices[index]!,
+    endTarget,
     topology.linkCount,
   );
   const basis = basisForAxis(computeOctahedralSeedAxis3D(template, topology, index));
@@ -168,23 +170,52 @@ export function writeFittedOctahedralTemplate3D(
     const offset = base + local;
     const fraction = Math.min(1, Math.abs(lz) / halfLength);
     const target = lz < 0 ? startCenter : endCenter;
+    const targetIndex = lz < 0 ? startTarget : endTarget;
+    const selfHalf = targetIndex === index;
 
-    // Fit the complete half-mast between its semantic target and this Link's
-    // own virtual center.  The required incidence deformation is therefore
-    // distributed over every longitudinal module instead of being injected
-    // into only the three tetrahedral cap springs by a late apex projection.
+    if (selfHalf) {
+      // A self-incidence half must not be seeded by collapsing every
+      // longitudinal level onto own CENTER.  Embed its material centerline as
+      // a deterministic closed loop whose arc length is approximately the
+      // half-mast rest length.  START/END apexes still return exactly to CENTER.
+      const side = lz < 0 ? -1 : 1;
+      const theta = 2 * Math.PI * fraction;
+      const sinTheta = Math.sin(theta);
+      const cosTheta = Math.cos(theta);
+      const loopRadius = halfLength / (2 * Math.PI);
+
+      const centerlineX = center[0] + side * loopRadius * (
+        sinTheta * basis.z[0] + (1 - cosTheta) * basis.x[0]
+      );
+      const centerlineY = center[1] + side * loopRadius * (
+        sinTheta * basis.z[1] + (1 - cosTheta) * basis.x[1]
+      );
+      const centerlineZ = center[2] + side * loopRadius * (
+        sinTheta * basis.z[2] + (1 - cosTheta) * basis.x[2]
+      );
+
+      // Rotate the transverse frame with the material tangent.  Using the
+      // material-parametric tangent keeps the frame continuous through CENTER
+      // for START-self, END-self, and double-self alike.
+      const normalX = cosTheta * basis.x[0] - sinTheta * basis.z[0];
+      const normalY = cosTheta * basis.x[1] - sinTheta * basis.z[1];
+      const normalZ = cosTheta * basis.x[2] - sinTheta * basis.z[2];
+
+      positions[offset] = centerlineX + normalX * lx + basis.y[0] * ly;
+      positions[offset + 1] = centerlineY + normalY * lx + basis.y[1] * ly;
+      positions[offset + 2] = centerlineZ + normalZ * lx + basis.y[2] * ly;
+      continue;
+    }
+
+    // Non-self halves retain the fitted path from own CENTER to the semantic
+    // target center, distributing incidence deformation over the complete
+    // half-mast instead of tearing only the cap springs.
     const centerlineX = center[0] + (target[0] - center[0]) * fraction;
     const centerlineY = center[1] + (target[1] - center[1]) * fraction;
     const centerlineZ = center[2] + (target[2] - center[2]) * fraction;
 
-    positions[offset] = centerlineX
-      + basis.x[0] * lx
-      + basis.y[0] * ly;
-    positions[offset + 1] = centerlineY
-      + basis.x[1] * lx
-      + basis.y[1] * ly;
-    positions[offset + 2] = centerlineZ
-      + basis.x[2] * lx
-      + basis.y[2] * ly;
+    positions[offset] = centerlineX + basis.x[0] * lx + basis.y[0] * ly;
+    positions[offset + 1] = centerlineY + basis.x[1] * lx + basis.y[1] * ly;
+    positions[offset + 2] = centerlineZ + basis.x[2] * lx + basis.y[2] * ly;
   }
 }
