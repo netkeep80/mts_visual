@@ -67,11 +67,20 @@ class FakeQueue {
 
 class FakeDevice implements WebGpuDeviceLike {
   readonly queue = new FakeQueue();
-  readonly limits = {
-    maxComputeWorkgroupsPerDimension: 65_535,
-    maxStorageBufferBindingSize: 256 * 1024 * 1024,
+  readonly limits: {
+    readonly maxComputeWorkgroupsPerDimension: number;
+    readonly maxStorageBufferBindingSize: number;
+    readonly maxStorageBuffersPerShaderStage: number;
   };
   readonly buffers: FakeBuffer[] = [];
+
+  constructor(maxStorageBuffersPerShaderStage = 8) {
+    this.limits = {
+      maxComputeWorkgroupsPerDimension: 65_535,
+      maxStorageBufferBindingSize: 256 * 1024 * 1024,
+      maxStorageBuffersPerShaderStage,
+    };
+  }
   readonly dispatches: { entryPoint: string; x: number; y: number; z: number }[] = [];
   readonly copiedBytes: number[] = [];
 
@@ -173,8 +182,13 @@ for (const entryPoint of [
 }
 same(
   [...RIGID_SECTION_WEBGPU_WGSL.matchAll(/@group\(0\) @binding\(\d+\)/g)].length,
-  13,
-  "rigid-section WGSL has exactly thirteen explicit bindings",
+  9,
+  "rigid-section WGSL has exactly nine explicit bindings",
+);
+same(
+  [...RIGID_SECTION_WEBGPU_WGSL.matchAll(/var<storage/g)].length,
+  7,
+  "rigid-section WGSL stays within the WebGPU baseline of eight storage buffers per stage",
 );
 assert(!/atomic</.test(RIGID_SECTION_WEBGPU_WGSL), "rigid-section WGSL needs no atomics");
 assert(!/pairwise/i.test(RIGID_SECTION_WEBGPU_WGSL), "rigid-section WGSL has no semantic all-pairs path");
@@ -225,9 +239,7 @@ for (const label of [
   "rigid-section-orientations",
   "rigid-section-linear-velocities",
   "rigid-section-angular-velocities",
-  "rigid-section-topology",
-  "rigid-section-incoming-offsets",
-  "rigid-section-incoming-refs",
+  "rigid-section-topology-data",
   "rigid-section-globals",
 ]) {
   assert(initialLabels.includes(label), `initialization uploads ${label} exactly as immutable/initial state`);
@@ -308,6 +320,22 @@ class InvalidShaderDevice extends FakeDevice {
 }
 
 try {
+  await createRigidSectionWebGpuCompute3D(new FakeDevice(6), rootBasis, {
+    aspectRatio: 2 * Math.SQRT2,
+    stiffness: 1,
+    simulationSpeed: 1,
+  });
+  throw new Error("insufficient storage-buffer limit should fail");
+} catch (error) {
+  assert(error instanceof Error, "storage-buffer limit failure has Error shape");
+  assert(
+    error.message.includes("requires 7 storage buffers per shader stage"),
+    "storage-buffer limit failure states the packed requirement",
+  );
+  assert(error.message.includes("adapter exposes 6"), "storage-buffer limit failure states adapter limit");
+}
+
+try {
   await createRigidSectionWebGpuCompute3D(new InvalidShaderDevice(), rootBasis, {
     aspectRatio: 2 * Math.SQRT2,
     stiffness: 1,
@@ -323,5 +351,5 @@ try {
 
 console.log(
   `[v0.5 P3 WebGPU] PASS bodies=${snapshot.bodyCount} passes=${stats.computePasses} `
-  + `bindings=13 zeroUpload=${stats.dynamicStateUploadBytes}`,
+  + `bindings=9 storage=7 zeroUpload=${stats.dynamicStateUploadBytes}`,
 );
