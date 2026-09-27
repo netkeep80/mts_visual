@@ -968,7 +968,16 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
   const module = device.createShaderModule({
     label: "monolithic-link-render-shader",
     code: MONOLITHIC_LINK_WEBGPU_RENDER_WGSL,
-  });
+  }) as object & {
+    getCompilationInfo?(): Promise<{
+      readonly messages: readonly {
+        readonly type?: string;
+        readonly message: string;
+        readonly lineNum?: number;
+        readonly linePos?: number;
+      }[];
+    }>;
+  };
   if (typeof module.getCompilationInfo === "function") {
     const compilation = await module.getCompilationInfo();
     const errors = compilation.messages.filter(
