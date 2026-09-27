@@ -39,6 +39,11 @@ extends MonolithicLinkSpringMaterial3D {
   readonly simulationSpeed?: number;
 }
 
+export interface MonolithicLinkSpringIncidence3D {
+  readonly startSelf: boolean;
+  readonly endSelf: boolean;
+}
+
 export interface MonolithicLinkSpringPotential3D {
   readonly startForce: MonolithicLinkVec3;
   readonly centerForce: MonolithicLinkVec3;
@@ -215,6 +220,10 @@ export function evaluateMonolithicLinkSpring3D(
   end: MonolithicLinkVec3,
   restLength: number,
   material: MonolithicLinkSpringMaterial3D,
+  incidence: MonolithicLinkSpringIncidence3D = {
+    startSelf: false,
+    endSelf: false,
+  },
 ): MonolithicLinkSpringPotential3D {
   const resolvedRestLength = positive(restLength, "restLength");
   const stretchStiffness = nonNegative(
@@ -246,19 +255,29 @@ export function evaluateMonolithicLinkSpring3D(
     nonlinearity,
   );
 
-  const q = add3(subtract3(start, scale3(center, 2)), end);
+  // A three-point bending term exists only when both Link arms have
+  // independent directions. If START or END is self-incidence, that arm
+  // aliases CENTER and has no direction; applying q = S - 2C + E would
+  // incorrectly turn "straightening" into an extra axial spring that
+  // compresses the remaining free arm.
+  const hasThreePointBend = !incidence.startSelf && !incidence.endSelf;
+  const q = hasThreePointBend
+    ? add3(subtract3(start, scale3(center, 2)), end)
+    : ([0, 0, 0] as MonolithicLinkVec3);
   const q2 = dot3(q, q);
-  const straighteningEnergy =
-    0.5 * straighteningStiffness * q2
-    + 0.25
-      * straighteningStiffness
-      * nonlinearity
-      * q2
-      * q2
-      / (resolvedRestLength * resolvedRestLength);
-  const straighteningScale =
-    straighteningStiffness
-    * (1 + nonlinearity * q2 / (resolvedRestLength * resolvedRestLength));
+  const straighteningEnergy = hasThreePointBend
+    ? 0.5 * straighteningStiffness * q2
+      + 0.25
+        * straighteningStiffness
+        * nonlinearity
+        * q2
+        * q2
+        / (resolvedRestLength * resolvedRestLength)
+    : 0;
+  const straighteningScale = hasThreePointBend
+    ? straighteningStiffness
+      * (1 + nonlinearity * q2 / (resolvedRestLength * resolvedRestLength))
+    : 0;
   const straighteningGradient = scale3(q, straighteningScale);
 
   const startForce = add3(
@@ -395,6 +414,10 @@ export class MonolithicLinkSpringPhysics3D {
         stretchStiffness: this.stretchStiffness,
         straighteningStiffness: this.straighteningStiffness,
         nonlinearity: this.nonlinearity,
+      },
+      {
+        startSelf: startIndex === link,
+        endSelf: endIndex === link,
       },
     );
   }
