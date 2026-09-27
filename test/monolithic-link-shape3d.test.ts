@@ -34,8 +34,24 @@ function read3(values: Float32Array, index: number): MonolithicLinkVec3 {
   return [values[offset]!, values[offset + 1]!, values[offset + 2]!];
 }
 
+function add3(a: MonolithicLinkVec3, b: MonolithicLinkVec3): MonolithicLinkVec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
 function subtract3(a: MonolithicLinkVec3, b: MonolithicLinkVec3): MonolithicLinkVec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function scale3(a: MonolithicLinkVec3, scale: number): MonolithicLinkVec3 {
+  return [a[0] * scale, a[1] * scale, a[2] * scale];
+}
+
+function cross3(a: MonolithicLinkVec3, b: MonolithicLinkVec3): MonolithicLinkVec3 {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
 }
 
 function length3(value: MonolithicLinkVec3): number {
