@@ -1,0 +1,327 @@
+import {
+  RIGID_SECTION_WEBGPU_WGSL,
+  createRigidSectionWebGpuCompute3D,
+  runRigidSectionWebGpuDifferential3D,
+  type WebGpuBufferLike,
+  type WebGpuDeviceLike,
+} from "../src/webgpu/index.js";
+import type { VisualLinkNetwork } from "../src/index.js";
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(`@mts/visual v0.5/P3: ${message}`);
+}
+
+function same<T>(actual: T, expected: T, message: string): void {
+  assert(Object.is(actual, expected), `${message}: ${String(actual)} !== ${String(expected)}`);
+}
+
+class FakeBuffer implements WebGpuBufferLike {
+  readonly bytes: ArrayBuffer;
+  destroyed = false;
+
+  constructor(readonly size: number, readonly label = "") {
+    this.bytes = new ArrayBuffer(size);
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+  }
+
+  async mapAsync(_mode: number, _offset?: number, _size?: number): Promise<void> {}
+
+  getMappedRange(offset = 0, size = this.size - offset): ArrayBuffer {
+    return this.bytes.slice(offset, offset + size);
+  }
+
+  unmap(): void {}
+}
+
+class FakeQueue {
+  readonly writes: { label: string; bytes: number }[] = [];
+  submissions = 0;
+
+  writeBuffer(
+    buffer: WebGpuBufferLike,
+    bufferOffset: number,
+    data: ArrayBuffer | ArrayBufferView,
+    dataOffset = 0,
+    size?: number,
+  ): void {
+    const target = buffer as FakeBuffer;
+    const source = data instanceof ArrayBuffer
+      ? new Uint8Array(data)
+      : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    const byteLength = size ?? source.byteLength - dataOffset;
+    new Uint8Array(target.bytes).set(source.subarray(dataOffset, dataOffset + byteLength), bufferOffset);
+    this.writes.push({ label: buffer.label ?? "", bytes: byteLength });
+  }
+
+  submit(_commandBuffers: readonly object[]): void {
+    this.submissions += 1;
+  }
+
+  resetWrites(): void {
+    this.writes.length = 0;
+  }
+}
+
+class FakeDevice implements WebGpuDeviceLike {
+  readonly queue = new FakeQueue();
+  readonly limits = {
+    maxComputeWorkgroupsPerDimension: 65_535,
+    maxStorageBufferBindingSize: 256 * 1024 * 1024,
+  };
+  readonly buffers: FakeBuffer[] = [];
+  readonly dispatches: { entryPoint: string; x: number; y: number; z: number }[] = [];
+  readonly copiedBytes: number[] = [];
+
+  createBuffer(descriptor: {
+    readonly label?: string;
+    readonly size: number;
+    readonly usage: number;
+    readonly mappedAtCreation?: boolean;
+  }): FakeBuffer {
+    const buffer = new FakeBuffer(descriptor.size, descriptor.label ?? "");
+    this.buffers.push(buffer);
+    return buffer;
+  }
+
+  createShaderModule(descriptor: { readonly label?: string; readonly code: string }): object {
+    return {
+      label: descriptor.label,
+      code: descriptor.code,
+      async getCompilationInfo() {
+        return { messages: [] };
+      },
+    };
+  }
+
+  createBindGroupLayout(descriptor: { readonly label?: string; readonly entries: readonly object[] }): object {
+    return { label: descriptor.label, entries: descriptor.entries };
+  }
+
+  createPipelineLayout(descriptor: { readonly label?: string; readonly bindGroupLayouts: readonly object[] }): object {
+    return { label: descriptor.label, bindGroupLayouts: descriptor.bindGroupLayouts };
+  }
+
+  async createComputePipelineAsync(descriptor: {
+    readonly label?: string;
+    readonly layout: object;
+    readonly compute: { readonly module: object; readonly entryPoint: string };
+  }): Promise<{ readonly label?: string; readonly entryPoint: string }> {
+    return descriptor.label === undefined
+      ? { entryPoint: descriptor.compute.entryPoint }
+      : { label: descriptor.label, entryPoint: descriptor.compute.entryPoint };
+  }
+
+  createBindGroup(descriptor: {
+    readonly label?: string;
+    readonly layout: object;
+    readonly entries: readonly object[];
+  }): object {
+    return { label: descriptor.label, entries: descriptor.entries };
+  }
+
+  createCommandEncoder(_descriptor?: { readonly label?: string }) {
+    const device = this;
+    return {
+      beginComputePass() {
+        let entryPoint = "";
+        return {
+          setPipeline(pipeline: { readonly entryPoint?: string; readonly label?: string }) {
+            entryPoint = pipeline.entryPoint ?? pipeline.label ?? "";
+          },
+          setBindGroup(_index: number, _bindGroup: object) {},
+          dispatchWorkgroups(x: number, y = 1, z = 1) {
+            device.dispatches.push({ entryPoint, x, y, z });
+          },
+          end() {},
+        };
+      },
+      copyBufferToBuffer(
+        source: WebGpuBufferLike,
+        sourceOffset: number,
+        destination: WebGpuBufferLike,
+        destinationOffset: number,
+        size: number,
+      ) {
+        const sourceBytes = new Uint8Array((source as FakeBuffer).bytes, sourceOffset, size);
+        new Uint8Array((destination as FakeBuffer).bytes).set(sourceBytes, destinationOffset);
+        device.copiedBytes.push(size);
+      },
+      finish() {
+        return {};
+      },
+    };
+  }
+
+  resetDispatches(): void {
+    this.dispatches.length = 0;
+  }
+}
+
+for (const entryPoint of [
+  "clear_force_torque_main",
+  "relation_batch_main",
+  "integrate_main",
+  "hinge_jacobi_main",
+]) {
+  assert(
+    RIGID_SECTION_WEBGPU_WGSL.includes(`fn ${entryPoint}`),
+    `rigid-section WGSL exposes ${entryPoint}`,
+  );
+}
+same(
+  [...RIGID_SECTION_WEBGPU_WGSL.matchAll(/@group\(0\) @binding\(\d+\)/g)].length,
+  13,
+  "rigid-section WGSL has exactly thirteen explicit bindings",
+);
+assert(!/atomic</.test(RIGID_SECTION_WEBGPU_WGSL), "rigid-section WGSL needs no atomics");
+assert(!/pairwise/i.test(RIGID_SECTION_WEBGPU_WGSL), "rigid-section WGSL has no semantic all-pairs path");
+assert(
+  RIGID_SECTION_WEBGPU_WGSL.includes("let local = pair * 2u + parity;"),
+  "two parity batches are the conflict-free relation schedule",
+);
+assert(
+  RIGID_SECTION_WEBGPU_WGSL.includes("let next_q = q_normalize"),
+  "GPU integration normalizes every rigid-section quaternion",
+);
+assert(
+  !/\blayout\s*:/.test(RIGID_SECTION_WEBGPU_WGSL),
+  "rigid-section WGSL avoids reserved identifier layout",
+);
+assert(
+  !/\blet\s+target\b/.test(RIGID_SECTION_WEBGPU_WGSL),
+  "rigid-section WGSL avoids reserved identifier target",
+);
+
+const rootBasis: VisualLinkNetwork = {
+  links: [
+    { key: "R", startKey: "R", endKey: "R" },
+    { key: "O", startKey: "O", endKey: "R" },
+    { key: "C", startKey: "R", endKey: "C" },
+    { key: "L", startKey: "O", endKey: "C" },
+    { key: "U", startKey: "C", endKey: "O" },
+  ],
+};
+const fake = new FakeDevice();
+const controller = await createRigidSectionWebGpuCompute3D(fake, rootBasis, {
+  aspectRatio: 10 * Math.SQRT2,
+  stiffness: 2,
+  simulationSpeed: 1,
+});
+
+const snapshot = controller.snapshot();
+same(snapshot.status, "available", "fresh rigid-section GPU controller is available");
+same(snapshot.linkCount, 5, "GPU root-basis Link count");
+same(snapshot.sectionCount, 21, "GPU root-basis section count");
+same(snapshot.bodyCount, 105, "GPU root-basis body count");
+same(snapshot.centerBytes, 105 * 16, "centers are packed vec4 per rigid section");
+same(snapshot.orientationBytes, 105 * 16, "quaternions are packed vec4 per rigid section");
+
+const initialLabels = fake.queue.writes.map((write) => write.label);
+for (const label of [
+  "rigid-section-centers",
+  "rigid-section-orientations",
+  "rigid-section-linear-velocities",
+  "rigid-section-angular-velocities",
+  "rigid-section-topology",
+  "rigid-section-incoming-offsets",
+  "rigid-section-incoming-refs",
+  "rigid-section-globals",
+]) {
+  assert(initialLabels.includes(label), `initialization uploads ${label} exactly as immutable/initial state`);
+}
+
+fake.queue.resetWrites();
+fake.resetDispatches();
+const stats = controller.step();
+same(fake.queue.writes.length, 0, "ordinary rigid-section GPU step has zero queue.writeBuffer calls");
+same(stats.dynamicStateUploadBytes, 0, "ordinary rigid-section GPU step reports zero dynamic upload");
+same(stats.relationBatchDispatches, 2, "exactly two parity relation batches per step");
+same(stats.hingeDispatches, 12, "exactly twelve Jacobi hinge passes per step");
+same(stats.computePasses, 16, "tick has clear + two relation + integrate + twelve hinge passes");
+
+const sequence = fake.dispatches.map((dispatch) => dispatch.entryPoint);
+same(sequence[0], "clear_force_torque_main", "tick starts by clearing force/torque");
+same(sequence[1], "relation_batch_main", "first parity relation batch");
+same(sequence[2], "relation_batch_main", "second parity relation batch");
+same(sequence[3], "integrate_main", "integration follows complete relation accumulation");
+same(
+  sequence.filter((entry) => entry === "hinge_jacobi_main").length,
+  12,
+  "all twelve hinge iterations are explicit GPU passes",
+);
+same(sequence.at(-1), "hinge_jacobi_main", "tick ends on final main-buffer hinge pass");
+
+fake.queue.resetWrites();
+controller.setStiffness(3);
+same(fake.queue.writes.length, 1, "stiffness update writes only globals");
+same(fake.queue.writes[0]!.label, "rigid-section-globals", "stiffness update targets globals");
+fake.queue.resetWrites();
+controller.setSimulationSpeed(0.5);
+same(fake.queue.writes.length, 1, "speed update writes only globals");
+same(fake.queue.writes[0]!.label, "rigid-section-globals", "speed update targets globals");
+
+const zeroStepDifferential = await runRigidSectionWebGpuDifferential3D(
+  new FakeDevice(),
+  rootBasis,
+  { aspectRatio: 10 * Math.SQRT2, stiffness: 2, simulationSpeed: 1 },
+  0,
+  1e-7,
+);
+assert(zeroStepDifferential.passed, "CPU/GPU initialization state is byte-equivalent at step zero");
+same(zeroStepDifferential.maxCenterDelta, 0, "initial centers match exactly");
+same(zeroStepDifferential.maxOrientationDelta, 0, "initial orientations match exactly");
+
+controller.destroy();
+same(controller.snapshot().status, "destroyed", "destroyed rigid-section controller reports destroyed");
+assert(
+  fake.buffers.filter((buffer) => buffer.label.startsWith("rigid-section-")).every((buffer) => buffer.destroyed),
+  "destroy releases every rigid-section-owned GPU buffer",
+);
+
+try {
+  controller.step();
+  throw new Error("destroyed rigid-section controller step should fail");
+} catch (error) {
+  assert(error instanceof Error && /destroyed/.test(error.message), "destroyed rigid-section controller fails closed");
+}
+
+class InvalidShaderDevice extends FakeDevice {
+  createShaderModule(descriptor: { readonly label?: string; readonly code: string }): object {
+    return {
+      label: descriptor.label,
+      code: descriptor.code,
+      async getCompilationInfo() {
+        return {
+          messages: [{
+            type: "error",
+            message: "synthetic rigid-section WGSL failure",
+            lineNum: 19,
+            linePos: 7,
+          }],
+        };
+      },
+    };
+  }
+}
+
+try {
+  await createRigidSectionWebGpuCompute3D(new InvalidShaderDevice(), rootBasis, {
+    aspectRatio: 2 * Math.SQRT2,
+    stiffness: 1,
+    simulationSpeed: 1,
+  });
+  throw new Error("invalid rigid-section shader should fail");
+} catch (error) {
+  assert(error instanceof Error, "shader validation failure has Error shape");
+  assert(error.message.includes("WGSL compilation failed"), "shader failure is explicit");
+  assert(error.message.includes("line 19:7"), "shader failure keeps browser line/column");
+  assert(error.message.includes("synthetic rigid-section WGSL failure"), "shader failure keeps browser message");
+}
+
+console.log(
+  `[v0.5 P3 WebGPU] PASS bodies=${snapshot.bodyCount} passes=${stats.computePasses} `
+  + `bindings=13 zeroUpload=${stats.dynamicStateUploadBytes}`,
+);
