@@ -83,6 +83,46 @@ function p95(values: readonly number[]): number {
   return values[Math.min(values.length - 1, Math.ceil(values.length * 0.95) - 1)]!;
 }
 
+function sampledRingDistanceSignature(
+  controller: OctahedralLivePhysics3D,
+  levelStep: number,
+): number[] {
+  const levels: number[] = [];
+  for (let level = 0; level <= controller.template.octahedronCount; level += levelStep) {
+    levels.push(level);
+  }
+  if (levels.at(-1) !== controller.template.octahedronCount) {
+    levels.push(controller.template.octahedronCount);
+  }
+
+  const centroids = levels.map((level) => {
+    const first = level * 3;
+    return centroidOfVertices(controller, 0, [first, first + 1, first + 2]);
+  });
+
+  const signature: number[] = [];
+  for (let left = 0; left < centroids.length; left += 1) {
+    for (let right = left + 1; right < centroids.length; right += 1) {
+      signature.push(distance3(centroids[left]!, centroids[right]!));
+    }
+  }
+  return signature;
+}
+
+function shapeSignatureRmsError(
+  current: readonly number[],
+  reference: readonly number[],
+): number {
+  same(current.length, reference.length, "shape signatures have equal length");
+  if (current.length === 0) return 0;
+  let sumSquares = 0;
+  for (let index = 0; index < current.length; index += 1) {
+    const delta = current[index]! - reference[index]!;
+    sumSquares += delta * delta;
+  }
+  return Math.sqrt(sumSquares / current.length);
+}
+
 const ratio = 2 * Math.SQRT2;
 const selfNetwork: VisualLinkNetwork = {
   links: [{ key: "R", startKey: "R", endKey: "R" }],
@@ -158,6 +198,79 @@ assert(
 assert(
   (baselineStrains.at(-1) ?? 0) <= 0.25,
   `20-octahedron self-loop seed max strain is bounded: ${baselineStrains.at(-1) ?? 0}`,
+);
+
+const attractor = createOctahedralLivePhysics3D(selfNetwork, {
+  aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+  stiffness: 5,
+  simulationSpeed: 4,
+});
+same(attractor.template.octahedronCount, 100, "self-loop attractor witness uses 100 octahedra");
+const attractorReference = sampledRingDistanceSignature(attractor, 10);
+const excludedVertices = new Set<number>([
+  attractor.template.startApex,
+  attractor.template.endApex,
+  ...attractor.template.centerTriangle,
+]);
+
+for (let vertex = 0; vertex < attractor.template.vertexCount; vertex += 1) {
+  if (excludedVertices.has(vertex)) continue;
+  const offset = packedVertexOffset(attractor, 0, vertex);
+  const phase = vertex * 0.7548776662466927;
+  attractor.positions[offset] = attractor.positions[offset]! + 0.35 * Math.sin(phase * 1.7 + 0.2);
+  attractor.positions[offset + 1] = attractor.positions[offset + 1]! + 0.45 * Math.sin(phase * 0.91 + 1.1);
+  attractor.positions[offset + 2] = attractor.positions[offset + 2]! + 0.30 * Math.cos(phase * 1.31 - 0.4);
+}
+attractor.velocities.fill(0);
+
+const attractorSamples = new Map<number, {
+  readonly shapeError: number;
+  readonly p95Strain: number;
+  readonly maxStrain: number;
+}>();
+
+function captureAttractorSample(step: number): void {
+  const signature = sampledRingDistanceSignature(attractor, 10);
+  const strains = initialSpringStrains(attractor);
+  attractorSamples.set(step, {
+    shapeError: shapeSignatureRmsError(signature, attractorReference),
+    p95Strain: p95(strains),
+    maxStrain: strains.at(-1) ?? 0,
+  });
+}
+
+captureAttractorSample(0);
+for (let step = 1; step <= 5000; step += 1) {
+  attractor.step();
+  if (step === 30 || step === 300 || step === 1200 || step === 5000) {
+    captureAttractorSample(step);
+  }
+}
+
+const attractorDiagnostic = [0, 30, 300, 1200, 5000]
+  .map((step) => {
+    const sample = attractorSamples.get(step)!;
+    return [
+      `${step}:shape=${sample.shapeError.toExponential(4)}`,
+      `p95=${sample.p95Strain.toExponential(4)}`,
+      `max=${sample.maxStrain.toExponential(4)}`,
+    ].join(",");
+  })
+  .join(" ");
+console.log(`[M5/P2 R attractor] ${attractorDiagnostic}`);
+
+const disturbed = attractorSamples.get(0)!;
+const settled = attractorSamples.get(5000)!;
+assert(disturbed.shapeError > 1e-4, "self-loop attractor witness applies a measurable non-rigid perturbation");
+assert(Number.isFinite(settled.shapeError), "self-loop attractor witness remains finite after 5000 steps");
+assert(Number.isFinite(settled.maxStrain), "self-loop attractor spring strain remains finite after 5000 steps");
+assert(
+  settled.p95Strain < 0.05,
+  `perturbed self-loop relaxes to low spring strain: p95=${settled.p95Strain}`,
+);
+assert(
+  settled.shapeError > 0.2,
+  `low-strain relaxed self-loop does not converge back to seeded figure-eight: shapeError=${settled.shapeError}`,
 );
 
 const paused = createOctahedralLivePhysics3D(selfNetwork, {
