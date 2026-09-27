@@ -62,10 +62,10 @@ Starting with package version `0.4.0`, `@mts/visual` also exposes a scalable Lin
 One represented Link is one continuous elastic body:
 
 ```text
-tetra ≡ octa ≡ octa ≡ ... ≡ octa ≡ octa ≡ tetra
+△ ≡ octa ≡ octa ≡ ... ≡ octa ≡ octa ≡ △
 ```
 
-The octahedron count is always even. The virtual Link center is the centroid of the central shared triangle; it is not an extra particle or semantic entity. START/END tetrahedral apexes hinge to the virtual centers of the Links referenced by `startKey` / `endKey`. Self-incidence remains finite.
+The octahedron count is always even. A Link with N octahedra contains exactly N+1 physical triangular sections and no terminal apex particles or tetrahedral caps. The virtual Link center is the centroid of the central shared triangle; START and END are likewise the geometric centroids of the first and last triangular sections. Those virtual endpoint points hinge to the virtual centers of the Links referenced by `startKey` / `endKey`. Self-incidence remains finite.
 
 The Link physics contract has exactly two user-facing parameters:
 
@@ -129,9 +129,21 @@ The recommended live/presentation baseline is:
 
 ```text
 20 octahedra
-aspectRatio = sqrt(2) * 11 ≈ 15.56
+aspectRatio = sqrt(2) * 10 ≈ 14.14
 ```
 
 The low-level two-octahedron template remains legal for low-detail/testing. The 333-Link regression suite now gates hinge accuracy, p95/max spring strain, severe-strain fraction, spring energy over 360 damped ticks, 3D bounds, and exact O(N*E) work. CPU and WebGPU initializers share the same distributed fitting contract.
+
+### Capless terminal geometry
+
+Current octahedral geometry has no START/END tetrahedral caps. The terminal physical objects are ordinary triangular sections of the first/last octahedron. Incidence constrains only their geometric centroids:
+
+```text
+START = centroid(first triangle)
+CENTER = centroid(middle triangle)
+END = centroid(last triangle)
+```
+
+For N octahedra, `vertexCount = 3 * (N + 1)` and `restLength = N * moduleHeight`. Endpoint projection translates each terminal triangle as a whole, preserving its finite shape, while force transfer removes only its net translational reaction so residual torque/deformation remains physical.
 
 The development and migration roadmap is tracked in issue #1.
