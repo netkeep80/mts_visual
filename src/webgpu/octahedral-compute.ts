@@ -440,10 +440,15 @@ fn init_main(
 
   let scalar = linear * 3u;
   let rest = rest_xyz(local);
-  let seeded = center
+  let half_length = abs(rest_xyz(globals.counts.w).z);
+  let fraction = min(1.0, abs(rest.z) / max(half_length, 1e-12));
+  let start_target = seed_center(topology[link * 2u]);
+  let end_target = seed_center(topology[link * 2u + 1u]);
+  let target = select(end_target, start_target, rest.z < 0.0);
+  let centerline = center + (target - center) * fraction;
+  let seeded = centerline
     + basis_x * rest.x
-    + basis_y * rest.y
-    + axis * rest.z;
+    + basis_y * rest.y;
   store_position(scalar, seeded);
   store_velocity(scalar, vec3<f32>(0.0));
   store_force(scalar, vec3<f32>(0.0));

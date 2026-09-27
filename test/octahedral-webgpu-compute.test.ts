@@ -262,6 +262,22 @@ assert(
 const gpuGrid = getOctahedralSeedGrid3D(template, 333);
 same(gpuGrid.side, 7, "CPU contract supplies seven-wide 333-Link grid to GPU globals");
 same(gpuGrid.depth, 7, "CPU contract supplies seven-deep 333-Link grid to GPU globals");
+assert(
+  Math.abs(gpuGrid.spacing - template.diameter * 1.5) <= 1e-12,
+  "CPU seed spacing is exactly 1.5x Link diameter and independent of rest length",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let half_length = abs(rest_xyz(globals.counts.w).z);"),
+  "WGSL derives half-mast rest length from END apex",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let centerline = center + (target - center) * fraction;"),
+  "WGSL distributes incidence fit across the complete half-mast",
+);
+assert(
+  !OCTAHEDRAL_WEBGPU_WGSL.includes("+ axis * rest.z"),
+  "WGSL no longer leaves the whole mast rigid then tears only its apex springs",
+);
 
 const fake = new FakeDevice();
 const controller = await createOctahedralWebGpuCompute3D(fake, fanInNetwork, {
