@@ -472,6 +472,8 @@ function panCamera(camera, dx, dy) {
 
 function installCameraControls(state) {
   const canvas = ui.canvas;
+  const abortController = new AbortController();
+  const listenerOptions = { signal: abortController.signal };
   let pointerId = null;
   let mode = null;
   let lastX = 0;
@@ -485,7 +487,7 @@ function installCameraControls(state) {
     canvas.classList.remove("dragging");
   };
 
-  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault(), listenerOptions);
 
   canvas.addEventListener("pointerdown", (event) => {
     if (pointerId !== null) return;
@@ -498,7 +500,7 @@ function installCameraControls(state) {
     canvas.setPointerCapture(pointerId);
     canvas.classList.add("dragging");
     event.preventDefault();
-  });
+  }, listenerOptions);
 
   canvas.addEventListener("pointermove", (event) => {
     if (pointerId !== event.pointerId || mode === null) return;
@@ -517,10 +519,11 @@ function installCameraControls(state) {
     } else {
       panCamera(state.camera, dx, dy);
     }
-  });
+    event.preventDefault();
+  }, listenerOptions);
 
-  canvas.addEventListener("pointerup", endDrag);
-  canvas.addEventListener("pointercancel", endDrag);
+  canvas.addEventListener("pointerup", endDrag, listenerOptions);
+  canvas.addEventListener("pointercancel", endDrag, listenerOptions);
 
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
@@ -530,9 +533,10 @@ function installCameraControls(state) {
       state.camera.minDistance,
       state.camera.maxDistance,
     );
-  }, { passive: false });
+  }, { passive: false, signal: abortController.signal });
 
   return () => {
+    abortController.abort();
     canvas.classList.remove("dragging");
   };
 }
