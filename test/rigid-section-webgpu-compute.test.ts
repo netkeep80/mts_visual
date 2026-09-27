@@ -239,10 +239,12 @@ same(snapshot.bodyCount, 105, "GPU root-basis body count");
 same(snapshot.centerBytes, 105 * 16, "centers are packed vec4 per rigid section");
 same(snapshot.orientationBytes, 105 * 16, "quaternions are packed vec4 per rigid section");
 
+const rLinkIndex = controller.topology.keys.indexOf("R");
+assert(rLinkIndex >= 0, "R exists in normalized rigid topology");
 const rDragBodies = collectRigidSectionCenterDragBodies3D(
   controller.topology,
   controller.template,
-  0,
+  rLinkIndex,
 );
 same(
   rDragBodies.length,
@@ -257,7 +259,7 @@ same(
 assert(
   rDragBodies.some(
     ({ linkIndex, localSection }) =>
-      linkIndex === 0 && localSection === controller.template.centerSection,
+      linkIndex === rLinkIndex && localSection === controller.template.centerSection,
   ),
   "rigid center drag includes selected semantic CENTER body",
 );
