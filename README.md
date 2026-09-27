@@ -106,4 +106,25 @@ The corrected initializer is still deterministic and O(N), but places centers in
 
 This is presentation initialization only. START/END hinge projection, Link semantics, the two Link physics parameters, and the no-all-pairs scalable-path contract are unchanged.
 
+### 0.4.2 physical-sanity correction
+
+Package version `0.4.2` fixes a second live-initialization defect exposed by a real 333-Link hub-heavy A-network. In `0.4.1`, the mast body started close to its undeformed rest shape and the final hinge projection could move only the two tetrahedral apexes across large semantic-target distances. The result was exact topology but extreme spring strain concentrated near Link ends.
+
+The corrected initializer distributes START/CENTER/END fitting across every longitudinal module before hinge projection. Seed-center spacing is now based on cross-section only:
+
+```text
+spacing = 1.5 * diameter
+```
+
+and does not grow with mast rest length. Increasing octahedron count therefore makes Links longer/slenderer instead of expanding the whole seed volume by the same factor.
+
+The recommended live/presentation baseline is:
+
+```text
+20 octahedra
+aspectRatio = sqrt(2) * 11 ≈ 15.56
+```
+
+The low-level two-octahedron template remains legal for low-detail/testing. The 333-Link regression suite now gates hinge accuracy, p95/max spring strain, severe-strain fraction, spring energy over 360 damped ticks, 3D bounds, and exact O(N*E) work. CPU and WebGPU initializers share the same distributed fitting contract.
+
 The development and migration roadmap is tracked in issue #1.
