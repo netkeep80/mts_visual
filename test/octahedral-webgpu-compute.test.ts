@@ -305,7 +305,7 @@ assert(
   "WGSL derives half-mast rest length from END apex",
 );
 assert(
-  OCTAHEDRAL_WEBGPU_WGSL.includes("let centerline = center + (target - center) * fraction;"),
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let centerline = center + (target_center - center) * fraction;"),
   "WGSL distributes incidence fit across the complete half-mast",
 );
 assert(
