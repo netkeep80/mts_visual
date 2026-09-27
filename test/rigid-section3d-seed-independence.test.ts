@@ -144,6 +144,13 @@ const controllers = [
 perturb(controllers[1], 1);
 perturb(controllers[2], 2);
 
+const initialSignatures = controllers.map(sampledSignature);
+const initialPairwiseMax = Math.max(
+  rmsSignatureDelta(initialSignatures[0]!, initialSignatures[1]!),
+  rmsSignatureDelta(initialSignatures[0]!, initialSignatures[2]!),
+  rmsSignatureDelta(initialSignatures[1]!, initialSignatures[2]!),
+);
+
 for (let index = 0; index < controllers.length; index += 1) {
   assert(
     rigidSectionHingeError3D(controllers[index]!) <= 2e-6,
@@ -180,4 +187,45 @@ for (let index = 0; index < controllers.length; index += 1) {
   );
 }
 
-console.log("[v0.5 #71 seed-independence research] " + report.join(" | "));
+const finalSignatures = controllers.map(sampledSignature);
+const finalPairwise = [
+  rmsSignatureDelta(finalSignatures[0]!, finalSignatures[1]!),
+  rmsSignatureDelta(finalSignatures[0]!, finalSignatures[2]!),
+  rmsSignatureDelta(finalSignatures[1]!, finalSignatures[2]!),
+];
+const finalPairwiseMax = Math.max(...finalPairwise);
+const finalEnergies = controllers.map(rigidSectionPotentialEnergy3D);
+const finalEnergySpread =
+  Math.max(...finalEnergies) - Math.min(...finalEnergies);
+const finalMaxSpeed = Math.max(...controllers.map(maxSpeed));
+
+assert(
+  initialPairwiseMax > controllers[0]!.template.diameter * 0.5,
+  `three seeds begin substantially different: initial max signature delta=${initialPairwiseMax}`,
+);
+assert(
+  finalPairwiseMax <= controllers[0]!.template.diameter * 0.02,
+  `long damped relaxation converges to the same practical centerline attractor within 2% diameter: final max signature delta=${finalPairwiseMax}`,
+);
+assert(
+  finalPairwiseMax <= initialPairwiseMax * 0.04,
+  `seed dependence contracts by at least 25x: initial=${initialPairwiseMax} final=${finalPairwiseMax}`,
+);
+assert(
+  finalEnergySpread <= 0.003,
+  `independent seeds converge to the same low-energy band: spread=${finalEnergySpread}`,
+);
+assert(
+  finalMaxSpeed <= 0.001,
+  `120k-step witness is in the damped settling regime: max speed=${finalMaxSpeed}`,
+);
+
+console.log(
+  "[v0.5 #71 seed-independence] PASS "
+  + `initialMax=${initialPairwiseMax.toExponential(5)} `
+  + `final=[${finalPairwise.map((value) => value.toExponential(5)).join(",")}] `
+  + `energy=[${finalEnergies.map((value) => value.toExponential(5)).join(",")}] `
+  + `energySpread=${finalEnergySpread.toExponential(5)} `
+  + `maxSpeed=${finalMaxSpeed.toExponential(5)} | `
+  + report.join(" | "),
+);
