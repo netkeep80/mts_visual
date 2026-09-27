@@ -260,6 +260,26 @@ assert(
   "browser WGSL linearization does not depend on num_workgroups builtin",
 );
 assert(
+  !/\blayout\s*:/.test(OCTAHEDRAL_WEBGPU_WGSL),
+  "compute WGSL does not declare reserved identifier layout",
+);
+assert(
+  !/\blet\s+target\b/.test(OCTAHEDRAL_WEBGPU_WGSL),
+  "compute WGSL does not declare reserved identifier target",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("seed_grid: vec4<u32>"),
+  "compute WGSL uses non-reserved seed_grid uniform field",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let target_center ="),
+  "compute WGSL uses non-reserved target_center local",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let target_link ="),
+  "compute WGSL uses non-reserved target_link local",
+);
+assert(
   OCTAHEDRAL_WEBGPU_WGSL.includes("gid.y * 65535u * 64u"),
   "browser WGSL uses the accepted fixed 65,535-workgroup spill slab",
 );
@@ -285,7 +305,7 @@ assert(
   "WGSL derives half-mast rest length from END apex",
 );
 assert(
-  OCTAHEDRAL_WEBGPU_WGSL.includes("let centerline = center + (target - center) * fraction;"),
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let centerline = center + (target_center - center) * fraction;"),
   "WGSL distributes incidence fit across the complete half-mast",
 );
 assert(

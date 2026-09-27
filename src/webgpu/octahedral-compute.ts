@@ -324,7 +324,7 @@ struct Globals {
   counts: vec4<u32>,          // linkCount, vertexCount, startApex, endApex
   center_rest: vec4<u32>,     // center0, center1, center2, restBase
   bases_total: vec4<u32>,     // edgeABase, edgeBBase, batchEdgesBase, totalVertices
-  layout: vec4<u32>,          // gridSide, gridDepth, reserved, reserved
+  seed_grid: vec4<u32>,       // gridSide, gridDepth, reserved, reserved
   physics: vec4<f32>,         // stiffness, dt, damping, spacing
 };
 
@@ -398,8 +398,8 @@ fn seed_center(link: u32) -> vec3<f32> {
     return vec3<f32>(0.0);
   }
 
-  let side = globals.layout.x;
-  let depth = globals.layout.y;
+  let side = globals.seed_grid.x;
+  let depth = globals.seed_grid.y;
   let plane = side * side;
   let x_index = link % side;
   let y_index = (link / side) % side;
@@ -459,8 +459,8 @@ fn init_main(
   let fraction = min(1.0, abs(rest.z) / max(half_length, 1e-12));
   let start_target = seed_center(topology[link * 2u]);
   let end_target = seed_center(topology[link * 2u + 1u]);
-  let target = select(end_target, start_target, rest.z < 0.0);
-  let centerline = center + (target - center) * fraction;
+  let target_center = select(end_target, start_target, rest.z < 0.0);
+  let centerline = center + (target_center - center) * fraction;
   let seeded = centerline
     + basis_x * rest.x
     + basis_y * rest.y;
@@ -515,11 +515,11 @@ fn spring_batch_main(
 fn hinge_gather_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
 ) {
-  let target = linear_id(gid);
-  if (target >= globals.counts.x) { return; }
+  let target_link = linear_id(gid);
+  if (target_link >= globals.counts.x) { return; }
 
-  let begin = incoming_offsets[target];
-  let end = incoming_offsets[target + 1u];
+  let begin = incoming_offsets[target_link];
+  let end = incoming_offsets[target_link + 1u];
   var sum = vec3<f32>(0.0);
 
   var index = begin;
@@ -534,9 +534,9 @@ fn hinge_gather_main(
   }
 
   let share = sum / 3.0;
-  let c0 = vertex_scalar(target, globals.center_rest.x);
-  let c1 = vertex_scalar(target, globals.center_rest.y);
-  let c2 = vertex_scalar(target, globals.center_rest.z);
+  let c0 = vertex_scalar(target_link, globals.center_rest.x);
+  let c1 = vertex_scalar(target_link, globals.center_rest.y);
+  let c2 = vertex_scalar(target_link, globals.center_rest.z);
   store_force(c0, load_xyz(2u, c0) + share);
   store_force(c1, load_xyz(2u, c1) + share);
   store_force(c2, load_xyz(2u, c2) + share);
