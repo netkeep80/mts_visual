@@ -120,7 +120,7 @@ export function resolveOctahedralAspectRatio(aspectRatio: number): OctahedralAsp
 
   return Object.freeze({
     requestedAspectRatio: aspectRatio,
-    resolvedAspectRatio: SQRT_TWO * (pairCount + 1),
+    resolvedAspectRatio: SQRT_TWO * pairCount,
     pairCount,
     octahedronCount: pairCount * 2,
   });
