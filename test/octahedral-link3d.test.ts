@@ -170,7 +170,8 @@ same(restForces.evaluations.explicitBendEvaluations, 0, "spring kernel has no ex
 for (const value of restForces.forces) approx(value, 0, "regular rest template has zero force", 2e-5);
 
 const stretchedPositions = pairTwo.restPositions.slice();
-const stretchedEndZ = pairTwo.endApex * 3 + 2;\nstretchedPositions[stretchedEndZ] = stretchedPositions[stretchedEndZ]! + 0.2;
+const stretchedEndZ = pairTwo.endApex * 3 + 2;
+stretchedPositions[stretchedEndZ] = stretchedPositions[stretchedEndZ]! + 0.2;
 const stretchedForces = computeOctahedralSpringForces3D(pairTwo, stretchedPositions, 4);
 const stretchedNorm = Math.hypot(...stretchedForces.forces);
 assert(stretchedNorm > 0, "stretching END tetra apex creates spring force");
