@@ -34,7 +34,10 @@ export function getOctahedralSeedGrid3D(
   const count = requireLinkCount(linkCount);
   const side = count <= 1 ? 1 : Math.ceil(Math.cbrt(count));
   const depth = count === 0 ? 1 : Math.ceil(count / (side * side));
-  const spacing = Math.max(template.diameter * 2.5, template.restLength * 0.75);
+  // Presentation seed density is a cross-section property, not a rod-length
+  // property. Scaling center spacing with restLength makes longer, more
+  // line-like Links start just as axially strained as short ones.
+  const spacing = template.diameter * 1.5;
   return Object.freeze({ side, depth, spacing });
 }
 
@@ -144,7 +147,18 @@ export function writeOrientedOctahedralRestTemplate3D(
   }
 
   const center = computeOctahedralSeedCenter3D(template, index, topology.linkCount);
+  const startCenter = computeOctahedralSeedCenter3D(
+    template,
+    topology.startIndices[index]!,
+    topology.linkCount,
+  );
+  const endCenter = computeOctahedralSeedCenter3D(
+    template,
+    topology.endIndices[index]!,
+    topology.linkCount,
+  );
   const basis = basisForAxis(computeOctahedralSeedAxis3D(template, topology, index));
+  const halfLength = template.restLength / 2;
 
   for (let vertex = 0; vertex < template.vertexCount; vertex += 1) {
     const local = vertex * 3;
@@ -152,18 +166,25 @@ export function writeOrientedOctahedralRestTemplate3D(
     const ly = template.restPositions[local + 1]!;
     const lz = template.restPositions[local + 2]!;
     const offset = base + local;
+    const fraction = Math.min(1, Math.abs(lz) / halfLength);
+    const target = lz < 0 ? startCenter : endCenter;
 
-    positions[offset] = center[0]
+    // Fit the complete half-mast between its semantic target and this Link's
+    // own virtual center.  The required incidence deformation is therefore
+    // distributed over every longitudinal module instead of being injected
+    // into only the three tetrahedral cap springs by a late apex projection.
+    const centerlineX = center[0] + (target[0] - center[0]) * fraction;
+    const centerlineY = center[1] + (target[1] - center[1]) * fraction;
+    const centerlineZ = center[2] + (target[2] - center[2]) * fraction;
+
+    positions[offset] = centerlineX
       + basis.x[0] * lx
-      + basis.y[0] * ly
-      + basis.z[0] * lz;
-    positions[offset + 1] = center[1]
+      + basis.y[0] * ly;
+    positions[offset + 1] = centerlineY
       + basis.x[1] * lx
-      + basis.y[1] * ly
-      + basis.z[1] * lz;
-    positions[offset + 2] = center[2]
+      + basis.y[1] * ly;
+    positions[offset + 2] = centerlineZ
       + basis.x[2] * lx
-      + basis.y[2] * ly
-      + basis.z[2] * lz;
+      + basis.y[2] * ly;
   }
 }
