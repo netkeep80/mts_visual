@@ -113,6 +113,7 @@ export interface OctahedralWebGpuRenderFrame3D {
   readonly viewProjection: readonly number[] | Float32Array;
   readonly width: number;
   readonly height: number;
+  readonly wireframe?: boolean;
   readonly clearColor?: {
     readonly r: number;
     readonly g: number;
@@ -151,6 +152,7 @@ export interface OctahedralWebGpuRenderEstimate3D {
 export interface OctahedralWebGpuRendererSnapshot3D
   extends OctahedralWebGpuRenderEstimate3D {
   readonly status: "available" | "device-lost" | "destroyed";
+  readonly wireframeVerticesPerLink: number;
   readonly deviceLostReason: string | null;
   readonly sharedPositionBuffer: true;
   readonly staticTemplateBytes: number;
@@ -399,6 +401,37 @@ function createStorageBuffer(
   return buffer;
 }
 
+export function buildOctahedralWireframeIndices3D(
+  surfaceTriangles: Uint32Array,
+): Uint32Array {
+  if (surfaceTriangles.length % 3 !== 0) {
+    throw new Error(
+      `invalid surface triangle index count: ${surfaceTriangles.length}`,
+    );
+  }
+
+  const edges = new Map<string, readonly [number, number]>();
+  for (let index = 0; index < surfaceTriangles.length; index += 3) {
+    const a = surfaceTriangles[index]!;
+    const b = surfaceTriangles[index + 1]!;
+    const c = surfaceTriangles[index + 2]!;
+    for (const [left, right] of [[a, b], [b, c], [c, a]] as const) {
+      const lo = Math.min(left, right);
+      const hi = Math.max(left, right);
+      edges.set(`${lo}:${hi}`, [lo, hi]);
+    }
+  }
+
+  const result = new Uint32Array(edges.size * 2);
+  let cursor = 0;
+  for (const [left, right] of edges.values()) {
+    result[cursor] = left;
+    result[cursor + 1] = right;
+    cursor += 2;
+  }
+  return result;
+}
+
 function requireViewProjection(
   value: readonly number[] | Float32Array,
 ): Float32Array {
@@ -486,10 +519,13 @@ implements OctahedralWebGpuRenderer3D {
 
   private readonly device: WebGpuRenderDeviceLike;
   private readonly surfaceIndicesBuffer: WebGpuBufferLike;
+  private readonly wireframeIndicesBuffer: WebGpuBufferLike;
   private readonly gradientBuffer: WebGpuBufferLike;
   private readonly uniformBuffer: WebGpuBufferLike;
-  private readonly bindGroup: object;
+  private readonly surfaceBindGroup: object;
+  private readonly wireframeBindGroup: object;
   private readonly surfacePipeline: WebGpuRenderPipelineLike;
+  private readonly wireframePipeline: WebGpuRenderPipelineLike;
   private readonly centerPipeline: WebGpuRenderPipelineLike;
   private readonly arrowPipeline: WebGpuRenderPipelineLike;
   private readonly colorFormatValue: string;
@@ -504,10 +540,13 @@ implements OctahedralWebGpuRenderer3D {
     readonly compute: OctahedralWebGpuCompute3D,
     args: {
       surfaceIndicesBuffer: WebGpuBufferLike;
+      wireframeIndicesBuffer: WebGpuBufferLike;
       gradientBuffer: WebGpuBufferLike;
       uniformBuffer: WebGpuBufferLike;
-      bindGroup: object;
+      surfaceBindGroup: object;
+      wireframeBindGroup: object;
       surfacePipeline: WebGpuRenderPipelineLike;
+      wireframePipeline: WebGpuRenderPipelineLike;
       centerPipeline: WebGpuRenderPipelineLike;
       arrowPipeline: WebGpuRenderPipelineLike;
       colorFormat: string;
@@ -520,10 +559,13 @@ implements OctahedralWebGpuRenderer3D {
     this.device = device;
     this.positionBuffer = compute.positionBuffer;
     this.surfaceIndicesBuffer = args.surfaceIndicesBuffer;
+    this.wireframeIndicesBuffer = args.wireframeIndicesBuffer;
     this.gradientBuffer = args.gradientBuffer;
     this.uniformBuffer = args.uniformBuffer;
-    this.bindGroup = args.bindGroup;
+    this.surfaceBindGroup = args.surfaceBindGroup;
+    this.wireframeBindGroup = args.wireframeBindGroup;
     this.surfacePipeline = args.surfacePipeline;
+    this.wireframePipeline = args.wireframePipeline;
     this.centerPipeline = args.centerPipeline;
     this.arrowPipeline = args.arrowPipeline;
     this.colorFormatValue = args.colorFormat;
@@ -586,12 +628,26 @@ implements OctahedralWebGpuRenderer3D {
     let drawCalls = 0;
     const linkCount = computeSnapshot.linkCount;
     if (linkCount > 0) {
-      pass.setBindGroup(0, this.bindGroup);
+      const wireframe = frame.wireframe === true;
+      pass.setBindGroup(
+        0,
+        wireframe ? this.wireframeBindGroup : this.surfaceBindGroup,
+      );
 
-      pass.setPipeline(this.surfacePipeline);
-      pass.draw(this.compute.template.surfaceTriangles.length, linkCount, 0, 0);
+      pass.setPipeline(
+        wireframe ? this.wireframePipeline : this.surfacePipeline,
+      );
+      pass.draw(
+        wireframe
+          ? this.wireframeIndicesBuffer.size / Uint32Array.BYTES_PER_ELEMENT
+          : this.compute.template.surfaceTriangles.length,
+        linkCount,
+        0,
+        0,
+      );
       drawCalls += 1;
 
+      pass.setBindGroup(0, this.surfaceBindGroup);
       pass.setPipeline(this.centerPipeline);
       pass.draw(OCTAHEDRAL_WEBGPU_CENTER_VERTICES_PER_LINK, linkCount, 0, 0);
       drawCalls += 1;
@@ -632,6 +688,8 @@ implements OctahedralWebGpuRenderer3D {
       ...estimate,
       status,
       deviceLostReason: computeSnapshot.deviceLostReason,
+      wireframeVerticesPerLink:
+        this.wireframeIndicesBuffer.size / Uint32Array.BYTES_PER_ELEMENT,
       sharedPositionBuffer: true as const,
       staticTemplateBytes: this.staticTemplateBytes,
       uniformBytes: OCTAHEDRAL_WEBGPU_RENDER_UNIFORM_BYTES,
@@ -644,6 +702,7 @@ implements OctahedralWebGpuRenderer3D {
     if (this.destroyed) return;
     this.destroyed = true;
     this.surfaceIndicesBuffer.destroy();
+    this.wireframeIndicesBuffer.destroy();
     this.gradientBuffer.destroy();
     this.uniformBuffer.destroy();
   }
@@ -678,6 +737,14 @@ export async function createOctahedralWebGpuZeroCopyRenderer3D(
     device,
     "octahedral-render-surface-indices",
     compute.template.surfaceTriangles,
+  );
+  const wireframeIndices = buildOctahedralWireframeIndices3D(
+    compute.template.surfaceTriangles,
+  );
+  const wireframeIndicesBuffer = createStorageBuffer(
+    device,
+    "octahedral-render-wireframe-indices",
+    wireframeIndices,
   );
   const gradientBuffer = createStorageBuffer(
     device,
@@ -729,6 +796,7 @@ export async function createOctahedralWebGpuZeroCopyRenderer3D(
   const pipelineDescriptor = (
     label: string,
     entryPoint: string,
+    topology: "triangle-list" | "line-list" = "triangle-list",
   ): Parameters<WebGpuRenderDeviceLike["createRenderPipelineAsync"]>[0] => {
     const descriptor = {
       label,
@@ -743,7 +811,7 @@ export async function createOctahedralWebGpuZeroCopyRenderer3D(
         targets: [{ format: colorFormat }],
       },
       primitive: {
-        topology: "triangle-list",
+        topology,
         cullMode: "none",
       },
     };
@@ -759,11 +827,23 @@ export async function createOctahedralWebGpuZeroCopyRenderer3D(
     };
   };
 
-  const [surfacePipeline, centerPipeline, arrowPipeline] = await Promise.all([
+  const [
+    surfacePipeline,
+    wireframePipeline,
+    centerPipeline,
+    arrowPipeline,
+  ] = await Promise.all([
     device.createRenderPipelineAsync(
       pipelineDescriptor(
         "octahedral-webgpu-surface-pipeline",
         "surface_vertex",
+      ),
+    ),
+    device.createRenderPipelineAsync(
+      pipelineDescriptor(
+        "octahedral-webgpu-wireframe-pipeline",
+        "surface_vertex",
+        "line-list",
       ),
     ),
     device.createRenderPipelineAsync(
@@ -780,12 +860,22 @@ export async function createOctahedralWebGpuZeroCopyRenderer3D(
     ),
   ]);
 
-  const bindGroup = device.createBindGroup({
+  const surfaceBindGroup = device.createBindGroup({
     label: "octahedral-webgpu-zero-copy-render-bind-group",
     layout: bindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: compute.positionBuffer } },
       { binding: 1, resource: { buffer: surfaceIndicesBuffer } },
+      { binding: 2, resource: { buffer: gradientBuffer } },
+      { binding: 3, resource: { buffer: uniformBuffer } },
+    ],
+  });
+  const wireframeBindGroup = device.createBindGroup({
+    label: "octahedral-webgpu-wireframe-render-bind-group",
+    layout: bindGroupLayout,
+    entries: [
+      { binding: 0, resource: { buffer: compute.positionBuffer } },
+      { binding: 1, resource: { buffer: wireframeIndicesBuffer } },
       { binding: 2, resource: { buffer: gradientBuffer } },
       { binding: 3, resource: { buffer: uniformBuffer } },
     ],
@@ -796,10 +886,13 @@ export async function createOctahedralWebGpuZeroCopyRenderer3D(
     compute,
     {
       surfaceIndicesBuffer,
+      wireframeIndicesBuffer,
       gradientBuffer,
       uniformBuffer,
-      bindGroup,
+      surfaceBindGroup,
+      wireframeBindGroup,
       surfacePipeline,
+      wireframePipeline,
       centerPipeline,
       arrowPipeline,
       colorFormat,
@@ -808,6 +901,7 @@ export async function createOctahedralWebGpuZeroCopyRenderer3D(
       arrowLengthPixels,
       staticTemplateBytes:
         compute.template.surfaceTriangles.byteLength
+        + wireframeIndices.byteLength
         + compute.template.gradientT.byteLength,
     },
   );
