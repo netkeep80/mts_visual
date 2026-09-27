@@ -468,6 +468,11 @@ async function startRender() {
     },
   );
 
+  if (compute.template.octahedronCount !== physics.octahedra) {
+    compute.destroy();
+    throw new Error(`length control mismatch: requested ${physics.octahedra} octa, got ${compute.template.octahedronCount}`);
+  }
+
   const context = ui.canvas.getContext("webgpu");
   if (!context) {
     compute.destroy();
@@ -635,6 +640,8 @@ ui.restartRender.addEventListener("click", () => {
 ui.lengthOcta.addEventListener("input", () => {
   refreshPhysicsControlLabels();
   markDifferentialStale();
+  renderPass = false;
+  updateOverall();
 });
 
 ui.lengthOcta.addEventListener("change", () => {
@@ -653,6 +660,10 @@ ui.stiffness.addEventListener("input", () => {
   if (!renderState) return;
   const physics = selectedPhysics();
   renderState.compute.setStiffness(physics.stiffness);
+  const snapshot = renderState.compute.snapshot();
+  if (Math.abs(snapshot.stiffness - physics.stiffness) > 1e-12) {
+    throw new Error(`stiffness control mismatch: requested ${physics.stiffness}, got ${snapshot.stiffness}`);
+  }
   setStatus(ui.renderCompute, `AVAILABLE · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`, "ok");
 });
 
@@ -662,6 +673,10 @@ ui.simulationSpeed.addEventListener("input", () => {
   if (!renderState) return;
   const physics = selectedPhysics();
   renderState.compute.setSimulationSpeed(physics.simulationSpeed);
+  const snapshot = renderState.compute.snapshot();
+  if (Math.abs(snapshot.simulationSpeed - physics.simulationSpeed) > 1e-12) {
+    throw new Error(`simulation-speed control mismatch: requested ${physics.simulationSpeed}, got ${snapshot.simulationSpeed}`);
+  }
   setStatus(ui.renderCompute, `AVAILABLE · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`, "ok");
 });
 
