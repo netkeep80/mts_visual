@@ -115,7 +115,7 @@ This is presentation initialization only. START/END hinge projection, Link seman
 
 ### 0.4.2 physical-sanity correction
 
-Package version `0.4.2` fixes a second live-initialization defect exposed by a real 333-Link hub-heavy A-network. In `0.4.1`, the mast body started close to its undeformed rest shape and the final hinge projection could move only the two tetrahedral apexes across large semantic-target distances. The result was exact topology but extreme spring strain concentrated near Link ends.
+Package version `0.4.2` fixed a second live-initialization defect exposed by a real 333-Link hub-heavy A-network. In the historical capped carrier, the mast body started close to its undeformed rest shape and final hinge projection could move only the terminal incidence handles across large semantic-target distances. The result was exact topology but extreme spring strain concentrated near Link ends. The current capless carrier supersedes those terminal apex handles with terminal-triangle centroids.
 
 The corrected initializer distributes START/CENTER/END fitting across every longitudinal module before hinge projection. Seed-center spacing is now based on cross-section only:
 
