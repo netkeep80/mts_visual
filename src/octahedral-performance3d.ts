@@ -102,7 +102,7 @@ function estimateWithTemplate(
   const hingeTransfersPerTick = requireSafeCount(linkCount * 2, "hingeTransfersPerTick");
   const hingeProjectionsPerTick = requireSafeCount(linkCount * 2, "hingeProjectionsPerTick");
   const integratedVerticesPerTick = requireSafeCount(
-    linkCount * (template.vertexCount - 2),
+    linkCount * template.vertexCount,
     "integratedVerticesPerTick",
   );
 
