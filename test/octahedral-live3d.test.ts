@@ -57,6 +57,29 @@ function maxPositionDelta(left: Float32Array, right: Float32Array): number {
   return maximum;
 }
 
+function initialSpringStrains(controller: OctahedralLivePhysics3D): number[] {
+  const values: number[] = [];
+  for (let edge = 0; edge < controller.template.edgeCount; edge += 1) {
+    const a = controller.template.edgeA[edge]!;
+    const b = controller.template.edgeB[edge]!;
+    const aOffset = packedVertexOffset(controller, 0, a);
+    const bOffset = packedVertexOffset(controller, 0, b);
+    const length = Math.hypot(
+      controller.positions[bOffset]! - controller.positions[aOffset]!,
+      controller.positions[bOffset + 1]! - controller.positions[aOffset + 1]!,
+      controller.positions[bOffset + 2]! - controller.positions[aOffset + 2]!,
+    );
+    values.push(Math.abs(length - controller.template.edgeRestLength));
+  }
+  values.sort((left, right) => left - right);
+  return values;
+}
+
+function p95(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  return values[Math.min(values.length - 1, Math.ceil(values.length * 0.95) - 1)]!;
+}
+
 const ratio = 2 * Math.SQRT2;
 const selfNetwork: VisualLinkNetwork = {
   links: [{ key: "R", startKey: "R", endKey: "R" }],
@@ -99,6 +122,40 @@ for (let vertex = 0; vertex < self.template.vertexCount; vertex += 1) {
   );
 }
 assert(extent > 0.5, "double-self initial state remains materially non-collapsed");
+
+let maxRingCenterDistance = 0;
+for (let level = 0; level <= self.template.octahedronCount; level += 1) {
+  const first = level * 3;
+  const centroid = centroidOfVertices(self, 0, [first, first + 1, first + 2]);
+  maxRingCenterDistance = Math.max(
+    maxRingCenterDistance,
+    Math.hypot(
+      centroid[0] - initialCenter[0],
+      centroid[1] - initialCenter[1],
+      centroid[2] - initialCenter[2],
+    ),
+  );
+}
+assert(
+  maxRingCenterDistance > self.template.restLength / (8 * Math.PI),
+  "double-self seed has nonzero longitudinal centerline extent instead of a collapsed center plane",
+);
+
+const baselineSelf = createOctahedralLivePhysics3D(selfNetwork, {
+  aspectRatio: Math.SQRT2 * (20 / 2 + 1),
+  stiffness: 1,
+  simulationSpeed: 0,
+});
+same(baselineSelf.template.octahedronCount, 20, "self-loop strain gate uses the accepted 20-octahedron baseline");
+const baselineStrains = initialSpringStrains(baselineSelf);
+assert(
+  p95(baselineStrains) <= 0.25,
+  `20-octahedron self-loop seed p95 strain is bounded: ${p95(baselineStrains)}`,
+);
+assert(
+  (baselineStrains.at(-1) ?? 0) <= 0.25,
+  `20-octahedron self-loop seed max strain is bounded: ${baselineStrains.at(-1) ?? 0}`,
+);
 
 const paused = createOctahedralLivePhysics3D(selfNetwork, {
   aspectRatio: ratio,
