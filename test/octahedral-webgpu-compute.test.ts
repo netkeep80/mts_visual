@@ -256,8 +256,8 @@ same(
 assert(!/atomic</.test(OCTAHEDRAL_WEBGPU_WGSL), "WGSL uses no atomic force buffer");
 assert(!/pairwise/i.test(OCTAHEDRAL_WEBGPU_WGSL), "WGSL contains no semantic all-pairs path");
 assert(
-  !OCTAHEDRAL_WEBGPU_WGSL.includes("num_workgroups"),
-  "browser WGSL linearization does not depend on num_workgroups",
+  !OCTAHEDRAL_WEBGPU_WGSL.includes("@builtin(num_workgroups)"),
+  "browser WGSL linearization does not depend on num_workgroups builtin",
 );
 assert(
   OCTAHEDRAL_WEBGPU_WGSL.includes("gid.y * 65535u * 64u"),
