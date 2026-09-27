@@ -5,7 +5,7 @@ import {
   type OctahedralLinkTemplate3D,
   type OctahedralLinkTopology3D,
 } from "../octahedral-link3d.js";
-import { getOctahedralSeedGrid3D } from "../octahedral-layout3d.js";
+import { resolveOctahedralSeedCenters3D } from "../octahedral-layout3d.js";
 import { createOctahedralLivePhysics3D } from "../octahedral-live3d.js";
 
 const WORKGROUP_SIZE = 64;
@@ -324,8 +324,8 @@ struct Globals {
   counts: vec4<u32>,          // linkCount, vertexCount, startApex, endApex
   center_rest: vec4<u32>,     // center0, center1, center2, restBase
   bases_total: vec4<u32>,     // edgeABase, edgeBBase, batchEdgesBase, totalVertices
-  seed_grid: vec4<u32>,       // gridSide, gridDepth, reserved, reserved
-  physics: vec4<f32>,         // stiffness, dt, damping, spacing
+  seed_grid: vec4<u32>,       // reserved for seed-layout metadata
+  physics: vec4<f32>,         // stiffness, dt, damping, reserved
 };
 
 @group(0) @binding(0) var<storage, read_write> positions: array<f32>;
@@ -337,6 +337,7 @@ struct Globals {
 @group(0) @binding(6) var<storage, read> template_words: array<u32>;
 @group(0) @binding(7) var<uniform> globals: Globals;
 @group(0) @binding(8) var<uniform> batch: vec4<u32>;
+@group(0) @binding(9) var<storage, read> seed_centers: array<f32>;
 
 fn linear_id(gid: vec3<u32>) -> u32 {
   // Host dispatches one X row when the workload fits. Once it spills into Y,
@@ -394,23 +395,11 @@ fn center_xyz(link: u32, buffer_kind: u32) -> vec3<f32> {
 }
 
 fn seed_center(link: u32) -> vec3<f32> {
-  if (globals.counts.x <= 1u) {
-    return vec3<f32>(0.0);
-  }
-
-  let side = globals.seed_grid.x;
-  let depth = globals.seed_grid.y;
-  let plane = side * side;
-  let x_index = link % side;
-  let y_index = (link / side) % side;
-  let z_index = link / plane;
-  let half_side = (f32(side) - 1.0) * 0.5;
-  let half_depth = (f32(depth) - 1.0) * 0.5;
-
+  let scalar = link * 3u;
   return vec3<f32>(
-    (f32(x_index) - half_side) * globals.physics.w,
-    (f32(y_index) - half_side) * globals.physics.w,
-    (f32(z_index) - half_depth) * globals.physics.w,
+    seed_centers[scalar],
+    seed_centers[scalar + 1u],
+    seed_centers[scalar + 2u],
   );
 }
 
@@ -650,8 +639,6 @@ function globalsData(
   const buffer = new ArrayBuffer(80);
   const u32 = new Uint32Array(buffer);
   const f32 = new Float32Array(buffer);
-  const grid = getOctahedralSeedGrid3D(template, topology.linkCount);
-
   u32[0] = topology.linkCount;
   u32[1] = template.vertexCount;
   u32[2] = template.startApex;
@@ -667,8 +654,8 @@ function globalsData(
   u32[10] = packedTemplate.batchEdgesBase;
   u32[11] = topology.linkCount * template.vertexCount;
 
-  u32[12] = grid.side;
-  u32[13] = grid.depth;
+  u32[12] = 0;
+  u32[13] = 0;
   u32[14] = 0;
   u32[15] = 0;
 
@@ -676,7 +663,7 @@ function globalsData(
   f32[16] = stiffness;
   f32[17] = dt;
   f32[18] = Math.exp(-INTERNAL_DAMPING_RATE * dt);
-  f32[19] = grid.spacing;
+  f32[19] = 0;
 
   return buffer;
 }
@@ -748,6 +735,7 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
   private readonly incomingOffsetsBuffer: WebGpuBufferLike;
   private readonly incomingRefsBuffer: WebGpuBufferLike;
   private readonly templateBuffer: WebGpuBufferLike;
+  private readonly seedCentersBuffer: WebGpuBufferLike;
   private readonly globalsBuffer: WebGpuBufferLike;
   private readonly defaultBatchBuffer: WebGpuBufferLike;
   private readonly batchBuffers: readonly WebGpuBufferLike[];
@@ -774,6 +762,7 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
     incomingOffsetsBuffer: WebGpuBufferLike;
     incomingRefsBuffer: WebGpuBufferLike;
     templateBuffer: WebGpuBufferLike;
+    seedCentersBuffer: WebGpuBufferLike;
     globalsBuffer: WebGpuBufferLike;
     defaultBatchBuffer: WebGpuBufferLike;
     batchBuffers: readonly WebGpuBufferLike[];
@@ -795,6 +784,7 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
     this.incomingOffsetsBuffer = args.incomingOffsetsBuffer;
     this.incomingRefsBuffer = args.incomingRefsBuffer;
     this.templateBuffer = args.templateBuffer;
+    this.seedCentersBuffer = args.seedCentersBuffer;
     this.globalsBuffer = args.globalsBuffer;
     this.defaultBatchBuffer = args.defaultBatchBuffer;
     this.batchBuffers = args.batchBuffers;
@@ -989,6 +979,7 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
       this.incomingOffsetsBuffer,
       this.incomingRefsBuffer,
       this.templateBuffer,
+      this.seedCentersBuffer,
       this.globalsBuffer,
       this.defaultBatchBuffer,
       ...this.batchBuffers,
@@ -1005,6 +996,7 @@ function bindGroupEntries(
   incomingOffsetsBuffer: WebGpuBufferLike,
   incomingRefsBuffer: WebGpuBufferLike,
   templateBuffer: WebGpuBufferLike,
+  seedCentersBuffer: WebGpuBufferLike,
   globalsBuffer: WebGpuBufferLike,
   batchBuffer: WebGpuBufferLike,
 ): readonly object[] {
@@ -1018,6 +1010,7 @@ function bindGroupEntries(
     { binding: 6, resource: { buffer: templateBuffer } },
     { binding: 7, resource: { buffer: globalsBuffer } },
     { binding: 8, resource: { buffer: batchBuffer } },
+    { binding: 9, resource: { buffer: seedCentersBuffer } },
   ];
 }
 
@@ -1032,6 +1025,7 @@ export async function createOctahedralWebGpuCompute3D(
   const template = getOctahedralLinkTemplate3D(options.aspectRatio);
   const reverse = buildOctahedralReverseIncidence3D(topology);
   const packedTemplate = packOctahedralWebGpuTemplate3D(template);
+  const seedCenters = resolveOctahedralSeedCenters3D(template, topology);
 
   const totalPhysicalVertices = topology.linkCount * template.vertexCount;
   const fieldBytes = totalPhysicalVertices * 3 * 4;
@@ -1094,6 +1088,14 @@ export async function createOctahedralWebGpuCompute3D(
   );
   writeWhole(device, templateBuffer, packedTemplate.words);
 
+  const seedCentersBuffer = createBuffer(
+    device,
+    "octahedral-seed-centers",
+    seedCenters.byteLength,
+    GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST,
+  );
+  writeWhole(device, seedCentersBuffer, seedCenters);
+
   const globalBytes = globalsData(topology, template, packedTemplate, stiffness, simulationSpeed);
   const globalsBuffer = createBuffer(
     device,
@@ -1140,6 +1142,7 @@ export async function createOctahedralWebGpuCompute3D(
       { binding: 6, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
       { binding: 7, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
       { binding: 8, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
+      { binding: 9, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
     ],
   });
   const pipelineLayout = device.createPipelineLayout({
@@ -1179,6 +1182,7 @@ export async function createOctahedralWebGpuCompute3D(
         incomingOffsetsBuffer,
         incomingRefsBuffer,
         templateBuffer,
+        seedCentersBuffer,
         globalsBuffer,
         batchBuffer,
       ),
@@ -1203,6 +1207,7 @@ export async function createOctahedralWebGpuCompute3D(
     incomingOffsetsBuffer,
     incomingRefsBuffer,
     templateBuffer,
+    seedCentersBuffer,
     globalsBuffer,
     defaultBatchBuffer,
     batchBuffers,
