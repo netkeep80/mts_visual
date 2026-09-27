@@ -58,6 +58,14 @@ same(
   "60-Hz GPU upload projection",
 );
 
+const fractional = projectOctahedralUploadBandwidth3D(million, 59.94);
+same(fractional.framesPerSecond, 59.94, "bandwidth witness accepts fractional display rates");
+assert(
+  fractional.gpuTextureUploadBytesPerSecond > 0
+    && fractional.gpuTextureUploadBytesPerSecond < sixty.gpuTextureUploadBytesPerSecond,
+  "fractional-rate projection remains finite arithmetic",
+);
+
 const ladder = createOctahedralPerformanceLadder3D(minimumRatio);
 same(
   JSON.stringify(ladder.map((row) => row.linkCount)),
