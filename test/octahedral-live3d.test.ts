@@ -8,6 +8,7 @@ import type { VisualLinkNetwork } from "../src/index.js";
 import {
   computeOctahedralSeedCenter3D,
   getOctahedralSeedGrid3D,
+  resolveOctahedralSeedCenters3D,
 } from "../src/octahedral-layout3d.js";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -308,6 +309,25 @@ function geometricCenter(
   return computeOctahedralGeometricCenter3D(controller.template, controller.positions, link);
 }
 
+function resolvedSeedCenter(
+  centers: Float32Array,
+  link: number,
+): readonly [number, number, number] {
+  const offset = link * 3;
+  return [centers[offset]!, centers[offset + 1]!, centers[offset + 2]!];
+}
+
+function distance3(
+  left: readonly [number, number, number],
+  right: readonly [number, number, number],
+): number {
+  return Math.hypot(
+    right[0] - left[0],
+    right[1] - left[1],
+    right[2] - left[2],
+  );
+}
+
 function span(values: readonly number[]): number {
   return Math.max(...values) - Math.min(...values);
 }
@@ -384,9 +404,64 @@ const rootOpenDiagnostic = [0, 1, 30, 300, 1200]
 console.log(
   `[M5/P2 R+O self-separation] halfLength=${halfRestLength.toFixed(6)} ${rootOpenDiagnostic} max=${rootOpenMaxDistance.toFixed(6)}(${(rootOpenMaxDistance / halfRestLength).toFixed(4)}L)`,
 );
+const rootOpenInitialRatio = rootOpenSamples.get(0)! / halfRestLength;
+const rootOpenFinalRatio = rootOpenSamples.get(1200)! / halfRestLength;
 assert(
-  rootOpenMaxDistance > rootOpenSamples.get(0)!,
-  `R+O compressed non-self half must create some center separation: initial=${rootOpenSamples.get(0)} max=${rootOpenMaxDistance}`,
+  rootOpenInitialRatio >= 0.8 && rootOpenInitialRatio <= 1.2,
+  `R+O topology-aware seed starts outside the near-collapsed regime: ratio=${rootOpenInitialRatio}`,
+);
+assert(
+  rootOpenFinalRatio >= 0.1,
+  `R+O dynamics must not collapse back below 10% of half-rest length: ratio=${rootOpenFinalRatio}`,
+);
+
+const rootBasisNetwork: VisualLinkNetwork = {
+  links: [
+    { key: "R", startKey: "R", endKey: "R" },
+    { key: "O", startKey: "O", endKey: "R" },
+    { key: "C", startKey: "R", endKey: "C" },
+    { key: "L", startKey: "O", endKey: "C" },
+    { key: "U", startKey: "C", endKey: "O" },
+  ],
+};
+const rootBasisTopology = buildOctahedralLinkTopology3D(rootBasisNetwork);
+const rootBasisTemplate = getOctahedralLinkTemplate3D(
+  Math.SQRT2 * (100 / 2 + 1),
+);
+const rootBasisSeed = resolveOctahedralSeedCenters3D(
+  rootBasisTemplate,
+  rootBasisTopology,
+);
+const rootBasisTarget = rootBasisTemplate.restLength / 2;
+for (let link = 0; link < rootBasisTopology.linkCount; link += 1) {
+  const source = resolvedSeedCenter(rootBasisSeed, link);
+  for (const target of [
+    rootBasisTopology.startIndices[link]!,
+    rootBasisTopology.endIndices[link]!,
+  ]) {
+    if (target === link) continue;
+    const ratioToRest = distance3(
+      source,
+      resolvedSeedCenter(rootBasisSeed, target),
+    ) / rootBasisTarget;
+    assert(
+      ratioToRest >= 0.8 && ratioToRest <= 1.2,
+      `root-basis non-self incidence ${link}->${target} has non-singular seed ratio ${ratioToRest}`,
+    );
+  }
+}
+
+const rootBasisReordered = buildOctahedralLinkTopology3D({
+  links: [...rootBasisNetwork.links].reverse(),
+});
+const rootBasisReorderedSeed = resolveOctahedralSeedCenters3D(
+  rootBasisTemplate,
+  rootBasisReordered,
+);
+same(
+  JSON.stringify([...rootBasisReorderedSeed]),
+  JSON.stringify([...rootBasisSeed]),
+  "topology-aware seed is deterministic under input reordering",
 );
 
 const planarNetwork: VisualLinkNetwork = {
@@ -438,31 +513,35 @@ assert(span(ys) > 0, "333-Link seed has nonzero Y span");
 assert(span(zs) > 0, "333-Link seed has nonzero Z span");
 
 const grid = getOctahedralSeedGrid3D(large.template, largeCount);
-same(grid.side, 7, "333-Link seed resolves to seven-wide cube");
-same(grid.depth, 7, "333-Link seed resolves to seven-deep cube");
-assert(
-  span(xs) <= (grid.side - 1) * grid.spacing + 1e-5,
-  "X extent is bounded by cubic-grid side rather than Link count",
-);
-assert(
-  span(ys) <= (grid.side - 1) * grid.spacing + 1e-5,
-  "Y extent is bounded by cubic-grid side rather than Link count",
-);
-assert(
-  span(zs) <= (grid.depth - 1) * grid.spacing + 1e-5,
-  "Z extent is bounded by cubic-grid depth rather than Link count",
-);
-assert(
-  Math.max(span(xs), span(ys), span(zs)) < (largeCount - 1) * grid.spacing * 0.1,
-  "333-Link seed explicitly rejects the former O(N) one-dimensional extent",
-);
+same(grid.side, 7, "333-Link compact initial guess resolves to seven-wide cube");
+same(grid.depth, 7, "333-Link compact initial guess resolves to seven-deep cube");
+
+const largeSeed = resolveOctahedralSeedCenters3D(large.template, large.topology);
+same(largeSeed.length, largeCount * 3, "333-Link resolver emits exactly one XYZ center per Link");
+assert(largeSeed.every(Number.isFinite), "333-Link resolved center seed remains finite");
 
 for (let index = 0; index < largeCount; index += 1) {
-  const expected = computeOctahedralSeedCenter3D(large.template, index, largeCount);
+  const expected = resolvedSeedCenter(largeSeed, index);
   const actual = centers[index]!;
-  approx(actual[0], expected[0], `seed center ${index} x survives hinge projection`, 2e-6);
-  approx(actual[1], expected[1], `seed center ${index} y survives hinge projection`, 2e-6);
-  approx(actual[2], expected[2], `seed center ${index} z survives hinge projection`, 2e-6);
+  approx(actual[0], expected[0], `resolved seed center ${index} x survives hinge projection`, 2e-6);
+  approx(actual[1], expected[1], `resolved seed center ${index} y survives hinge projection`, 2e-6);
+  approx(actual[2], expected[2], `resolved seed center ${index} z survives hinge projection`, 2e-6);
+}
+
+const largeTarget = large.template.restLength / 2;
+for (let link = 0; link < large.topology.linkCount; link += 1) {
+  const source = centers[link]!;
+  for (const target of [
+    large.topology.startIndices[link]!,
+    large.topology.endIndices[link]!,
+  ]) {
+    if (target === link) continue;
+    const ratioToRest = distance3(source, centers[target]!) / largeTarget;
+    assert(
+      ratioToRest >= 0.65 && ratioToRest <= 1.35,
+      `333-Link incidence ${link}->${target} remains in bounded seed ratio: ${ratioToRest}`,
+    );
+  }
 }
 
 const orientationNetwork: VisualLinkNetwork = {
@@ -481,9 +560,13 @@ const oriented = createOctahedralLivePhysics3D(orientationNetwork, {
 const orientedLink = 1;
 const startTarget = oriented.topology.startIndices[orientedLink]!;
 const endTarget = oriented.topology.endIndices[orientedLink]!;
+const orientedSeed = resolveOctahedralSeedCenters3D(
+  oriented.template,
+  oriented.topology,
+);
 const desired = normalizedDirection(
-  computeOctahedralSeedCenter3D(oriented.template, startTarget, oriented.topology.linkCount),
-  computeOctahedralSeedCenter3D(oriented.template, endTarget, oriented.topology.linkCount),
+  resolvedSeedCenter(orientedSeed, startTarget),
+  resolvedSeedCenter(orientedSeed, endTarget),
 );
 const startRing = centroidOfVertices(oriented, orientedLink, [0, 1, 2]);
 const lastLevel = oriented.template.octahedronCount * 3;
