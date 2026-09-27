@@ -16,7 +16,9 @@ export const RIGID_SECTION_INV_MASS = 1 / RIGID_SECTION_MASS;
 export const RIGID_SECTION_LINEAR_DAMPING_RATE = 1.5;
 export const RIGID_SECTION_ANGULAR_DAMPING_RATE = 1.5;
 export const RIGID_SECTION_BASE_TIME_STEP = 1 / 120;
-export const RIGID_SECTION_HINGE_SOLVER_ITERATIONS = 12;
+// Point-hinge constraints form disjoint stars keyed by semantic CENTER bodies.
+ // One exact star-average solve replaces the old non-conservative 12-pass Jacobi loop.
+export const RIGID_SECTION_HINGE_SOLVER_ITERATIONS = 1;
 const CENTER_SEED_ITERATIONS = 64;
 const CENTER_SEED_RELAXATION = 0.8;
 const CENTER_SEED_RATIO = 0.8;
@@ -729,12 +731,20 @@ export class RigidSectionPhysics3D {
   private worldAngularAcceleration(body: number): Vec3 {
     const q = readQuat(this.orientations, body);
     const torqueWorld = readVec3(this.torques, body);
+    const omegaWorld = readVec3(this.angularVelocities, body);
     const conjugate: Quat = [-q[0], -q[1], -q[2], q[3]];
     const torqueLocal = rotateRigidSectionVector3D(conjugate, torqueWorld);
+    const omegaLocal = rotateRigidSectionVector3D(conjugate, omegaWorld);
+    const angularMomentumLocal: Vec3 = [
+      omegaLocal[0] * this.template.localInertia[0],
+      omegaLocal[1] * this.template.localInertia[1],
+      omegaLocal[2] * this.template.localInertia[2],
+    ];
+    const gyroscopic = cross3(omegaLocal, angularMomentumLocal);
     const alphaLocal: Vec3 = [
-      torqueLocal[0] * this.template.inverseLocalInertia[0],
-      torqueLocal[1] * this.template.inverseLocalInertia[1],
-      torqueLocal[2] * this.template.inverseLocalInertia[2],
+      (torqueLocal[0] - gyroscopic[0]) * this.template.inverseLocalInertia[0],
+      (torqueLocal[1] - gyroscopic[1]) * this.template.inverseLocalInertia[1],
+      (torqueLocal[2] - gyroscopic[2]) * this.template.inverseLocalInertia[2],
     ];
     return rotateRigidSectionVector3D(q, alphaLocal);
   }
@@ -774,93 +784,103 @@ export class RigidSectionPhysics3D {
     }
   }
 
-  private jacobiHingePass(
-    readCenters: Float32Array,
-    readVelocities: Float32Array,
-    writeCenters: Float32Array,
-    writeVelocities: Float32Array,
-  ): void {
+  projectHinges(): void {
     const sectionCount = this.template.sectionCount;
     const middle = this.template.centerSection;
     const endSection = sectionCount - 1;
 
-    for (let body = 0; body < this.bodyCount; body += 1) {
-      const link = Math.floor(body / sectionCount);
-      const local = body - link * sectionCount;
-      const selfCenter = readVec3(readCenters, body);
-      const selfVelocity = readVec3(readVelocities, body);
-      let correction: Vec3 = [0, 0, 0];
-      let velocityCorrection: Vec3 = [0, 0, 0];
-      let degree = 0;
+    // The hinge graph is a disjoint union of stars:
+    //
+    //   CENTER(target) -- START(source)
+    //                  -- END(source)
+    //                  -- ...
+    //
+    // Every START/END body belongs to exactly one target star and every
+    // semantic CENTER owns exactly one star. With equal section masses, the
+    // exact rigid point-constraint projection is therefore the arithmetic
+    // mean of position and velocity over each star. This preserves each
+    // star's center of mass and linear momentum exactly while satisfying all
+    // hinge coincidences in one deterministic O(N) solve.
+    for (let targetLink = 0; targetLink < this.topology.linkCount; targetLink += 1) {
+      const middleBody = this.sectionBodyIndex(targetLink, middle);
+      let centerSum = readVec3(this.centers, middleBody);
+      let velocitySum = readVec3(this.linearVelocities, middleBody);
+      let memberCount = 1;
 
-      const accumulateOther = (otherBody: number): void => {
-        correction = add3(
-          correction,
-          scale3(subtract3(readVec3(readCenters, otherBody), selfCenter), 0.5),
+      const begin = this.reverseIncidence.incomingOffsets[targetLink]!;
+      const finish = this.reverseIncidence.incomingOffsets[targetLink + 1]!;
+      for (let cursor = begin; cursor < finish; cursor += 1) {
+        const encoded = this.reverseIncidence.incomingRefs[cursor]!;
+        const sourceLink = Math.floor(encoded / 2);
+        const role = encoded & 1;
+        const endpointBody = this.sectionBodyIndex(
+          sourceLink,
+          role === 0 ? 0 : endSection,
         );
-        velocityCorrection = add3(
-          velocityCorrection,
-          scale3(subtract3(readVec3(readVelocities, otherBody), selfVelocity), 0.5),
+        centerSum = add3(centerSum, readVec3(this.centers, endpointBody));
+        velocitySum = add3(
+          velocitySum,
+          readVec3(this.linearVelocities, endpointBody),
         );
-        degree += 1;
-      };
-
-      if (local === 0) {
-        accumulateOther(
-          this.sectionBodyIndex(this.topology.startIndices[link]!, middle),
-        );
-      }
-      if (local === endSection) {
-        accumulateOther(
-          this.sectionBodyIndex(this.topology.endIndices[link]!, middle),
-        );
-      }
-      if (local === middle) {
-        const begin = this.reverseIncidence.incomingOffsets[link]!;
-        const end = this.reverseIncidence.incomingOffsets[link + 1]!;
-        for (let cursor = begin; cursor < end; cursor += 1) {
-          const encoded = this.reverseIncidence.incomingRefs[cursor]!;
-          const sourceLink = Math.floor(encoded / 2);
-          const role = encoded & 1;
-          accumulateOther(
-            this.sectionBodyIndex(sourceLink, role === 0 ? 0 : endSection),
-          );
-        }
+        memberCount += 1;
       }
 
-      if (degree === 0) {
-        writeVec3(writeCenters, body, selfCenter);
-        writeVec3(writeVelocities, body, selfVelocity);
-      } else {
-        writeVec3(
-          writeCenters,
-          body,
-          add3(selfCenter, scale3(correction, 1 / degree)),
-        );
-        writeVec3(
-          writeVelocities,
-          body,
-          add3(selfVelocity, scale3(velocityCorrection, 1 / degree)),
-        );
-      }
+      const inverseCount = 1 / memberCount;
+      writeVec3(
+        this.hingeScratchCenters,
+        middleBody,
+        scale3(centerSum, inverseCount),
+      );
+      writeVec3(
+        this.hingeScratchVelocities,
+        middleBody,
+        scale3(velocitySum, inverseCount),
+      );
     }
-  }
 
-  projectHinges(): void {
-    for (let iteration = 0; iteration < RIGID_SECTION_HINGE_SOLVER_ITERATIONS; iteration += 1) {
-      const readCenters = iteration % 2 === 0 ? this.centers : this.hingeScratchCenters;
-      const readVelocities = iteration % 2 === 0
-        ? this.linearVelocities
-        : this.hingeScratchVelocities;
-      const writeCenters = iteration % 2 === 0 ? this.hingeScratchCenters : this.centers;
-      const writeVelocities = iteration % 2 === 0
-        ? this.hingeScratchVelocities
-        : this.linearVelocities;
-      this.jacobiHingePass(
-        readCenters,
-        readVelocities,
-        writeCenters,
-        writeVelocities,
+    for (let link = 0; link < this.topology.linkCount; link += 1) {
+      const ownMiddle = this.sectionBodyIndex(link, middle);
+      writeVec3(
+        this.centers,
+        ownMiddle,
+        readVec3(this.hingeScratchCenters, ownMiddle),
+      );
+      writeVec3(
+        this.linearVelocities,
+        ownMiddle,
+        readVec3(this.hingeScratchVelocities, ownMiddle),
+      );
+
+      const startTargetMiddle = this.sectionBodyIndex(
+        this.topology.startIndices[link]!,
+        middle,
+      );
+      const startBody = this.sectionBodyIndex(link, 0);
+      writeVec3(
+        this.centers,
+        startBody,
+        readVec3(this.hingeScratchCenters, startTargetMiddle),
+      );
+      writeVec3(
+        this.linearVelocities,
+        startBody,
+        readVec3(this.hingeScratchVelocities, startTargetMiddle),
+      );
+
+      const endTargetMiddle = this.sectionBodyIndex(
+        this.topology.endIndices[link]!,
+        middle,
+      );
+      const endBody = this.sectionBodyIndex(link, endSection);
+      writeVec3(
+        this.centers,
+        endBody,
+        readVec3(this.hingeScratchCenters, endTargetMiddle),
+      );
+      writeVec3(
+        this.linearVelocities,
+        endBody,
+        readVec3(this.hingeScratchVelocities, endTargetMiddle),
       );
     }
   }
