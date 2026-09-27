@@ -212,7 +212,7 @@ function buildTemplate(pairCount: number): RigidSectionTemplate3D {
       Math.cos(twist / 2),
     ]) as Quat,
     sectionMass: RIGID_SECTION_MASS,
-    inverseSectionMass: INV_RIGID_SECTION_MASS,
+    inverseSectionMass: RIGID_SECTION_INV_MASS,
     localInertia,
     inverseLocalInertia,
     relationPointCount: 3,
