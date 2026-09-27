@@ -712,7 +712,7 @@ function installCameraControls(state) {
     const generation = ++pickGeneration;
     mode = "picking";
     try {
-      const positions = await state.compute.readBackPositions();
+      const centers = await state.compute.readBackCenters();
       if (
         generation !== pickGeneration
         || pointerId !== event.pointerId
@@ -723,7 +723,7 @@ function installCameraControls(state) {
       let selectedDistance = Number.POSITIVE_INFINITY;
       const hitRadius = 16;
       for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
-        const center = center3(state.compute.template, positions, link);
+        const center = rigidSemanticCenter3(state.compute.template, centers, link);
         const screen = projectWorldToClient(state, center);
         if (!screen) continue;
         const distance = Math.hypot(event.clientX - screen[0], event.clientY - screen[1]);
@@ -738,7 +738,11 @@ function installCameraControls(state) {
         return;
       }
 
-      const center = center3(state.compute.template, positions, selected);
+      const center = rigidSemanticCenter3(
+        state.compute.template,
+        centers,
+        selected,
+      );
       const basis = cameraBasis(state.camera);
       const depth = Math.max(
         0.1,
@@ -756,16 +760,16 @@ function installCameraControls(state) {
         key: state.compute.topology.keys[selected],
         target: [...center],
         depth,
-        vertices: centerDragVertexSet(state, selected, positions, center),
+        bodies: centerDragBodySet(state, selected),
         uploadedBytes: 0,
       };
       mode = "center";
       log(
-        `center drag selected: ${state.centerDrag.key} · ${state.centerDrag.vertices.length} physical vertices · one-shot readback ${positions.byteLength} B`,
+        `center drag selected: ${state.centerDrag.key} · ${state.centerDrag.bodies.length} rigid sections · one-shot center readback ${centers.byteLength} B`,
       );
       setStatus(
         ui.renderCompute,
-        `DRAG ${state.centerDrag.key} · sparse GPU override`,
+        `DRAG ${state.centerDrag.key} · sparse rigid-center override`,
         "warn",
       );
     } catch (error) {
