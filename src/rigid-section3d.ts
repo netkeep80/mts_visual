@@ -10,13 +10,13 @@ import type { VisualLinkNetwork } from "./index.js";
 
 const EPSILON = 1e-9;
 const TWO_PI = 2 * Math.PI;
-const SECTION_NODE_MASS = 1;
-const SECTION_MASS = 3 * SECTION_NODE_MASS;
-const INV_SECTION_MASS = 1 / SECTION_MASS;
-const LINEAR_DAMPING_RATE = 1.5;
-const ANGULAR_DAMPING_RATE = 1.5;
-const BASE_TIME_STEP = 1 / 120;
-const HINGE_SOLVER_ITERATIONS = 12;
+export const RIGID_SECTION_NODE_MASS = 1;
+export const RIGID_SECTION_MASS = 3 * RIGID_SECTION_NODE_MASS;
+export const RIGID_SECTION_INV_MASS = 1 / RIGID_SECTION_MASS;
+export const RIGID_SECTION_RIGID_SECTION_LINEAR_DAMPING_RATE = 1.5;
+export const RIGID_SECTION_RIGID_SECTION_ANGULAR_DAMPING_RATE = 1.5;
+export const RIGID_SECTION_RIGID_SECTION_BASE_TIME_STEP = 1 / 120;
+export const RIGID_SECTION_RIGID_SECTION_HINGE_SOLVER_ITERATIONS = 12;
 const CENTER_SEED_ITERATIONS = 64;
 const CENTER_SEED_RELAXATION = 0.8;
 const CENTER_SEED_RATIO = 0.8;
@@ -211,8 +211,8 @@ function buildTemplate(pairCount: number): RigidSectionTemplate3D {
       Math.sin(twist / 2),
       Math.cos(twist / 2),
     ]) as Quat,
-    sectionMass: SECTION_MASS,
-    inverseSectionMass: INV_SECTION_MASS,
+    sectionMass: RIGID_SECTION_MASS,
+    inverseSectionMass: INV_RIGID_SECTION_MASS,
     localInertia,
     inverseLocalInertia,
     relationPointCount: 3,
@@ -721,7 +721,7 @@ export class RigidSectionPhysics3D {
     return Object.freeze({
       relationPointEvaluations,
       hingeConstraintEvaluations:
-        this.topology.linkCount * 2 * HINGE_SOLVER_ITERATIONS,
+        this.topology.linkCount * 2 * RIGID_SECTION_HINGE_SOLVER_ITERATIONS,
       pairwiseSemanticLinkEvaluations: 0,
     });
   }
@@ -740,8 +740,8 @@ export class RigidSectionPhysics3D {
   }
 
   private integrate(dt: number): void {
-    const linearDamping = Math.exp(-LINEAR_DAMPING_RATE * dt);
-    const angularDamping = Math.exp(-ANGULAR_DAMPING_RATE * dt);
+    const linearDamping = Math.exp(-RIGID_SECTION_LINEAR_DAMPING_RATE * dt);
+    const angularDamping = Math.exp(-RIGID_SECTION_ANGULAR_DAMPING_RATE * dt);
 
     for (let body = 0; body < this.bodyCount; body += 1) {
       const velocity = readVec3(this.linearVelocities, body);
@@ -847,7 +847,7 @@ export class RigidSectionPhysics3D {
   }
 
   projectHinges(): void {
-    for (let iteration = 0; iteration < HINGE_SOLVER_ITERATIONS; iteration += 1) {
+    for (let iteration = 0; iteration < RIGID_SECTION_HINGE_SOLVER_ITERATIONS; iteration += 1) {
       const readCenters = iteration % 2 === 0 ? this.centers : this.hingeScratchCenters;
       const readVelocities = iteration % 2 === 0
         ? this.linearVelocities
@@ -866,7 +866,7 @@ export class RigidSectionPhysics3D {
   }
 
   step(): RigidSectionStepEvaluation3D {
-    const dt = BASE_TIME_STEP * this.simulationSpeed;
+    const dt = RIGID_SECTION_BASE_TIME_STEP * this.simulationSpeed;
     const evaluation = this.evaluateForces();
     if (dt === 0) return evaluation;
     this.integrate(dt);
