@@ -1,4 +1,6 @@
 import {
+  RIGID_SECTION_ANGULAR_DAMPING_RATE,
+  RIGID_SECTION_BASE_TIME_STEP,
   createRigidSectionPhysics3D,
   evaluateRigidSectionPotential3D,
   getRigidSectionTemplate3D,
@@ -225,8 +227,8 @@ same(
 same(evaluations.pairwiseSemanticLinkEvaluations, 0, "rigid-section physics has no semantic all-pairs path");
 same(
   evaluations.hingeConstraintEvaluations,
-  5 * 2 * 12,
-  "hinge solver work is fixed linear work per semantic Link",
+  5 * 2,
+  "exact hinge-star solve evaluates each semantic incidence once",
 );
 
 const initialCenters = basis.topology.keys.map((_, link) => basis.semanticCenter(link));
@@ -300,6 +302,80 @@ for (let body = 0; body < basis.bodyCount; body += 1) {
   );
 }
 
+const conservativeHinge = createRigidSectionPhysics3D(root, {
+  aspectRatio: 2 * Math.SQRT2,
+  stiffness: 0,
+  simulationSpeed: 1,
+});
+const conservativeStart = conservativeHinge.sectionBodyIndex(0, 0);
+const sumField = (values: Float32Array): Vec3 => {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (let offset = 0; offset < values.length; offset += 3) {
+    x += values[offset]!;
+    y += values[offset + 1]!;
+    z += values[offset + 2]!;
+  }
+  return [x, y, z];
+};
+
+conservativeHinge.centers[conservativeStart * 3] =
+  conservativeHinge.centers[conservativeStart * 3]! + 0.75;
+const positionSumBeforeProjection = sumField(conservativeHinge.centers);
+conservativeHinge.linearVelocities.fill(0);
+conservativeHinge.linearVelocities[conservativeStart * 3] = 1;
+const momentumSumBeforeProjection = sumField(conservativeHinge.linearVelocities);
+conservativeHinge.projectHinges();
+const positionSumAfterProjection = sumField(conservativeHinge.centers);
+const momentumSumAfterProjection = sumField(conservativeHinge.linearVelocities);
+for (let axis = 0; axis < 3; axis += 1) {
+  approx(
+    positionSumAfterProjection[axis]!,
+    positionSumBeforeProjection[axis]!,
+    `exact hinge-star projection preserves center of mass axis ${axis}`,
+    2e-6,
+  );
+  approx(
+    momentumSumAfterProjection[axis]!,
+    momentumSumBeforeProjection[axis]!,
+    `exact hinge-star projection preserves linear momentum axis ${axis}`,
+    2e-6,
+  );
+}
+assert(
+  rigidSectionHingeError3D(conservativeHinge) < 2e-6,
+  "exact hinge-star projection satisfies point coincidence in one solve",
+);
+
+const gyroscopic = createRigidSectionPhysics3D(root, {
+  aspectRatio: 2 * Math.SQRT2,
+  stiffness: 0,
+  simulationSpeed: 1,
+});
+const gyroscopicBody = gyroscopic.sectionBodyIndex(0, 1);
+const gyroscopicQ = gyroscopicBody * 4;
+gyroscopic.orientations[gyroscopicQ] = 0;
+gyroscopic.orientations[gyroscopicQ + 1] = 0;
+gyroscopic.orientations[gyroscopicQ + 2] = 0;
+gyroscopic.orientations[gyroscopicQ + 3] = 1;
+gyroscopic.angularVelocities.fill(0);
+const gyroscopicOmega = gyroscopicBody * 3;
+gyroscopic.angularVelocities[gyroscopicOmega] = 1;
+gyroscopic.angularVelocities[gyroscopicOmega + 2] = 1;
+gyroscopic.step();
+const expectedGyroscopicY =
+  RIGID_SECTION_BASE_TIME_STEP
+  * Math.exp(
+    -RIGID_SECTION_ANGULAR_DAMPING_RATE * RIGID_SECTION_BASE_TIME_STEP,
+  );
+approx(
+  gyroscopic.angularVelocities[gyroscopicOmega + 1]!,
+  expectedGyroscopicY,
+  "anisotropic torque-free body includes Euler gyroscopic coupling",
+  5e-5,
+);
+
 const largeLinkCount = 10_000;
 const largeNetwork: VisualLinkNetwork = {
   links: Array.from({ length: largeLinkCount }, (_, index) => {
@@ -322,8 +398,8 @@ same(
 );
 same(
   largeEvaluation.hingeConstraintEvaluations,
-  largeLinkCount * 2 * 12,
-  "large hinge evaluation count is exactly O(N)",
+  largeLinkCount * 2,
+  "large exact hinge-star evaluation count is exactly O(N)",
 );
 same(
   largeEvaluation.pairwiseSemanticLinkEvaluations,
