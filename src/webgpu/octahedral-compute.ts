@@ -322,7 +322,7 @@ export function computeOctahedralWebGpuDispatch2D(
 
 export const OCTAHEDRAL_WEBGPU_WGSL = /* wgsl */ `
 struct Globals {
-  counts: vec4<u32>,          // linkCount, vertexCount, startApex, endApex
+  counts: vec4<u32>,          // linkCount, vertexCount, startRingBase, endRingBase
   center_rest: vec4<u32>,     // center0, center1, center2, restBase
   bases_total: vec4<u32>,     // edgeABase, edgeBBase, batchEdgesBase, totalVertices
   seed_grid: vec4<u32>,       // reserved for seed-layout metadata
@@ -395,6 +395,27 @@ fn center_xyz(link: u32, buffer_kind: u32) -> vec3<f32> {
   return (a + b + c) / 3.0;
 }
 
+fn ring_xyz(link: u32, ring_base: u32, buffer_kind: u32) -> vec3<f32> {
+  let a = load_xyz(buffer_kind, vertex_scalar(link, ring_base));
+  let b = load_xyz(buffer_kind, vertex_scalar(link, ring_base + 1u));
+  let c = load_xyz(buffer_kind, vertex_scalar(link, ring_base + 2u));
+  return (a + b + c) / 3.0;
+}
+
+fn translate_ring_position(link: u32, ring_base: u32, delta: vec3<f32>) {
+  for (var corner = 0u; corner < 3u; corner = corner + 1u) {
+    let scalar = vertex_scalar(link, ring_base + corner);
+    store_position(scalar, load_xyz(0u, scalar) + delta);
+  }
+}
+
+fn translate_ring_velocity(link: u32, ring_base: u32, delta: vec3<f32>) {
+  for (var corner = 0u; corner < 3u; corner = corner + 1u) {
+    let scalar = vertex_scalar(link, ring_base + corner);
+    store_velocity(scalar, load_xyz(1u, scalar) + delta);
+  }
+}
+
 fn seed_center(link: u32) -> vec3<f32> {
   let scalar = link * 3u;
   return vec3<f32>(
@@ -456,9 +477,8 @@ fn init_main(
   var seeded: vec3<f32>;
   if (self_half) {
     // Self-incidence must begin as a finite material loop rather than a
-    // longitudinally collapsed mast. The loop returns exactly to CENTER at
-    // fraction=0 and fraction=1; START/END hinge projection therefore remains
-    // exact while the interior has a deterministic nonzero spatial extent.
+    // longitudinally collapsed mast. The terminal triangle centroid returns
+    // exactly to CENTER while the triangle itself remains a finite section.
     let side = select(1.0, -1.0, rest.z < 0.0);
     let theta = 6.283185307179586 * fraction;
     let sin_theta = sin(theta);
@@ -538,8 +558,10 @@ fn hinge_gather_main(
     let encoded = incoming_refs[index];
     let source = encoded >> 1u;
     let role = encoded & 1u;
-    let apex = select(globals.counts.z, globals.counts.w, role == 1u);
-    sum += load_xyz(2u, vertex_scalar(source, apex));
+    let ring_base = select(globals.counts.z, globals.counts.w, role == 1u);
+    for (var corner = 0u; corner < 3u; corner = corner + 1u) {
+      sum += load_xyz(2u, vertex_scalar(source, ring_base + corner));
+    }
     index += 1u;
   }
 
@@ -552,6 +574,18 @@ fn hinge_gather_main(
   store_force(c2, load_xyz(2u, c2) + share);
 }
 
+fn remove_ring_translation_force(link: u32, ring_base: u32) {
+  var total = vec3<f32>(0.0);
+  for (var corner = 0u; corner < 3u; corner = corner + 1u) {
+    total += load_xyz(2u, vertex_scalar(link, ring_base + corner));
+  }
+  let mean = total / 3.0;
+  for (var corner = 0u; corner < 3u; corner = corner + 1u) {
+    let scalar = vertex_scalar(link, ring_base + corner);
+    store_force(scalar, load_xyz(2u, scalar) - mean);
+  }
+}
+
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn hinge_zero_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
@@ -559,8 +593,8 @@ fn hinge_zero_main(
   let link = linear_id(gid);
   if (link >= globals.counts.x) { return; }
 
-  store_force(vertex_scalar(link, globals.counts.z), vec3<f32>(0.0));
-  store_force(vertex_scalar(link, globals.counts.w), vec3<f32>(0.0));
+  remove_ring_translation_force(link, globals.counts.z);
+  remove_ring_translation_force(link, globals.counts.w);
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE})
@@ -569,9 +603,6 @@ fn integrate_main(
 ) {
   let linear = linear_id(gid);
   if (linear >= globals.bases_total.w) { return; }
-
-  let local = linear % globals.counts.y;
-  if (local == globals.counts.z || local == globals.counts.w) { return; }
 
   let scalar = linear * 3u;
   let dt = globals.physics.y;
@@ -590,14 +621,21 @@ fn project_hinges_main(
   let start_target = topology[link * 2u];
   let end_target = topology[link * 2u + 1u];
 
-  let start_scalar = vertex_scalar(link, globals.counts.z);
-  store_position(start_scalar, center_xyz(start_target, 0u));
-  store_velocity(start_scalar, center_xyz(start_target, 1u));
+  let start_position_delta =
+    center_xyz(start_target, 0u) - ring_xyz(link, globals.counts.z, 0u);
+  let start_velocity_delta =
+    center_xyz(start_target, 1u) - ring_xyz(link, globals.counts.z, 1u);
+  translate_ring_position(link, globals.counts.z, start_position_delta);
+  translate_ring_velocity(link, globals.counts.z, start_velocity_delta);
 
-  let end_scalar = vertex_scalar(link, globals.counts.w);
-  store_position(end_scalar, center_xyz(end_target, 0u));
-  store_velocity(end_scalar, center_xyz(end_target, 1u));
+  let end_position_delta =
+    center_xyz(end_target, 0u) - ring_xyz(link, globals.counts.w, 0u);
+  let end_velocity_delta =
+    center_xyz(end_target, 1u) - ring_xyz(link, globals.counts.w, 1u);
+  translate_ring_position(link, globals.counts.w, end_position_delta);
+  translate_ring_velocity(link, globals.counts.w, end_velocity_delta);
 }
+
 `;
 
 function minimumBufferSize(byteLength: number): number {
@@ -642,8 +680,8 @@ function globalsData(
   const f32 = new Float32Array(buffer);
   u32[0] = topology.linkCount;
   u32[1] = template.vertexCount;
-  u32[2] = template.startApex;
-  u32[3] = template.endApex;
+  u32[2] = template.startTriangle[0];
+  u32[3] = template.endTriangle[0];
 
   u32[4] = template.centerTriangle[0];
   u32[5] = template.centerTriangle[1];

@@ -13,48 +13,48 @@ function same<T>(actual: T, expected: T, message: string): void {
   assert(Object.is(actual, expected), `${message}: ${String(actual)} !== ${String(expected)}`);
 }
 
-const minimumRatio = 2 * Math.SQRT2;
+const minimumRatio = Math.SQRT2;
 const million = estimateOctahedralPerformance3D(1_000_000, minimumRatio);
 
 same(million.linkCount, 1_000_000, "million witness preserves Link count");
 same(million.pairCount, 1, "minimum ratio uses one octahedron pair");
 same(million.octahedronCount, 2, "minimum ratio uses two octahedra");
-same(million.verticesPerLink, 11, "minimum template has 11 physical vertices");
-same(million.edgesPerLink, 27, "minimum template has 27 spring edges");
-same(million.surfaceTrianglesPerLink, 18, "minimum template has 18 external triangles");
+same(million.verticesPerLink, 9, "minimum capless template has 9 physical vertices");
+same(million.edgesPerLink, 21, "minimum capless template has 21 spring edges");
+same(million.surfaceTrianglesPerLink, 14, "minimum capless template has 14 external triangles");
 
-same(million.totalPhysicalVertices, 11_000_000, "million Links contain 11 million physical vertices");
-same(million.springEdgeEvaluationsPerTick, 27_000_000, "million tick evaluates exactly 27 million springs");
+same(million.totalPhysicalVertices, 9_000_000, "million Links contain 9 million physical vertices");
+same(million.springEdgeEvaluationsPerTick, 21_000_000, "million tick evaluates exactly 21 million springs");
 same(million.hingeTransfersPerTick, 2_000_000, "million tick transfers exactly 2N hinges");
 same(million.hingeProjectionsPerTick, 2_000_000, "million tick projects exactly 2N hinges");
-same(million.integratedVerticesPerTick, 9_000_000, "million tick integrates V-2 vertices per Link");
+same(million.integratedVerticesPerTick, 9_000_000, "million tick integrates every material vertex");
 same(million.pairwiseSemanticLinkEvaluations, 0, "million witness has no semantic all-pairs work");
 
-same(million.cpuPositionsBytes, 132_000_000, "million positions bytes");
-same(million.cpuVelocitiesBytes, 132_000_000, "million velocities bytes");
-same(million.cpuForcesBytes, 132_000_000, "million forces bytes");
+same(million.cpuPositionsBytes, 108_000_000, "million positions bytes");
+same(million.cpuVelocitiesBytes, 108_000_000, "million velocities bytes");
+same(million.cpuForcesBytes, 108_000_000, "million forces bytes");
 same(million.cpuTopologyBytes, 8_000_000, "million Uint32 START/END topology bytes");
-same(million.cpuDynamicBytes, 404_000_000, "million current CPU numeric dynamic bytes");
+same(million.cpuDynamicBytes, 332_000_000, "million current CPU numeric dynamic bytes");
 
-same(million.positionTextureWidth, 3317, "million position texture width matches P3 packing");
-same(million.positionTextureHeight, 3317, "million position texture height matches P3 packing");
-same(million.positionTextureCapacityVertices, 11_002_489, "million texture rounded capacity");
-same(million.gpuPositionTextureBytes, 176_039_824, "million RGBA32F position texture bytes");
+same(million.positionTextureWidth, 3000, "million position texture width matches exact square packing");
+same(million.positionTextureHeight, 3000, "million position texture height matches exact square packing");
+same(million.positionTextureCapacityVertices, 9_000_000, "million texture capacity is exact");
+same(million.gpuPositionTextureBytes, 144_000_000, "million RGBA32F position texture bytes");
 same(million.gpuInstanceAddressBytes, 8_000_000, "million vec2 instance-address bytes");
-same(million.gpuDynamicBytes, 184_039_824, "million current GPU dynamic bytes");
-same(million.cpuTextureStagingBytesPerFrame, 176_000_000, "million CPU staging writes per rendered frame");
-same(million.gpuTextureUploadBytesPerFrame, 176_039_824, "million full DataTexture upload bytes per rendered frame");
+same(million.gpuDynamicBytes, 152_000_000, "million current GPU dynamic bytes");
+same(million.cpuTextureStagingBytesPerFrame, 144_000_000, "million CPU staging writes per rendered frame");
+same(million.gpuTextureUploadBytesPerFrame, 144_000_000, "million full DataTexture upload bytes per rendered frame");
 
 const sixty = projectOctahedralUploadBandwidth3D(million, 60);
 same(sixty.framesPerSecond, 60, "bandwidth witness retains requested FPS");
 same(
   sixty.cpuTextureStagingBytesPerSecond,
-  10_560_000_000,
+  8_640_000_000,
   "60-Hz CPU staging projection",
 );
 same(
   sixty.gpuTextureUploadBytesPerSecond,
-  10_562_389_440,
+  8_640_000_000,
   "60-Hz GPU upload projection",
 );
 
@@ -76,11 +76,11 @@ same(ladder.length, 5, "performance ladder has five deterministic rungs");
 
 for (let index = 0; index < ladder.length; index += 1) {
   const row = ladder[index]!;
-  same(row.springEdgeEvaluationsPerTick, row.linkCount * 27, `rung ${index} spring work is N*E`);
+  same(row.springEdgeEvaluationsPerTick, row.linkCount * 21, `rung ${index} spring work is N*E`);
   same(row.hingeTransfersPerTick, row.linkCount * 2, `rung ${index} hinge transfers are 2N`);
   same(row.hingeProjectionsPerTick, row.linkCount * 2, `rung ${index} hinge projections are 2N`);
-  same(row.integratedVerticesPerTick, row.linkCount * 9, `rung ${index} integrated vertices are N*(V-2)`);
-  same(row.cpuDynamicBytes, row.linkCount * 404, `rung ${index} CPU numeric bytes are exactly linear`);
+  same(row.integratedVerticesPerTick, row.linkCount * 9, `rung ${index} integrated vertices are N*V`);
+  same(row.cpuDynamicBytes, row.linkCount * 332, `rung ${index} CPU numeric bytes are exactly linear`);
   same(row.pairwiseSemanticLinkEvaluations, 0, `rung ${index} has no pairwise work`);
 
   if (index > 0) {
@@ -90,13 +90,13 @@ for (let index = 0; index < ladder.length; index += 1) {
   }
 }
 
-const longerRatio = Math.SQRT2 * (9 + 1);
+const longerRatio = Math.SQRT2 * 9;
 const longer = estimateOctahedralPerformance3D(10_000, longerRatio);
 same(longer.pairCount, 9, "estimator derives non-minimum cached template");
 same(longer.octahedronCount, 18, "longer aspect ratio keeps even octahedron count");
-same(longer.verticesPerLink, 59, "18-octahedron template vertex count");
-same(longer.edgesPerLink, 171, "18-octahedron template edge count");
-same(longer.springEdgeEvaluationsPerTick, 1_710_000, "longer template cost follows exact N*E");
+same(longer.verticesPerLink, 57, "18-octahedron capless template vertex count");
+same(longer.edgesPerLink, 165, "18-octahedron template edge count");
+same(longer.springEdgeEvaluationsPerTick, 1_650_000, "longer template cost follows exact N*E");
 
 const empty = estimateOctahedralPerformance3D(0, minimumRatio);
 same(empty.totalPhysicalVertices, 0, "empty witness allocates no physical vertices conceptually");

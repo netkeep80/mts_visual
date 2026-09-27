@@ -102,9 +102,9 @@ jobs:
           if (core.OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA !== 20) {
             throw new Error("browser bundle lost 20-octahedron presentation baseline");
           }
-          if (!(core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO > 15
-             && core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO < 16)) {
-            throw new Error("browser bundle has unexpected presentation aspect ratio");
+          if (!(core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO > 14
+             && core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO < 15)) {
+            throw new Error("browser bundle has unexpected capless presentation aspect ratio");
           }
           for (const name of [
             "createOctahedralWebGpuCompute3D",

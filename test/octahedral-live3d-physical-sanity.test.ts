@@ -155,7 +155,7 @@ function hingeMaxError(controller: OctahedralLivePhysics3D): number {
 
   for (let link = 0; link < controller.topology.linkCount; link += 1) {
     for (const role of ["start", "end"] as const) {
-      const apex = role === "start" ? template.startApex : template.endApex;
+      const triangle = role === "start" ? template.startTriangle : template.endTriangle;
       const target = role === "start"
         ? controller.topology.startIndices[link]!
         : controller.topology.endIndices[link]!;
@@ -164,11 +164,19 @@ function hingeMaxError(controller: OctahedralLivePhysics3D): number {
         positions,
         target,
       );
-      const offset = (link * template.vertexCount + apex) * 3;
+      let x = 0;
+      let y = 0;
+      let z = 0;
+      for (const vertex of triangle) {
+        const offset = (link * template.vertexCount + vertex) * 3;
+        x += positions[offset]! / 3;
+        y += positions[offset + 1]! / 3;
+        z += positions[offset + 2]! / 3;
+      }
       const error = Math.hypot(
-        positions[offset]! - center[0],
-        positions[offset + 1]! - center[1],
-        positions[offset + 2]! - center[2],
+        x - center[0],
+        y - center[1],
+        z - center[2],
       );
       maximum = Math.max(maximum, error);
     }
@@ -256,8 +264,8 @@ assert(
   `presentation baseline resolves to exactly ${OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA} octahedra`,
 );
 assert(
-  controller.template.aspectRatio > 15 && controller.template.aspectRatio < 16,
-  `20-octahedron baseline is line-like with aspectRatio≈15.56, got ${controller.template.aspectRatio}`,
+  controller.template.aspectRatio > 14 && controller.template.aspectRatio < 15,
+  `20-octahedron capless baseline is line-like with aspectRatio≈14.14, got ${controller.template.aspectRatio}`,
 );
 
 const seedGrid = getOctahedralSeedGrid3D(controller.template, controller.topology.linkCount);

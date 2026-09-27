@@ -194,7 +194,7 @@ function fakeCompute(
   network: VisualLinkNetwork,
   status: "available" | "device-lost" | "destroyed" = "available",
 ): OctahedralWebGpuCompute3D {
-  const template = getOctahedralLinkTemplate3D(2 * Math.SQRT2);
+  const template = getOctahedralLinkTemplate3D(Math.SQRT2);
   const topology = buildOctahedralLinkTopology3D(network);
   const fieldBytes = topology.linkCount * template.vertexCount * 3 * 4;
   const positionBuffer = new FakeBuffer(Math.max(4, fieldBytes), "compute-position-buffer");
@@ -414,7 +414,11 @@ assert(
 );
 assert(
   OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("fn end_ring_center"),
-  "END arrow derives direction from last transverse triangle",
+  "END arrow tip is the terminal triangle centroid",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("fn previous_end_ring_center"),
+  "END arrow direction comes from the previous transverse triangle centroid",
 );
 assert(
   OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("fn end_ring_projected_diameter_pixels"),
@@ -455,8 +459,8 @@ same(snapshot.dynamicStateUploadBytesPerFrame, 0, "snapshot proves zero dynamic 
 same(snapshot.drawCalls, 3, "snapshot draw-call proxy is three");
 
 const million = estimateOctahedralWebGpuRender3D(1_000_000, compute.template);
-same(million.surfaceVerticesPerLink, 54, "minimum template renders 54 surface vertices per Link");
-same(million.surfaceVertexInvocations, 54_000_000, "million Links imply 54M surface vertex invocations");
+same(million.surfaceVerticesPerLink, 42, "minimum capless template renders 42 surface vertices per Link");
+same(million.surfaceVertexInvocations, 42_000_000, "million Links imply 42M surface vertex invocations");
 same(million.centerVertexInvocations, 6_000_000, "million Links imply 6M center billboard vertices");
 same(million.arrowVertexInvocations, 6_000_000, "million Links imply 6M arrow vertices");
 same(million.drawCalls, 3, "million-Link structural witness remains three draws");

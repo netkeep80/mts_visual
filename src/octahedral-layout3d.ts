@@ -337,7 +337,7 @@ export function writeFittedOctahedralTemplate3D(
       // A self-incidence half must not be seeded by collapsing every
       // longitudinal level onto own CENTER.  Embed its material centerline as
       // a deterministic closed loop whose arc length is approximately the
-      // half-mast rest length.  START/END apexes still return exactly to CENTER.
+      // half-mast rest length. START/END terminal triangle centroids still return exactly to CENTER.
       const side = lz < 0 ? -1 : 1;
       const theta = 2 * Math.PI * fraction;
       const sinTheta = Math.sin(theta);

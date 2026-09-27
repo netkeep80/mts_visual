@@ -8,6 +8,7 @@ import {
   buildOctahedralLinkTopology3D,
   getOctahedralLinkTemplate3D,
   projectOctahedralHinges3D,
+  projectOctahedralHingeVelocities3D,
   transferOctahedralHingeForces3D,
   type OctahedralLinkTemplate3D,
   type OctahedralLinkTopology3D,
@@ -58,48 +59,6 @@ function linkFloatOffset(template: OctahedralLinkTemplate3D, link: number): numb
   return link * template.vertexCount * 3;
 }
 
-function centerVelocityInto(
-  topology: OctahedralLinkTopology3D,
-  template: OctahedralLinkTemplate3D,
-  velocities: Float32Array,
-  linkIndex: number,
-  out: Float32Array,
-): void {
-  if (linkIndex < 0 || linkIndex >= topology.linkCount) throw new Error("invalid center velocity link index");
-  let x = 0;
-  let y = 0;
-  let z = 0;
-  for (const vertex of template.centerTriangle) {
-    const offset = packedFloatOffset(template, linkIndex, vertex);
-    x += velocities[offset]!;
-    y += velocities[offset + 1]!;
-    z += velocities[offset + 2]!;
-  }
-  out[0] = x / 3;
-  out[1] = y / 3;
-  out[2] = z / 3;
-}
-
-function syncApexVelocities(
-  topology: OctahedralLinkTopology3D,
-  template: OctahedralLinkTemplate3D,
-  velocities: Float32Array,
-): void {
-  const scratch = new Float32Array(3);
-  for (let link = 0; link < topology.linkCount; link += 1) {
-    centerVelocityInto(topology, template, velocities, topology.startIndices[link]!, scratch);
-    let offset = packedFloatOffset(template, link, template.startApex);
-    velocities[offset] = scratch[0]!;
-    velocities[offset + 1] = scratch[1]!;
-    velocities[offset + 2] = scratch[2]!;
-
-    centerVelocityInto(topology, template, velocities, topology.endIndices[link]!, scratch);
-    offset = packedFloatOffset(template, link, template.endApex);
-    velocities[offset] = scratch[0]!;
-    velocities[offset + 1] = scratch[1]!;
-    velocities[offset + 2] = scratch[2]!;
-  }
-}
 
 function assertFiniteState(positions: Float32Array, velocities: Float32Array): void {
   for (let index = 0; index < positions.length; index += 1) {
@@ -143,7 +102,11 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
       );
     }
     projectOctahedralHinges3D(this.currentTopology, this.template, this.currentPositions);
-    syncApexVelocities(this.currentTopology, this.template, this.currentVelocities);
+    projectOctahedralHingeVelocities3D(
+      this.currentTopology,
+      this.template,
+      this.currentVelocities,
+    );
     assertFiniteState(this.currentPositions, this.currentVelocities);
   }
 
@@ -201,8 +164,7 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
 
     if (dt > 0) {
       for (let link = 0; link < this.currentTopology.linkCount; link += 1) {
-        // START/END apexes are the last two template vertices and are kinematic hinges.
-        for (let vertex = 0; vertex < this.template.vertexCount - 2; vertex += 1) {
+        for (let vertex = 0; vertex < this.template.vertexCount; vertex += 1) {
           const offset = packedFloatOffset(this.template, link, vertex);
           const vx = (this.currentVelocities[offset]! + this.forces[offset]! * dt) * damping;
           const vy = (this.currentVelocities[offset + 1]! + this.forces[offset + 1]! * dt) * damping;
@@ -224,7 +186,11 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
       this.template,
       this.currentPositions,
     );
-    syncApexVelocities(this.currentTopology, this.template, this.currentVelocities);
+    projectOctahedralHingeVelocities3D(
+      this.currentTopology,
+      this.template,
+      this.currentVelocities,
+    );
     assertFiniteState(this.currentPositions, this.currentVelocities);
 
     return Object.freeze({
@@ -271,7 +237,11 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
     this.forces = new Float32Array(nextLength);
 
     projectOctahedralHinges3D(this.currentTopology, this.template, this.currentPositions);
-    syncApexVelocities(this.currentTopology, this.template, this.currentVelocities);
+    projectOctahedralHingeVelocities3D(
+      this.currentTopology,
+      this.template,
+      this.currentVelocities,
+    );
     assertFiniteState(this.currentPositions, this.currentVelocities);
   }
 }
