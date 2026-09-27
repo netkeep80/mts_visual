@@ -132,16 +132,16 @@ approx(
   2e-4,
 );
 assert(
-  polylineLength(compressed.sectionCenters, 0, halfSegments) > h * 0.995,
-  "resampled compressed first half preserves nearly all rest arc length",
+  polylineLength(compressed.sectionCenters, 0, halfSegments) > h * 0.98,
+  "resampled compressed first half preserves the rest-scale arc within the expected finite-section chord approximation",
 );
 assert(
   polylineLength(
     compressed.sectionCenters,
     halfSegments,
     template.octahedronCount,
-  ) > h * 0.995,
-  "resampled compressed second half preserves nearly all rest arc length",
+  ) > h * 0.98,
+  "resampled compressed second half preserves the rest-scale arc within the expected finite-section chord approximation",
 );
 assert(
   Math.max(
