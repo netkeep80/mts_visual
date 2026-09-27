@@ -168,14 +168,14 @@ export function resolveOctahedralSeedCenters3D(
     const cy = dy * halfDelta;
     const cz = dz * halfDelta;
 
-    corrections[sourceOffset] -= cx;
-    corrections[sourceOffset + 1] -= cy;
-    corrections[sourceOffset + 2] -= cz;
-    corrections[targetOffset] += cx;
-    corrections[targetOffset + 1] += cy;
-    corrections[targetOffset + 2] += cz;
-    weights[source] += 1;
-    weights[target] += 1;
+    corrections[sourceOffset] = corrections[sourceOffset]! - cx;
+    corrections[sourceOffset + 1] = corrections[sourceOffset + 1]! - cy;
+    corrections[sourceOffset + 2] = corrections[sourceOffset + 2]! - cz;
+    corrections[targetOffset] = corrections[targetOffset]! + cx;
+    corrections[targetOffset + 1] = corrections[targetOffset + 1]! + cy;
+    corrections[targetOffset + 2] = corrections[targetOffset + 2]! + cz;
+    weights[source] = weights[source]! + 1;
+    weights[target] = weights[target]! + 1;
   };
 
   for (let iteration = 0; iteration < TOPOLOGY_SEED_ITERATIONS; iteration += 1) {
@@ -195,9 +195,9 @@ export function resolveOctahedralSeedCenters3D(
       const offset = link * 3;
       if (weight > 0) {
         const scale = TOPOLOGY_SEED_RELAXATION / weight;
-        centers[offset] += corrections[offset]! * scale;
-        centers[offset + 1] += corrections[offset + 1]! * scale;
-        centers[offset + 2] += corrections[offset + 2]! * scale;
+        centers[offset] = centers[offset]! + corrections[offset]! * scale;
+        centers[offset + 1] = centers[offset + 1]! + corrections[offset + 1]! * scale;
+        centers[offset + 2] = centers[offset + 2]! + corrections[offset + 2]! * scale;
       }
       meanX += centers[offset]!;
       meanY += centers[offset + 1]!;
@@ -212,9 +212,9 @@ export function resolveOctahedralSeedCenters3D(
     meanZ = meanZ / count - initialMeanZ;
     for (let link = 0; link < count; link += 1) {
       const offset = link * 3;
-      centers[offset] -= meanX;
-      centers[offset + 1] -= meanY;
-      centers[offset + 2] -= meanZ;
+      centers[offset] = centers[offset]! - meanX;
+      centers[offset + 1] = centers[offset + 1]! - meanY;
+      centers[offset + 2] = centers[offset + 2]! - meanZ;
     }
   }
 
