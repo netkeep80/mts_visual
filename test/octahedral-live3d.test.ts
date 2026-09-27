@@ -5,6 +5,10 @@ import {
   type OctahedralLivePhysics3D,
 } from "../src/index.js";
 import type { VisualLinkNetwork } from "../src/index.js";
+import {
+  computeOctahedralSeedCenter3D,
+  getOctahedralSeedGrid3D,
+} from "../src/octahedral-layout3d.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`@mts/visual M5/P2: ${message}`);
@@ -238,3 +242,153 @@ live.setSimulationSpeed(0);
 same(live.simulationSpeed, 0, "simulation speed can be changed without rebuilding state");
 live.setStiffness(2);
 same(live.stiffness, 2, "edge stiffness can be changed without rebuilding topology");
+
+
+function geometricCenter(
+  controller: OctahedralLivePhysics3D,
+  link: number,
+): readonly [number, number, number] {
+  return computeOctahedralGeometricCenter3D(controller.template, controller.positions, link);
+}
+
+function span(values: readonly number[]): number {
+  return Math.max(...values) - Math.min(...values);
+}
+
+function centroidOfVertices(
+  controller: OctahedralLivePhysics3D,
+  link: number,
+  vertices: readonly number[],
+): readonly [number, number, number] {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const vertex of vertices) {
+    const offset = packedVertexOffset(controller, link, vertex);
+    x += controller.positions[offset]!;
+    y += controller.positions[offset + 1]!;
+    z += controller.positions[offset + 2]!;
+  }
+  return [x / vertices.length, y / vertices.length, z / vertices.length];
+}
+
+function normalizedDirection(
+  from: readonly [number, number, number],
+  to: readonly [number, number, number],
+): readonly [number, number, number] {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const dz = to[2] - from[2];
+  const length = Math.hypot(dx, dy, dz);
+  assert(length > 1e-9, "direction fixture must have nonzero length");
+  return [dx / length, dy / length, dz / length];
+}
+
+const planarNetwork: VisualLinkNetwork = {
+  links: Array.from({ length: 4 }, (_, index) => ({
+    key: `P${index}`,
+    startKey: `P${index}`,
+    endKey: `P${index}`,
+  })),
+};
+const planar = createOctahedralLivePhysics3D(planarNetwork, {
+  aspectRatio: ratio,
+  stiffness: 1,
+  simulationSpeed: 0,
+});
+const p0 = geometricCenter(planar, 0);
+const p1 = geometricCenter(planar, 1);
+const p2 = geometricCenter(planar, 2);
+const ab = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]] as const;
+const ac = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]] as const;
+const cross = [
+  ab[1] * ac[2] - ab[2] * ac[1],
+  ab[2] * ac[0] - ab[0] * ac[2],
+  ab[0] * ac[1] - ab[1] * ac[0],
+] as const;
+assert(Math.hypot(...cross) > 1e-6, "four-Link seed centers are not collinear");
+
+const largeCount = 333;
+const largeNetwork: VisualLinkNetwork = {
+  links: Array.from({ length: largeCount }, (_, index) => ({
+    key: `L${index}`,
+    startKey: `L${(index * 17 + 3) % largeCount}`,
+    endKey: `L${(index * 31 + 7) % largeCount}`,
+  })),
+};
+const large = createOctahedralLivePhysics3D(largeNetwork, {
+  aspectRatio: ratio,
+  stiffness: 1,
+  simulationSpeed: 0,
+});
+const centers = Array.from(
+  { length: largeCount },
+  (_, index) => geometricCenter(large, index),
+);
+const xs = centers.map((center) => center[0]);
+const ys = centers.map((center) => center[1]);
+const zs = centers.map((center) => center[2]);
+assert(span(xs) > 0, "333-Link seed has nonzero X span");
+assert(span(ys) > 0, "333-Link seed has nonzero Y span");
+assert(span(zs) > 0, "333-Link seed has nonzero Z span");
+
+const grid = getOctahedralSeedGrid3D(large.template, largeCount);
+same(grid.side, 7, "333-Link seed resolves to seven-wide cube");
+same(grid.depth, 7, "333-Link seed resolves to seven-deep cube");
+assert(
+  span(xs) <= (grid.side - 1) * grid.spacing + 1e-5,
+  "X extent is bounded by cubic-grid side rather than Link count",
+);
+assert(
+  span(ys) <= (grid.side - 1) * grid.spacing + 1e-5,
+  "Y extent is bounded by cubic-grid side rather than Link count",
+);
+assert(
+  span(zs) <= (grid.depth - 1) * grid.spacing + 1e-5,
+  "Z extent is bounded by cubic-grid depth rather than Link count",
+);
+assert(
+  Math.max(span(xs), span(ys), span(zs)) < (largeCount - 1) * grid.spacing * 0.1,
+  "333-Link seed explicitly rejects the former O(N) one-dimensional extent",
+);
+
+for (let index = 0; index < largeCount; index += 1) {
+  const expected = computeOctahedralSeedCenter3D(large.template, index, largeCount);
+  const actual = centers[index]!;
+  approx(actual[0], expected[0], `seed center ${index} x survives hinge projection`, 2e-6);
+  approx(actual[1], expected[1], `seed center ${index} y survives hinge projection`, 2e-6);
+  approx(actual[2], expected[2], `seed center ${index} z survives hinge projection`, 2e-6);
+}
+
+const orientationNetwork: VisualLinkNetwork = {
+  links: [
+    { key: "OA", startKey: "OA", endKey: "OB" },
+    { key: "OB", startKey: "OC", endKey: "OD" },
+    { key: "OC", startKey: "OA", endKey: "OC" },
+    { key: "OD", startKey: "OD", endKey: "OD" },
+  ],
+};
+const oriented = createOctahedralLivePhysics3D(orientationNetwork, {
+  aspectRatio: ratio,
+  stiffness: 1,
+  simulationSpeed: 0,
+});
+const orientedLink = 1;
+const startTarget = oriented.topology.startIndices[orientedLink]!;
+const endTarget = oriented.topology.endIndices[orientedLink]!;
+const desired = normalizedDirection(
+  computeOctahedralSeedCenter3D(oriented.template, startTarget, oriented.topology.linkCount),
+  computeOctahedralSeedCenter3D(oriented.template, endTarget, oriented.topology.linkCount),
+);
+const startRing = centroidOfVertices(oriented, orientedLink, [0, 1, 2]);
+const lastLevel = oriented.template.octahedronCount * 3;
+const endRing = centroidOfVertices(oriented, orientedLink, [
+  lastLevel,
+  lastLevel + 1,
+  lastLevel + 2,
+]);
+const actualAxis = normalizedDirection(startRing, endRing);
+const axisDot = desired[0] * actualAxis[0]
+  + desired[1] * actualAxis[1]
+  + desired[2] * actualAxis[2];
+assert(axisDot > 0.99999, "non-self mast initial longitudinal axis follows START-target -> END-target seed direction");
