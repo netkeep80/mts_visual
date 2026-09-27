@@ -68,6 +68,10 @@ interface WebGpuComputePipelineLike {
 
 export interface WebGpuDeviceLike {
   readonly queue: WebGpuQueueLike;
+  readonly lost?: Promise<{
+    readonly reason?: string;
+    readonly message?: string;
+  }>;
   readonly limits?: {
     readonly maxComputeWorkgroupsPerDimension?: number;
     readonly maxStorageBufferBindingSize?: number;
@@ -146,6 +150,8 @@ export interface OctahedralWebGpuStepStats {
 }
 
 export interface OctahedralWebGpuSnapshot3D {
+  readonly status: "available" | "device-lost" | "destroyed";
+  readonly deviceLostReason: string | null;
   readonly linkCount: number;
   readonly vertexCount: number;
   readonly edgeCount: number;
@@ -421,14 +427,14 @@ fn spring_batch_main(
   let b_scalar = vertex_scalar(link, b);
 
   var delta = load_xyz(0u, b_scalar) - load_xyz(0u, a_scalar);
-  let length = length(delta);
+  let edge_length = length(delta);
   var force: vec3<f32>;
 
-  if (length <= 1e-12) {
+  if (edge_length <= 1e-12) {
     delta = rest_xyz(b) - rest_xyz(a);
     force = delta * (-globals.physics.x);
   } else {
-    let scale = globals.physics.x * (length - 1.0) / length;
+    let scale = globals.physics.x * (edge_length - 1.0) / edge_length;
     force = delta * scale;
   }
 
@@ -636,6 +642,8 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
   private currentStiffness: number;
   private currentSimulationSpeed: number;
   private destroyed = false;
+  private deviceLost = false;
+  private deviceLostReason: string | null = null;
 
   constructor(args: {
     device: WebGpuDeviceLike;
@@ -680,6 +688,16 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
     this.currentStiffness = args.stiffness;
     this.currentSimulationSpeed = args.simulationSpeed;
     this.maximumWorkgroups = maxWorkgroups(args.device);
+
+    void args.device.lost?.then((info) => {
+      if (this.destroyed) return;
+      this.deviceLost = true;
+      this.deviceLostReason = info.message ?? info.reason ?? "WebGPU device lost";
+    }).catch((error: unknown) => {
+      if (this.destroyed) return;
+      this.deviceLost = true;
+      this.deviceLostReason = error instanceof Error ? error.message : String(error);
+    });
   }
 
   get stiffness(): number {
@@ -692,6 +710,9 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
 
   private assertAlive(): void {
     if (this.destroyed) throw new Error("octahedral WebGPU controller is destroyed");
+    if (this.deviceLost) {
+      throw new Error(`octahedral WebGPU device lost: ${this.deviceLostReason ?? "unknown reason"}`);
+    }
   }
 
   private updateGlobals(): void {
@@ -821,6 +842,8 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
     const totalPhysicalVertices = this.topology.linkCount * this.template.vertexCount;
     const fieldBytes = totalPhysicalVertices * 3 * 4;
     return Object.freeze({
+      status: this.destroyed ? "destroyed" : this.deviceLost ? "device-lost" : "available",
+      deviceLostReason: this.deviceLostReason,
       linkCount: this.topology.linkCount,
       vertexCount: this.template.vertexCount,
       edgeCount: this.template.edgeCount,
@@ -1106,16 +1129,20 @@ export async function requestOctahedralWebGpuDevice3D(
   const gpu = navigatorLike?.gpu;
   if (!gpu) return null;
 
-  const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
-  if (!adapter) return null;
+  try {
+    const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
+    if (!adapter) return null;
 
-  const supported = adapter.limits?.maxStorageBufferBindingSize;
-  if (supported !== undefined && requiredStorageBufferBytes > supported) return null;
+    const supported = adapter.limits?.maxStorageBufferBindingSize;
+    if (supported !== undefined && requiredStorageBufferBytes > supported) return null;
 
-  const requiredLimits = requiredStorageBufferBytes > 0
-    ? { maxStorageBufferBindingSize: requiredStorageBufferBytes }
-    : undefined;
-  return adapter.requestDevice(requiredLimits === undefined ? undefined : { requiredLimits });
+    const requiredLimits = requiredStorageBufferBytes > 0
+      ? { maxStorageBufferBindingSize: requiredStorageBufferBytes }
+      : undefined;
+    return await adapter.requestDevice(requiredLimits === undefined ? undefined : { requiredLimits });
+  } catch {
+    return null;
+  }
 }
 
 function maxAbsoluteDelta(left: Float32Array, right: Float32Array): number {
