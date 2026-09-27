@@ -91,7 +91,7 @@ For fixed template size:
 ```text
 spring work     = N * edgeCount
 hinge transfers = 2N
-vertex updates  = N * (vertexCount - 2)
+vertex updates  = N * (vertexCount - 2) when simulationSpeed > 0; otherwise 0
 hinge projects  = 2N
 ```
 
