@@ -219,6 +219,9 @@ function fakeCompute(): RigidSectionWebGpuCompute3D {
       centerBytes: 0,
       velocityBytes: 0,
     }),
+    readBackCenters: async () => {
+      throw new Error("zero-copy renderer test must never read back centers");
+    },
     readBackState: async () => {
       throw new Error("zero-copy renderer test must never read back compute state");
     },
