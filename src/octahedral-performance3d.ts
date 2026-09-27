@@ -209,8 +209,10 @@ export function projectOctahedralUploadBandwidth3D(
   const gpuTextureUploadBytesPerSecond = estimate.gpuTextureUploadBytesPerFrame * fps;
 
   if (
-    !Number.isSafeInteger(cpuTextureStagingBytesPerSecond)
-    || !Number.isSafeInteger(gpuTextureUploadBytesPerSecond)
+    !Number.isFinite(cpuTextureStagingBytesPerSecond)
+    || !Number.isFinite(gpuTextureUploadBytesPerSecond)
+    || cpuTextureStagingBytesPerSecond > Number.MAX_SAFE_INTEGER
+    || gpuTextureUploadBytesPerSecond > Number.MAX_SAFE_INTEGER
   ) {
     throw new Error("octahedral performance bandwidth projection overflow");
   }
