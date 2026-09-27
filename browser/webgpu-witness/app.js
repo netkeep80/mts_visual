@@ -1117,6 +1117,7 @@ function stopRender() {
   if (!renderState) return;
   cancelAnimationFrame(renderState.raf);
   try { renderState.renderer.destroy(); } catch {}
+  try { renderState.shape.destroy(); } catch {}
   try { renderState.compute.destroy(); } catch {}
   try { renderState.depthTexture?.destroy(); } catch {}
   try { renderState.cleanupCameraControls?.(); } catch {}
@@ -1138,220 +1139,263 @@ async function startRender() {
   const network = scene.network;
   const linkCount = network.links.length;
   const physics = selectedPhysics();
-  const compute = await webgpu.createRigidSectionWebGpuCompute3D(
-    device,
-    network,
-    {
-      aspectRatio: physics.aspectRatio,
-      longitudinalStiffness: physics.longitudinalStiffness,
-      transverseStiffness: physics.transverseStiffness,
-      nonlinearity: physics.nonlinearity,
-      nodeMass: physics.nodeMass,
-      linearDampingRate: physics.linearDampingRate,
-      angularDampingRate: physics.angularDampingRate,
-      simulationSpeed: physics.simulationSpeed,
-    },
-  );
-
-  if (compute.template.octahedronCount !== physics.octahedra) {
-    compute.destroy();
-    throw new Error(`length control mismatch: requested ${physics.octahedra} octa, got ${compute.template.octahedronCount}`);
-  }
-
-  const context = ui.canvas.getContext("webgpu");
-  if (!context) {
-    compute.destroy();
-    throw new Error("canvas.getContext('webgpu') returned null");
-  }
-
-  const colorFormat = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({
-    device,
-    format: colorFormat,
-    alphaMode: "opaque",
-  });
-
-  const renderer = await webgpu.createRigidSectionWebGpuZeroCopyRenderer3D(
-    device,
-    compute,
-    {
-      colorFormat,
-      depthFormat: "depth24plus",
-    },
-  );
-
-  const rendererSnapshot = renderer.snapshot();
-  const zeroCopy =
-    renderer.centerBuffer === compute.centerBuffer
-    && renderer.orientationBuffer === compute.orientationBuffer
-    && rendererSnapshot.sharedCenterBuffer === true
-    && rendererSnapshot.sharedOrientationBuffer === true
-    && rendererSnapshot.dynamicStateUploadBytesPerFrame === 0
-    && rendererSnapshot.rendererDynamicStateBytes === 0;
-
-  if (!zeroCopy) {
-    renderer.destroy();
-    compute.destroy();
-    throw new Error("zero-copy invariant failed before first render");
-  }
-
-  renderPass = true;
-  setStatus(ui.renderCompute, "AVAILABLE", "ok");
-  const computeSnapshot = compute.snapshot();
-  setStatus(
-    ui.renderTopology,
-    `${scene.label} · ${linkCount} Links · ${computeSnapshot.bodyCount.toLocaleString()} rigid sections · ${compute.template.octahedronCount} octa · m=${physics.nodeMass.toFixed(2)} · k∥=${physics.longitudinalStiffness.toFixed(2)} · k⊥=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
-    "ok",
-  );
-  setStatus(
-    ui.renderZeroCopy,
-    "PASS — shared centerBuffer + orientationBuffer · 0 B dynamic upload",
-    "ok",
-  );
-  updateOverall();
-
-  const initialCpu = core.createRigidSectionPhysics3D(network, {
+  const monolithicOptions = {
     aspectRatio: physics.aspectRatio,
-    longitudinalStiffness: physics.longitudinalStiffness,
-    transverseStiffness: physics.transverseStiffness,
+    stretchStiffness: physics.longitudinalStiffness,
+    straighteningStiffness: physics.transverseStiffness,
     nonlinearity: physics.nonlinearity,
-    nodeMass: physics.nodeMass,
-    linearDampingRate: physics.linearDampingRate,
-    angularDampingRate: physics.angularDampingRate,
+    centerMass: physics.nodeMass,
+    dampingRate: physics.linearDampingRate,
     simulationSpeed: physics.simulationSpeed,
-  });
-  const initialSemanticCenters = Array.from(
-    { length: linkCount },
-    (_, link) => [...initialCpu.semanticCenter(link)],
-  );
-
-  const side = Math.ceil(Math.cbrt(linkCount));
-  const spacing = compute.template.diameter * 2.5;
-  const defaultCameraDistance = Math.max(
-    18,
-    compute.template.restLength * 1.35,
-    side * spacing * 2.6,
-  );
-  const state = {
-    compute,
-    renderer,
-    context,
-    colorFormat,
-    depthTexture: null,
-    raf: 0,
-    frames: 0,
-    steps: 0,
-    paused: false,
-    startedAt: performance.now(),
-    lastFrameAt: performance.now(),
-    lastUiAt: 0,
-    camera: {
-      yaw: 0,
-      pitch: 0,
-      distance: defaultCameraDistance,
-      defaultDistance: defaultCameraDistance,
-      minDistance: Math.max(2, defaultCameraDistance * 0.08),
-      maxDistance: defaultCameraDistance * 20,
-      target: [0, 0, 0],
-    },
-    cleanupCameraControls: null,
-    centerDrag: null,
-    initialSemanticCenters,
-    semanticCenterCache: initialSemanticCenters.map((center) => [...center]),
-    scene,
-    network,
   };
-  resetCamera(state.camera, defaultCameraDistance);
-  state.cleanupCameraControls = installCameraControls(state);
-  renderState = state;
-  ui.pauseRender.textContent = "Pause";
 
-  function ensureDepth() {
-    const resized = resizeCanvas(ui.canvas);
-    if (resized || state.depthTexture === null) {
-      state.depthTexture?.destroy();
-      state.depthTexture = device.createTexture({
-        label: "mts-visual-witness-depth",
-        size: [ui.canvas.width, ui.canvas.height, 1],
-        format: "depth24plus",
-        usage: globalThis.GPUTextureUsage?.RENDER_ATTACHMENT ?? 0x10,
-      });
+  const compute = await webgpu.createMonolithicLinkWebGpuCompute3D(
+    device,
+    network,
+    monolithicOptions,
+  );
+
+  let shape = null;
+  let renderer = null;
+  try {
+    shape = await webgpu.createMonolithicLinkWebGpuShape3D(
+      device,
+      compute,
+      physics.aspectRatio,
+    );
+    shape.update();
+
+    if (shape.template.octahedronCount !== physics.octahedra) {
+      throw new Error(
+        `length control mismatch: requested ${physics.octahedra} octa, got ${shape.template.octahedronCount}`,
+      );
     }
-  }
 
-  function frame(now) {
-    if (renderState !== state) return;
+    const context = ui.canvas.getContext("webgpu");
+    if (!context) {
+      throw new Error("canvas.getContext('webgpu') returned null");
+    }
 
-    try {
-      ensureDepth();
-      if (!state.paused) {
-        state.compute.step();
-        state.steps += 1;
+    const colorFormat = navigator.gpu.getPreferredCanvasFormat();
+    context.configure({
+      device,
+      format: colorFormat,
+      alphaMode: "opaque",
+    });
+
+    renderer = await webgpu.createMonolithicLinkWebGpuZeroCopyRenderer3D(
+      device,
+      compute,
+      shape,
+      {
+        colorFormat,
+        depthFormat: "depth24plus",
+      },
+    );
+
+    const rendererSnapshot = renderer.snapshot();
+    const zeroCopy =
+      renderer.semanticCenterBuffer === compute.centerBuffer
+      && renderer.shapeParameterBuffer === shape.parameterBuffer
+      && rendererSnapshot.sharedSemanticCenterBuffer === true
+      && rendererSnapshot.sharedShapeParameterBuffer === true
+      && rendererSnapshot.dynamicStateUploadBytesPerFrame === 0
+      && rendererSnapshot.rendererDynamicStateBytes === 0;
+
+    if (!zeroCopy) {
+      throw new Error(
+        "monolithic zero-copy invariant failed before first render",
+      );
+    }
+
+    renderPass = true;
+    const computeSnapshot = compute.snapshot();
+    const shapeSnapshot = shape.snapshot();
+    setStatus(
+      ui.renderCompute,
+      `AVAILABLE · 2 physics passes + 1 derived-shape pass`,
+      "ok",
+    );
+    setStatus(
+      ui.renderTopology,
+      `${scene.label} · ${linkCount} Links · ${shapeSnapshot.octahedronCount} octa/Link · semantic state=${(computeSnapshot.centerBytes + computeSnapshot.velocityBytes).toLocaleString()} B · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+      "ok",
+    );
+    setStatus(
+      ui.renderZeroCopy,
+      "PASS — shared semantic CENTER + compact shape buffer · 0 B dynamic CPU upload",
+      "ok",
+    );
+    updateOverall();
+
+    const initialCpu = core.createMonolithicLinkSpringPhysics3D(
+      network,
+      monolithicOptions,
+    );
+    const initialSemanticCenters = Array.from(
+      { length: linkCount },
+      (_, link) => [...initialCpu.semanticCenter(link)],
+    );
+
+    const side = Math.ceil(Math.cbrt(linkCount));
+    const spacing = shape.template.diameter * 2.5;
+    const defaultCameraDistance = Math.max(
+      18,
+      shape.template.restLength * 1.35,
+      side * spacing * 2.6,
+    );
+    const state = {
+      compute,
+      shape,
+      renderer,
+      context,
+      colorFormat,
+      depthTexture: null,
+      raf: 0,
+      frames: 0,
+      steps: 0,
+      shapeUpdates: 0,
+      paused: false,
+      startedAt: performance.now(),
+      lastFrameAt: performance.now(),
+      lastUiAt: 0,
+      camera: {
+        yaw: 0,
+        pitch: 0,
+        distance: defaultCameraDistance,
+        defaultDistance: defaultCameraDistance,
+        minDistance: Math.max(2, defaultCameraDistance * 0.08),
+        maxDistance: defaultCameraDistance * 20,
+        target: [0, 0, 0],
+      },
+      cleanupCameraControls: null,
+      centerDrag: null,
+      initialSemanticCenters,
+      semanticCenterCache: initialSemanticCenters.map((center) => [...center]),
+      scene,
+      network,
+    };
+    resetCamera(state.camera, defaultCameraDistance);
+    state.cleanupCameraControls = installCameraControls(state);
+    renderState = state;
+    ui.pauseRender.textContent = "Pause";
+
+    function ensureDepth() {
+      const resized = resizeCanvas(ui.canvas);
+      if (resized || state.depthTexture === null) {
+        state.depthTexture?.destroy();
+        state.depthTexture = device.createTexture({
+          label: "mts-visual-witness-depth",
+          size: [ui.canvas.width, ui.canvas.height, 1],
+          format: "depth24plus",
+          usage: globalThis.GPUTextureUsage?.RENDER_ATTACHMENT ?? 0x10,
+        });
       }
-      const dragStats = applyCenterDrag(state);
-      if (dragStats && state.centerDrag) {
-        state.centerDrag.uploadedBytes +=
-          dragStats.centerBytes + dragStats.velocityBytes;
-      }
+    }
 
-      const frameDeltaSeconds = Math.min(0.1, Math.max(0, (now - state.lastFrameAt) / 1000));
-      state.lastFrameAt = now;
-      if (ui.autoRotate.checked && !state.centerDrag) {
-        state.camera.yaw += frameDeltaSeconds * 0.16;
-      }
-      const viewProjection = currentViewProjection(state);
+    function frame(now) {
+      if (renderState !== state) return;
 
-      const markers = selectedMarkerControls();
-      const stats = state.renderer.render({
-        targetView: state.context.getCurrentTexture().createView(),
-        depthView: state.depthTexture.createView(),
-        viewProjection,
-        width: ui.canvas.width,
-        height: ui.canvas.height,
-        wireframe: ui.wireframe.checked,
-        showCenterMarkers: markers.showCenterMarkers,
-        showEndCones: markers.showEndCones,
-        centerMarkerScale: markers.centerMarkerScale,
-        endConeScale: markers.endConeScale,
-        clearColor: { r: 0.005, g: 0.008, b: 0.014, a: 1 },
-      });
-      state.frames += 1;
+      try {
+        ensureDepth();
+        if (!state.paused) {
+          const physicsStats = state.compute.step();
+          if (
+            physicsStats.computePasses !== 2
+            || physicsStats.dynamicStateUploadBytes !== 0
+          ) {
+            throw new Error(
+              `monolithic physics invariant failed: passes=${physicsStats.computePasses} upload=${physicsStats.dynamicStateUploadBytes}`,
+            );
+          }
+          state.steps += 1;
+        }
 
-      const expectedDrawCalls =
-        1
-        + (markers.showCenterMarkers ? 1 : 0)
-        + (markers.showEndCones ? 1 : 0);
-      if (
-        stats.dynamicStateUploadBytes !== 0
-        || stats.bufferCopies !== 0
-        || stats.readbacks !== 0
-        || stats.drawCalls !== expectedDrawCalls
-      ) {
-        throw new Error(
-          `zero-copy runtime violation: uploads=${stats.dynamicStateUploadBytes} copies=${stats.bufferCopies} readbacks=${stats.readbacks} draws=${stats.drawCalls}/${expectedDrawCalls}`,
+        const dragStats = applyCenterDrag(state);
+        if (dragStats && state.centerDrag) {
+          state.centerDrag.uploadedBytes +=
+            dragStats.centerBytes + dragStats.velocityBytes;
+        }
+
+        const shapeStats = state.shape.update();
+        if (
+          shapeStats.computePasses !== 1
+          || shapeStats.dynamicStateUploadBytes !== 0
+        ) {
+          throw new Error(
+            `monolithic shape invariant failed: passes=${shapeStats.computePasses} upload=${shapeStats.dynamicStateUploadBytes}`,
+          );
+        }
+        state.shapeUpdates += 1;
+
+        const frameDeltaSeconds = Math.min(
+          0.1,
+          Math.max(0, (now - state.lastFrameAt) / 1000),
         );
+        state.lastFrameAt = now;
+        if (ui.autoRotate.checked && !state.centerDrag) {
+          state.camera.yaw += frameDeltaSeconds * 0.16;
+        }
+        const viewProjection = currentViewProjection(state);
+
+        const markers = selectedMarkerControls();
+        const stats = state.renderer.render({
+          targetView: state.context.getCurrentTexture().createView(),
+          depthView: state.depthTexture.createView(),
+          viewProjection,
+          width: ui.canvas.width,
+          height: ui.canvas.height,
+          wireframe: ui.wireframe.checked,
+          showCenterMarkers: markers.showCenterMarkers,
+          showEndCones: markers.showEndCones,
+          centerMarkerScale: markers.centerMarkerScale,
+          endConeScale: markers.endConeScale,
+          clearColor: { r: 0.005, g: 0.008, b: 0.014, a: 1 },
+        });
+        state.frames += 1;
+
+        const expectedDrawCalls =
+          1
+          + (markers.showCenterMarkers ? 1 : 0)
+          + (markers.showEndCones ? 1 : 0);
+        if (
+          stats.dynamicStateUploadBytes !== 0
+          || stats.bufferCopies !== 0
+          || stats.readbacks !== 0
+          || stats.drawCalls !== expectedDrawCalls
+        ) {
+          throw new Error(
+            `zero-copy runtime violation: uploads=${stats.dynamicStateUploadBytes} copies=${stats.bufferCopies} readbacks=${stats.readbacks} draws=${stats.drawCalls}/${expectedDrawCalls}`,
+          );
+        }
+
+        if (now - state.lastUiAt > 250) {
+          state.lastUiAt = now;
+          ui.renderFrames.textContent =
+            `${state.frames.toLocaleString()} / ${state.steps.toLocaleString()}`;
+        }
+      } catch (error) {
+        renderPass = false;
+        setStatus(ui.renderCompute, "ERROR", "fail");
+        setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
+        log(`monolithic render ERROR — ${error.stack ?? error}`);
+        updateOverall();
+        return;
       }
 
-      if (now - state.lastUiAt > 250) {
-        state.lastUiAt = now;
-        ui.renderFrames.textContent = `${state.frames.toLocaleString()} / ${state.steps.toLocaleString()}`;
-      }
-    } catch (error) {
-      renderPass = false;
-      setStatus(ui.renderCompute, "ERROR", "fail");
-      setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
-      log(`render ERROR — ${error.stack ?? error}`);
-      updateOverall();
-      return;
+      state.raf = requestAnimationFrame(frame);
     }
 
     state.raf = requestAnimationFrame(frame);
+    log(
+      `v0.5 monolithic render started: scene=${scene.label}, ${linkCount} Links, ${shape.template.octahedronCount} octa/Link, centerMass=${physics.nodeMass.toFixed(2)}, stretch=${physics.longitudinalStiffness.toFixed(2)}, straighten=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, damping=${physics.linearDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
+    );
+  } catch (error) {
+    try { renderer?.destroy(); } catch {}
+    try { shape?.destroy(); } catch {}
+    try { compute.destroy(); } catch {}
+    throw error;
   }
-
-  state.raf = requestAnimationFrame(frame);
-  log(
-    `v0.5 rigid zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().bodyCount} rigid sections`,
-  );
 }
 
 function distance3(a, b) {
