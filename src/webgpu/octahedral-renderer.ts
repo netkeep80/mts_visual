@@ -263,9 +263,16 @@ fn center_position(link: u32) -> vec3<f32> {
 }
 
 fn end_ring_center(link: u32) -> vec3<f32> {
-  let a = load_position(link, scene.center_end.z);
-  let b = load_position(link, scene.center_end.w);
-  let c = load_position(link, scene.ring_surface.x);
+  let a = load_position(link, scene.center_end.y);
+  let b = load_position(link, scene.center_end.z);
+  let c = load_position(link, scene.center_end.w);
+  return (a + b + c) / 3.0;
+}
+
+fn previous_end_ring_center(link: u32) -> vec3<f32> {
+  let a = load_position(link, scene.ring_surface.x);
+  let b = load_position(link, scene.ring_surface.y);
+  let c = load_position(link, scene.ring_surface.z);
   return (a + b + c) / 3.0;
 }
 
@@ -284,9 +291,9 @@ fn projected_pixel_distance(a_world: vec3<f32>, b_world: vec3<f32>) -> f32 {
 }
 
 fn end_ring_projected_diameter_pixels(link: u32) -> f32 {
-  let a = load_position(link, scene.center_end.z);
-  let b = load_position(link, scene.center_end.w);
-  let c = load_position(link, scene.ring_surface.x);
+  let a = load_position(link, scene.center_end.y);
+  let b = load_position(link, scene.center_end.z);
+  let c = load_position(link, scene.center_end.w);
   return max(
     projected_pixel_distance(a, b),
     max(
@@ -351,8 +358,8 @@ fn arrow_vertex(
   @builtin(vertex_index) vertex_index: u32,
   @builtin(instance_index) instance_index: u32,
 ) -> VertexOut {
-  let tip_world = load_position(instance_index, scene.center_end.y);
-  let base_world = end_ring_center(instance_index);
+  let tip_world = end_ring_center(instance_index);
+  let base_world = previous_end_ring_center(instance_index);
   let tip_clip = scene.view_projection * vec4<f32>(tip_world, 1.0);
   let base_clip = scene.view_projection * vec4<f32>(base_world, 1.0);
 
@@ -379,8 +386,8 @@ fn arrow_vertex(
   let tail = -direction_pixels * arrow_length * 1.15;
 
   // Two triangles form a high-contrast kite with its sharp tip exactly at
-  // END apex.  This remains readable even when the END half of the Link is
-  // already blue.
+  // the geometric center of the terminal END triangle. This remains readable
+  // even when the END half of the Link is already blue.
   var pixel_offset = vec2<f32>(0.0);
   let local = vertex_index % 6u;
   if (local == 1u) {
@@ -499,16 +506,15 @@ function buildUniformData(
   u32[19] = template.centerTriangle[1];
 
   u32[20] = template.centerTriangle[2];
-  u32[21] = template.endApex;
+  u32[21] = template.endTriangle[0];
+  u32[22] = template.endTriangle[1];
+  u32[23] = template.endTriangle[2];
 
-  const lastLevelBase = template.octahedronCount * 3;
-  u32[22] = lastLevelBase;
-  u32[23] = lastLevelBase + 1;
-
-  u32[24] = lastLevelBase + 2;
-  u32[25] = template.surfaceTriangles.length;
-  u32[26] = 0;
-  u32[27] = 0;
+  const previousEndLevelBase = (template.octahedronCount - 1) * 3;
+  u32[24] = previousEndLevelBase;
+  u32[25] = previousEndLevelBase + 1;
+  u32[26] = previousEndLevelBase + 2;
+  u32[27] = template.surfaceTriangles.length;
 
   f32[28] = width;
   f32[29] = height;
