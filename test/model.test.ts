@@ -15,6 +15,7 @@ import "./octahedral-webgpu-compute.test.js";
 import "./rigid-section-webgpu-compute.test.js";
 import "./monolithic-link-webgpu-compute.test.js";
 import "./monolithic-link-webgpu-shape.test.js";
+import "./monolithic-link-webgpu-renderer.test.js";
 import "./rigid-section-webgpu-renderer.test.js";
 import "./rigid-section-interaction.test.js";
 import "./octahedral-webgpu-renderer.test.js";
