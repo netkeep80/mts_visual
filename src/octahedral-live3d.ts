@@ -230,8 +230,6 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
           integratedVertices += 1;
         }
       }
-    } else {
-      integratedVertices = this.currentTopology.linkCount * (this.template.vertexCount - 2);
     }
 
     const hingeProjections = projectOctahedralHinges3D(
