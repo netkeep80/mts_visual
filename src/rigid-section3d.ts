@@ -545,20 +545,83 @@ function deterministicLinkAxes(link: number): readonly [Vec3, Vec3, Vec3] {
   return [x, y, z];
 }
 
+interface SelfLoopParameterization {
+  readonly parameters: Float64Array;
+  readonly baseArcLength: number;
+}
+
+const selfLoopParameterCache = new Map<number, SelfLoopParameterization>();
+
+function selfLoopBasePoint(u: number): Vec3 {
+  const theta = TWO_PI * u;
+  const sinTheta = Math.sin(theta);
+  const oneMinusCos = 1 - Math.cos(theta);
+  return [
+    0.60 * oneMinusCos * oneMinusCos,
+    0.35 * sinTheta * oneMinusCos,
+    sinTheta,
+  ];
+}
+
+function selfLoopParameterization(segmentCount: number): SelfLoopParameterization {
+  const cached = selfLoopParameterCache.get(segmentCount);
+  if (cached !== undefined) return cached;
+  if (!Number.isSafeInteger(segmentCount) || segmentCount <= 0) {
+    throw new Error(`invalid rigid-section self-loop segment count: ${segmentCount}`);
+  }
+
+  // Resample a deliberately non-circular closed curve by arc length. Its
+  // first and second derivatives at u=0/1 make the point-hinge boundary
+  // tangent finite while the curvature tends to zero. This avoids injecting
+  // a pre-baked constant-curvature "solution" into the physical state.
+  const sampleCount = Math.max(1024, segmentCount * 64);
+  const cumulative = new Float64Array(sampleCount + 1);
+  let previous = selfLoopBasePoint(0);
+  for (let sample = 1; sample <= sampleCount; sample += 1) {
+    const current = selfLoopBasePoint(sample / sampleCount);
+    cumulative[sample] = cumulative[sample - 1]! + length3(subtract3(current, previous));
+    previous = current;
+  }
+  const baseArcLength = cumulative[sampleCount]!;
+  if (!(baseArcLength > EPSILON)) {
+    throw new Error("rigid-section self-loop seed has zero arc length");
+  }
+
+  const parameters = new Float64Array(segmentCount + 1);
+  let cursor = 1;
+  for (let segment = 1; segment < segmentCount; segment += 1) {
+    const target = baseArcLength * segment / segmentCount;
+    while (cursor < sampleCount && cumulative[cursor]! < target) cursor += 1;
+    const leftLength = cumulative[cursor - 1]!;
+    const rightLength = cumulative[cursor]!;
+    const span = rightLength - leftLength;
+    const fraction = span <= EPSILON ? 0 : (target - leftLength) / span;
+    parameters[segment] = ((cursor - 1) + fraction) / sampleCount;
+  }
+  parameters[segmentCount] = 1;
+
+  const result = Object.freeze({ parameters, baseArcLength });
+  selfLoopParameterCache.set(segmentCount, result);
+  return result;
+}
+
 function selfLoopPoint(
   center: Vec3,
   axes: readonly [Vec3, Vec3, Vec3],
-  radius: number,
+  scale: number,
   u: number,
   lobeSign: number,
 ): Vec3 {
-  const theta = TWO_PI * u;
-  const [xAxis, , zAxis] = axes;
+  const base = selfLoopBasePoint(u);
+  const [xAxis, yAxis, zAxis] = axes;
   return add3(
     center,
     add3(
-      scale3(zAxis, radius * Math.sin(theta)),
-      scale3(xAxis, lobeSign * radius * (1 - Math.cos(theta))),
+      scale3(zAxis, scale * base[2]),
+      add3(
+        scale3(xAxis, lobeSign * scale * base[0]),
+        scale3(yAxis, lobeSign * scale * base[1]),
+      ),
     ),
   );
 }
@@ -580,23 +643,32 @@ function initializeLinkSections(
   const startTarget = semanticCenterAt(semanticCenters, startTargetIndex);
   const endTarget = semanticCenterAt(semanticCenters, endTargetIndex);
   const axes = deterministicLinkAxes(link);
-  const loopRadius = template.halfRestLength / TWO_PI;
+  const selfSeed = selfLoopParameterization(middle);
+  const selfScale = template.halfRestLength / selfSeed.baseArcLength;
 
   for (let local = 0; local < sectionCount; local += 1) {
     let position: Vec3;
     if (local <= middle) {
-      const u = middle === 0 ? 1 : local / middle;
+      const segment = local;
+      const u = selfSeed.parameters[segment]!;
       if (startTargetIndex === link) {
-        position = selfLoopPoint(own, axes, loopRadius, u, -1);
+        position = selfLoopPoint(own, axes, selfScale, u, -1);
       } else {
-        position = add3(startTarget, scale3(subtract3(own, startTarget), u));
+        const linearU = middle === 0 ? 1 : local / middle;
+        position = add3(
+          startTarget,
+          scale3(subtract3(own, startTarget), linearU),
+        );
       }
     } else {
-      const u = (local - middle) / (sectionCount - 1 - middle);
+      const segment = local - middle;
+      const halfSegments = sectionCount - 1 - middle;
+      const u = selfSeed.parameters[segment]!;
       if (endTargetIndex === link) {
-        position = selfLoopPoint(own, axes, loopRadius, u, 1);
+        position = selfLoopPoint(own, axes, selfScale, u, 1);
       } else {
-        position = add3(own, scale3(subtract3(endTarget, own), u));
+        const linearU = segment / halfSegments;
+        position = add3(own, scale3(subtract3(endTarget, own), linearU));
       }
     }
     writeVec3(centers, base + local, position);

@@ -33,6 +33,14 @@ function add3(left: Vec3, right: Vec3): Vec3 {
   return [left[0] + right[0], left[1] + right[1], left[2] + right[2]];
 }
 
+function subtract3(left: Vec3, right: Vec3): Vec3 {
+  return [left[0] - right[0], left[1] - right[1], left[2] - right[2]];
+}
+
+function dot3(left: Vec3, right: Vec3): number {
+  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
 function cross3(left: Vec3, right: Vec3): Vec3 {
   return [
     left[1] * right[2] - left[2] * right[1],
@@ -181,6 +189,83 @@ r.assertFiniteState();
 
 const rootInitialEnergy = rigidSectionPotentialEnergy3D(r);
 assert(Number.isFinite(rootInitialEnergy) && rootInitialEnergy >= 0, "R initial potential is finite");
+
+
+const selfSeedAudit = createRigidSectionPhysics3D(root, {
+  aspectRatio: 50 * Math.SQRT2,
+  stiffness: 5,
+  simulationSpeed: 0,
+});
+const selfMiddle = selfSeedAudit.template.centerSection;
+const selfPoint = (local: number): Vec3 => {
+  const body = selfSeedAudit.sectionBodyIndex(0, local);
+  const offset = body * 3;
+  return [
+    selfSeedAudit.centers[offset]!,
+    selfSeedAudit.centers[offset + 1]!,
+    selfSeedAudit.centers[offset + 2]!,
+  ];
+};
+const selfTurns: number[] = [];
+const selfSegments: number[] = [];
+for (let local = 0; local < selfMiddle; local += 1) {
+  selfSegments.push(length3(subtract3(selfPoint(local + 1), selfPoint(local))));
+}
+for (let local = 1; local < selfMiddle; local += 1) {
+  const before = subtract3(selfPoint(local), selfPoint(local - 1));
+  const after = subtract3(selfPoint(local + 1), selfPoint(local));
+  const cosine = Math.max(
+    -1,
+    Math.min(1, dot3(before, after) / (length3(before) * length3(after))),
+  );
+  selfTurns.push(Math.acos(cosine));
+}
+const selfTurnMean = selfTurns.reduce((sum, value) => sum + value, 0) / selfTurns.length;
+const selfTurnVariance = selfTurns.reduce(
+  (sum, value) => sum + (value - selfTurnMean) ** 2,
+  0,
+) / selfTurns.length;
+const selfTurnStd = Math.sqrt(selfTurnVariance);
+const selfSegmentMin = Math.min(...selfSegments);
+const selfSegmentMax = Math.max(...selfSegments);
+assert(
+  selfTurnStd > 0.02,
+  `100-octa self seed must not pre-bake constant-curvature circles: std=${selfTurnStd}`,
+);
+assert(
+  selfTurns[0]! < selfTurnMean * 0.5,
+  `free point-hinge endpoint starts with low curvature rather than circular bending: first=${selfTurns[0]} mean=${selfTurnMean}`,
+);
+assert(
+  selfSegmentMax / selfSegmentMin < 1.02,
+  `arc-length resampled self seed keeps neighboring sections near-uniform: min=${selfSegmentMin} max=${selfSegmentMax}`,
+);
+selfSeedAudit.evaluateForces();
+const seedStartBody = selfSeedAudit.sectionBodyIndex(0, 0);
+const seedEndBody = selfSeedAudit.sectionBodyIndex(
+  0,
+  selfSeedAudit.template.sectionCount - 1,
+);
+const seedTorque = (body: number): number => {
+  const offset = body * 3;
+  return Math.hypot(
+    selfSeedAudit.torques[offset]!,
+    selfSeedAudit.torques[offset + 1]!,
+    selfSeedAudit.torques[offset + 2]!,
+  );
+};
+const seedStartTorque = seedTorque(seedStartBody);
+const seedEndTorque = seedTorque(seedEndBody);
+assert(
+  seedStartTorque < 0.05 && seedEndTorque < 0.05,
+  `free-hinge seed should not inject the old circular endpoint moment: start=${seedStartTorque} end=${seedEndTorque}`,
+);
+console.log(
+  `[v0.5 #71 neutral self seed] turnMean=${selfTurnMean.toExponential(6)} `
+  + `turnStd=${selfTurnStd.toExponential(6)} firstTurn=${selfTurns[0]!.toExponential(6)} `
+  + `segmentRange=[${selfSegmentMin.toFixed(6)},${selfSegmentMax.toFixed(6)}] `
+  + `endpointTorque=[${seedStartTorque.toExponential(6)},${seedEndTorque.toExponential(6)}]`,
+);
 for (let step = 0; step < 600; step += 1) r.step();
 assert(rigidSectionHingeError3D(r) < 2e-4, "double-self hinges remain coincident under dynamics");
 r.assertFiniteState();
