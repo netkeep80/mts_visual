@@ -514,11 +514,11 @@ fn transport_x(
   to_tangent: vec3<f32>,
   seed: u32,
 ) -> vec3<f32> {
-  let from = safe_normalize(from_tangent, deterministic_axis(seed));
-  let to = safe_normalize(to_tangent, from);
-  let axis_raw = cross(from, to);
+  let source_axis = safe_normalize(from_tangent, deterministic_axis(seed));
+  let target_axis = safe_normalize(to_tangent, source_axis);
+  let axis_raw = cross(source_axis, target_axis);
   let sine = length(axis_raw);
-  let cosine = clamp(dot(from, to), -1.0, 1.0);
+  let cosine = clamp(dot(source_axis, target_axis), -1.0, 1.0);
   var transported = value;
 
   if (sine > 1e-7) {
@@ -528,13 +528,13 @@ fn transport_x(
       + cross(axis, value) * sine
       + axis * dot(axis, value) * (1.0 - cosine);
   } else if (cosine < 0.0) {
-    let axis = deterministic_perpendicular(from, seed);
+    let axis = deterministic_perpendicular(source_axis, seed);
     transported = -value + axis * (2.0 * dot(axis, value));
   }
 
   return safe_normalize(
-    transported - to * dot(transported, to),
-    deterministic_perpendicular(to, seed),
+    transported - target_axis * dot(transported, target_axis),
+    deterministic_perpendicular(target_axis, seed),
   );
 }
 
@@ -682,14 +682,14 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (next_section > half_segments) {
         break;
       }
-      let target = first_total * f32(next_section) / f32(half_segments);
-      if (target > next_cumulative && sample < arc_samples) {
+      let target_arc = first_total * f32(next_section) / f32(half_segments);
+      if (target_arc > next_cumulative && sample < arc_samples) {
         break;
       }
       var fraction = 1.0;
       if (segment_length > 1e-9) {
         fraction = clamp(
-          (target - cumulative) / segment_length,
+          (target_arc - cumulative) / segment_length,
           0.0,
           1.0,
         );
@@ -800,14 +800,14 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (next_local > half_segments) {
         break;
       }
-      let target = second_total * f32(next_local) / f32(half_segments);
-      if (target > next_cumulative && sample < arc_samples) {
+      let target_arc = second_total * f32(next_local) / f32(half_segments);
+      if (target_arc > next_cumulative && sample < arc_samples) {
         break;
       }
       var fraction = 1.0;
       if (segment_length > 1e-9) {
         fraction = clamp(
-          (target - cumulative) / segment_length,
+          (target_arc - cumulative) / segment_length,
           0.0,
           1.0,
         );
