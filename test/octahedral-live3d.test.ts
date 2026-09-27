@@ -1,6 +1,8 @@
 import {
+  buildOctahedralLinkTopology3D,
   computeOctahedralGeometricCenter3D,
   createOctahedralLivePhysics3D,
+  getOctahedralLinkTemplate3D,
   transitionOctahedralLivePhysics3DNetwork,
   type OctahedralLivePhysics3D,
 } from "../src/index.js";
