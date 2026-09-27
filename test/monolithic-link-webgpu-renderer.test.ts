@@ -299,11 +299,16 @@ function fakeShape(
     topology.linkCount * 16,
     "monolithic-link-shape-parameters",
   );
+  const gaugeBuffer = new FakeBuffer(
+    topology.linkCount * 16,
+    "monolithic-link-roll-gauge",
+  );
   let destroyed = false;
   return {
     compute,
     template,
     parameterBuffer,
+    gaugeBuffer,
     update() {
       return {
         dispatches: 1,
@@ -318,13 +323,15 @@ function fakeShape(
         octahedronCount: template.octahedronCount,
         sectionCount: template.octahedronCount + 1,
         parameterBytes: topology.linkCount * 16,
+        gaugeBytes: topology.linkCount * 16,
         topologyBytes: topology.linkCount * 2 * 4,
-        dynamicStateBytes: topology.linkCount * 16,
+        dynamicStateBytes: topology.linkCount * 32,
       };
     },
     destroy() {
       destroyed = true;
       parameterBuffer.destroy();
+      gaugeBuffer.destroy();
     },
   };
 }
@@ -332,6 +339,7 @@ function fakeShape(
 for (const needle of [
   "@group(0) @binding(0) var<storage, read> semantic_centers",
   "@group(0) @binding(1) var<storage, read> shape_parameters",
+  "@group(0) @binding(2) var<storage, read> roll_gauge",
   "fn sample_section",
   "fn ordinary_sample",
   "fn self_sample",
@@ -374,6 +382,11 @@ same(
   shape.parameterBuffer,
   "renderer shares exact compact shape-parameter buffer",
 );
+same(
+  renderer.shapeGaugeBuffer,
+  shape.gaugeBuffer,
+  "renderer shares exact persistent roll-gauge buffer",
+);
 
 const surfacePipeline = device.pipelineDescriptors.find(
   (entry) => entry.label === "monolithic-link-surface-pipeline",
@@ -410,6 +423,7 @@ const bound = bind.entries.map(
 );
 same(bound[0], compute.centerBuffer, "binding 0 is semantic CENTER buffer");
 same(bound[1], shape.parameterBuffer, "binding 1 is compact shape buffer");
+same(bound[2], shape.gaugeBuffer, "binding 2 is persistent roll gauge");
 
 const identity = new Float32Array([
   1, 0, 0, 0,

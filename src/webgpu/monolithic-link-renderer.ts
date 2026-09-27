@@ -75,6 +75,7 @@ export interface MonolithicLinkWebGpuRenderer3D {
   readonly shape: MonolithicLinkWebGpuShape3D;
   readonly semanticCenterBuffer: WebGpuBufferLike;
   readonly shapeParameterBuffer: WebGpuBufferLike;
+  readonly shapeGaugeBuffer: WebGpuBufferLike;
   render(
     frame: MonolithicLinkWebGpuRenderFrame3D,
   ): MonolithicLinkWebGpuRenderStats3D;
@@ -270,10 +271,11 @@ struct ShapeSample {
 
 @group(0) @binding(0) var<storage, read> semantic_centers: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read> shape_parameters: array<vec4<f32>>;
-@group(0) @binding(2) var<storage, read> topology_data: array<u32>;
-@group(0) @binding(3) var<storage, read> surface_indices: array<u32>;
-@group(0) @binding(4) var<storage, read> gradient_t: array<f32>;
-@group(0) @binding(5) var<uniform> scene: SceneUniforms;
+@group(0) @binding(2) var<storage, read> roll_gauge: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read> topology_data: array<u32>;
+@group(0) @binding(4) var<storage, read> surface_indices: array<u32>;
+@group(0) @binding(5) var<storage, read> gradient_t: array<f32>;
+@group(0) @binding(6) var<uniform> scene: SceneUniforms;
 
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
@@ -333,25 +335,6 @@ fn deterministic_perpendicular(
     candidate - direction * dot(candidate, direction),
     frame.x,
   );
-}
-
-fn macro_normal(
-  s: vec3<f32>,
-  c: vec3<f32>,
-  e: vec3<f32>,
-  link: u32,
-) -> vec3<f32> {
-  let first = c - s;
-  let second = e - c;
-  let crossed = cross(first, second);
-  if (length(crossed) > 1e-8) {
-    return normalize(crossed);
-  }
-  let overall = e - s;
-  if (length(overall) > 1e-8) {
-    return deterministic_perpendicular(normalize(overall), link);
-  }
-  return deterministic_frame(link).y;
 }
 
 fn hermite_point(
@@ -500,7 +483,10 @@ fn sample_section(link: u32, section: u32) -> ShapeSample {
     first_direction + second_direction,
     overall,
   );
-  let bend = macro_normal(s, c, e, link);
+  let bend = safe_normalize(
+    roll_gauge[link].xyz,
+    deterministic_perpendicular(overall, link),
+  );
 
   if (section <= scene.counts.z) {
     let t = f32(section) / f32(scene.counts.z);
@@ -681,6 +667,7 @@ class MonolithicLinkWebGpuRendererController
 implements MonolithicLinkWebGpuRenderer3D {
   readonly semanticCenterBuffer: WebGpuBufferLike;
   readonly shapeParameterBuffer: WebGpuBufferLike;
+  readonly shapeGaugeBuffer: WebGpuBufferLike;
 
   private readonly topologyBuffer: WebGpuBufferLike;
   private readonly surfaceIndicesBuffer: WebGpuBufferLike;
@@ -718,6 +705,7 @@ implements MonolithicLinkWebGpuRenderer3D {
   ) {
     this.semanticCenterBuffer = compute.centerBuffer;
     this.shapeParameterBuffer = shape.parameterBuffer;
+    this.shapeGaugeBuffer = shape.gaugeBuffer;
     this.topologyBuffer = args.topologyBuffer;
     this.surfaceIndicesBuffer = args.surfaceIndicesBuffer;
     this.wireframeIndicesBuffer = args.wireframeIndicesBuffer;
@@ -1029,6 +1017,11 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
       {
         binding: 5,
         visibility: GPU_SHADER_STAGE_VERTEX,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 6,
+        visibility: GPU_SHADER_STAGE_VERTEX,
         buffer: { type: "uniform" },
       },
     ],
@@ -1123,6 +1116,10 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     },
     {
       binding: 2,
+      resource: { buffer: shape.gaugeBuffer },
+    },
+    {
+      binding: 3,
       resource: { buffer: topologyBuffer },
     },
   ] as const;
@@ -1133,15 +1130,15 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     entries: [
       ...commonEntries,
       {
-        binding: 3,
+        binding: 4,
         resource: { buffer: surfaceIndicesBuffer },
       },
       {
-        binding: 4,
+        binding: 5,
         resource: { buffer: gradientBuffer },
       },
       {
-        binding: 5,
+        binding: 6,
         resource: { buffer: uniformBuffer },
       },
     ],
@@ -1152,15 +1149,15 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     entries: [
       ...commonEntries,
       {
-        binding: 3,
+        binding: 4,
         resource: { buffer: wireframeIndicesBuffer },
       },
       {
-        binding: 4,
+        binding: 5,
         resource: { buffer: gradientBuffer },
       },
       {
-        binding: 5,
+        binding: 6,
         resource: { buffer: uniformBuffer },
       },
     ],

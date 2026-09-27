@@ -283,6 +283,10 @@ for (const needle of [
   "buckling_basis_derivative",
   "for (var iteration = 0u; iteration < 24u;",
   "shape_parameters[link] = vec4<f32>(",
+  "var<storage, read_write> roll_gauge",
+  "fn update_roll_gauge",
+  "if (dot(geometric, previous) < 0.0)",
+  "let raw_weight = (bend_sine - 0.015) / (0.08 - 0.015);",
 ]) {
   assert(
     MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL.includes(needle),
@@ -291,8 +295,8 @@ for (const needle of [
 }
 same(
   [...MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL.matchAll(/var<storage/g)].length,
-  3,
-  "shape solve needs semantic centers, topology and compact parameters only",
+  4,
+  "shape solve needs centers, topology, compact parameters and one persistent roll gauge",
 );
 assert(
   !/velocity|mass|damping|integrate/i.test(MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL),
@@ -313,8 +317,14 @@ const snapshot = shape.snapshot();
 same(snapshot.linkCount, 5, "shape owns one compact parameter record per Link");
 same(snapshot.octahedronCount, 32, "shape template resolves requested octahedra");
 same(snapshot.sectionCount, 33, "derived presentation has N+1 connecting triangles");
-same(snapshot.parameterBytes, 5 * 16, "one vec4 parameter record per Link");
-same(snapshot.dynamicStateBytes, 5 * 16, "derived dynamic GPU state is O(linkCount)");
+same(snapshot.parameterBytes, 5 * 16, "one vec4 shape parameter record per Link");
+same(snapshot.gaugeBytes, 5 * 16, "one vec4 persistent roll gauge per Link");
+same(
+  snapshot.dynamicStateBytes,
+  5 * 32,
+  "derived GPU state stays O(linkCount): shape vec4 + gauge vec4",
+);
+same(shape.gaugeBuffer.size, 5 * 16, "gauge buffer is exactly one vec4 per Link");
 
 const setupWriteCount = device.queue.writes.length;
 const step = shape.update();
@@ -342,10 +352,20 @@ same(largeDevice.dispatches[0]!.y, 1, "1000-Link shape remains one dispatch row"
 same(
   largeShape.snapshot().parameterBytes,
   1000 * 16,
-  "1000-Link compact shape state is only 16 kB",
+  "1000-Link shape parameter state is 16 kB",
+);
+same(
+  largeShape.snapshot().gaugeBytes,
+  1000 * 16,
+  "1000-Link roll gauge state adds only 16 kB",
+);
+same(
+  largeShape.snapshot().dynamicStateBytes,
+  1000 * 32,
+  "1000-Link total derived shape+gauge state is 32 kB",
 );
 largeShape.destroy();
 
 console.log(
-  `[v0.5 #92 monolithic GPU shape] PASS links=${snapshot.linkCount} params=${snapshot.parameterBytes}B large=${1000 * 16}B`,
+  `[v0.5 #100 monolithic GPU gauge] PASS links=${snapshot.linkCount} params=${snapshot.parameterBytes}B gauge=${snapshot.gaugeBytes}B large=${1000 * 32}B`,
 );
