@@ -482,10 +482,15 @@ fn sample_section(link: u32, section: u32) -> ShapeSample {
   let first_direction = safe_normalize(first_chord, seed);
   let second_direction = safe_normalize(second_chord, first_direction);
   let overall = safe_normalize(e - s, first_direction);
-  let shared_direction = safe_normalize(
+  var shared_direction = safe_normalize(
     first_direction + second_direction,
     overall,
   );
+  if (params.z > 0.5 && params.w <= 0.5) {
+    shared_direction = second_direction;
+  } else if (params.w > 0.5 && params.z <= 0.5) {
+    shared_direction = first_direction;
+  }
   let bend = safe_normalize(
     roll_gauge[link].xyz,
     deterministic_perpendicular(overall, link),
