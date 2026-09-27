@@ -644,8 +644,8 @@ for (let link = 0; link < rootBasisTopology.linkCount; link += 1) {
       resolvedSeedCenter(rootBasisSeed, target),
     ) / rootBasisTarget;
     assert(
-      ratioToRest >= 0.72 && ratioToRest <= 0.88,
-      `root-basis non-self incidence ${link}->${target} starts near the accepted 0.8 seed ratio: ${ratioToRest}`,
+      Math.abs(ratioToRest - OCTAHEDRAL_NON_SELF_SEED_RATIO) <= 0.08,
+      `root-basis non-self incidence ${link}->${target} starts near the accepted non-equilibrium seed ratio: ${ratioToRest}`,
     );
   }
 }
