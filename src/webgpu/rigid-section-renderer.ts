@@ -38,7 +38,15 @@ export const RIGID_SECTION_WEBGPU_CENTER_VERTICES_PER_LINK =
 export const RIGID_SECTION_WEBGPU_ARROW_VERTICES_PER_LINK =
   RIGID_SECTION_END_CONE_VERTEX_COUNT;
 
-export type RigidSectionWebGpuRenderFrame3D = OctahedralWebGpuRenderFrame3D;
+export interface RigidSectionWebGpuRenderFrame3D
+extends OctahedralWebGpuRenderFrame3D {
+  readonly showCenterMarkers?: boolean;
+  readonly showEndCones?: boolean;
+  /** World-space multiplier over the base CENTER circumradius 2 * octahedral edge. */
+  readonly centerMarkerScale?: number;
+  /** World-space multiplier over the base END cone dimensions 3 * octahedral edge. */
+  readonly endConeScale?: number;
+}
 
 export interface RigidSectionWebGpuRendererOptions3D {
   readonly colorFormat: string;
@@ -296,7 +304,7 @@ fn center_vertex(
   }
 
   let center = section_center(instance_index, scene.counts.z);
-  let radius = 2.0 * scene.geometry.w;
+  let radius = 2.0 * scene.geometry.w * scene.viewport.z;
   let world = center + CENTER_ICO_VERTICES[vertex_id] * radius;
 
   var out: VertexOut;
@@ -331,8 +339,9 @@ fn arrow_vertex(
   let bitangent = cross(axis, tangent);
 
   let edge = scene.geometry.w;
-  let height = 3.0 * edge;
-  let base_radius = 1.5 * edge;
+  let marker_scale = scene.viewport.w;
+  let height = 3.0 * edge * marker_scale;
+  let base_radius = 1.5 * edge * marker_scale;
   let base_center = tip - axis * height;
 
   let side = vertex_index / 3u;
@@ -399,8 +408,6 @@ function requireViewProjection(
 function buildUniformData(
   compute: RigidSectionWebGpuCompute3D,
   frame: RigidSectionWebGpuRenderFrame3D,
-  centerMarkerPixels: number,
-  arrowLengthPixels: number,
 ): ArrayBuffer {
   const matrix = requireViewProjection(frame.viewProjection);
   const width = requirePositiveFinite(frame.width, "render width");
@@ -417,9 +424,14 @@ function buildUniformData(
 
   f32[20] = width;
   f32[21] = height;
-  // Marker dimensions are world-space geometry; legacy pixel options are ignored.
-  f32[22] = 0;
-  f32[23] = 0;
+  f32[22] = requirePositiveFinite(
+    frame.centerMarkerScale ?? 1,
+    "centerMarkerScale",
+  );
+  f32[23] = requirePositiveFinite(
+    frame.endConeScale ?? 1,
+    "endConeScale",
+  );
 
   f32[24] = compute.template.localTriangleVertices[0]!;
   f32[25] = compute.template.moduleHeight;
@@ -468,8 +480,6 @@ implements RigidSectionWebGpuRenderer3D {
     readonly compute: RigidSectionWebGpuCompute3D,
     private readonly colorFormatValue: string,
     private readonly depthFormatValue: string | null,
-    private readonly centerMarkerPixels: number,
-    private readonly arrowLengthPixels: number,
     private readonly staticTemplateBytes: number,
     args: {
       surfaceIndicesBuffer: WebGpuBufferLike;
@@ -520,8 +530,6 @@ implements RigidSectionWebGpuRenderer3D {
     const uniformData = buildUniformData(
       this.compute,
       frame,
-      this.centerMarkerPixels,
-      this.arrowLengthPixels,
     );
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
@@ -563,14 +571,31 @@ implements RigidSectionWebGpuRenderer3D {
       );
       drawCalls += 1;
 
+      const showCenterMarkers = frame.showCenterMarkers !== false;
+      const showEndCones = frame.showEndCones !== false;
       pass.setBindGroup(0, this.surfaceBindGroup);
-      pass.setPipeline(this.centerPipeline);
-      pass.draw(RIGID_SECTION_WEBGPU_CENTER_VERTICES_PER_LINK, computeSnapshot.linkCount, 0, 0);
-      drawCalls += 1;
 
-      pass.setPipeline(this.arrowPipeline);
-      pass.draw(RIGID_SECTION_WEBGPU_ARROW_VERTICES_PER_LINK, computeSnapshot.linkCount, 0, 0);
-      drawCalls += 1;
+      if (showCenterMarkers) {
+        pass.setPipeline(this.centerPipeline);
+        pass.draw(
+          RIGID_SECTION_WEBGPU_CENTER_VERTICES_PER_LINK,
+          computeSnapshot.linkCount,
+          0,
+          0,
+        );
+        drawCalls += 1;
+      }
+
+      if (showEndCones) {
+        pass.setPipeline(this.arrowPipeline);
+        pass.draw(
+          RIGID_SECTION_WEBGPU_ARROW_VERTICES_PER_LINK,
+          computeSnapshot.linkCount,
+          0,
+          0,
+        );
+        drawCalls += 1;
+      }
     }
 
     pass.end();
@@ -584,8 +609,10 @@ implements RigidSectionWebGpuRenderer3D {
       linkCount: computeSnapshot.linkCount,
       drawCalls,
       surfaceVertexInvocations: estimate.surfaceVertexInvocations,
-      centerVertexInvocations: estimate.centerVertexInvocations,
-      arrowVertexInvocations: estimate.arrowVertexInvocations,
+      centerVertexInvocations:
+        frame.showCenterMarkers === false ? 0 : estimate.centerVertexInvocations,
+      arrowVertexInvocations:
+        frame.showEndCones === false ? 0 : estimate.arrowVertexInvocations,
       dynamicStateUploadBytes: 0 as const,
       controlUploadBytes: RIGID_SECTION_WEBGPU_RENDER_UNIFORM_BYTES,
       bufferCopies: 0 as const,
@@ -640,14 +667,10 @@ export async function createRigidSectionWebGpuZeroCopyRenderer3D(
   const depthFormat = options.depthFormat === undefined
     ? null
     : requireFormat(options.depthFormat, "depthFormat");
-  const centerMarkerPixels = requirePositiveFinite(
-    options.centerMarkerPixels ?? 3,
-    "centerMarkerPixels",
-  );
-  const arrowLengthPixels = requirePositiveFinite(
-    options.arrowLengthPixels ?? 18,
-    "arrowLengthPixels",
-  );
+  // Legacy screen-space marker options are accepted for API compatibility but
+  // intentionally ignored by the world-space marker implementation.
+  void options.centerMarkerPixels;
+  void options.arrowLengthPixels;
 
   const topology = materialTopology(compute.template);
   const surfaceIndicesBuffer = createStorageBuffer(
@@ -806,8 +829,6 @@ export async function createRigidSectionWebGpuZeroCopyRenderer3D(
     compute,
     colorFormat,
     depthFormat,
-    centerMarkerPixels,
-    arrowLengthPixels,
     topology.surface.byteLength + topology.wireframe.byteLength + topology.gradient.byteLength,
     {
       surfaceIndicesBuffer,
