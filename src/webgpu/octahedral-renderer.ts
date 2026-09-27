@@ -269,6 +269,33 @@ fn end_ring_center(link: u32) -> vec3<f32> {
   return (a + b + c) / 3.0;
 }
 
+fn projected_pixel_distance(a_world: vec3<f32>, b_world: vec3<f32>) -> f32 {
+  let a_clip = scene.view_projection * vec4<f32>(a_world, 1.0);
+  let b_clip = scene.view_projection * vec4<f32>(b_world, 1.0);
+  let a_w = select(1e-6, a_clip.w, abs(a_clip.w) > 1e-6);
+  let b_w = select(1e-6, b_clip.w, abs(b_clip.w) > 1e-6);
+  let a_ndc = a_clip.xy / a_w;
+  let b_ndc = b_clip.xy / b_w;
+  let delta_pixels = vec2<f32>(
+    (a_ndc.x - b_ndc.x) * scene.viewport_sizes.x * 0.5,
+    (a_ndc.y - b_ndc.y) * scene.viewport_sizes.y * 0.5,
+  );
+  return length(delta_pixels);
+}
+
+fn end_ring_projected_diameter_pixels(link: u32) -> f32 {
+  let a = load_position(link, scene.center_end.z);
+  let b = load_position(link, scene.center_end.w);
+  let c = load_position(link, scene.ring_surface.x);
+  return max(
+    projected_pixel_distance(a, b),
+    max(
+      projected_pixel_distance(b, c),
+      projected_pixel_distance(c, a),
+    ),
+  );
+}
+
 fn quad_offset(vertex: u32) -> vec2<f32> {
   let local = vertex % 6u;
   if (local == 0u) { return vec2<f32>(-1.0, -1.0); }
@@ -345,7 +372,8 @@ fn arrow_vertex(
   }
 
   let perpendicular = vec2<f32>(-direction_pixels.y, direction_pixels.x);
-  let arrow_length = scene.viewport_sizes.w;
+  let link_diameter_pixels = end_ring_projected_diameter_pixels(instance_index);
+  let arrow_length = max(scene.viewport_sizes.w, link_diameter_pixels * 3.0);
   let half_width = arrow_length * 0.55;
   let shoulder = -direction_pixels * arrow_length * 0.72;
   let tail = -direction_pixels * arrow_length * 1.15;
