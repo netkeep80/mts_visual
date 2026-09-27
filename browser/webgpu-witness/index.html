@@ -96,6 +96,26 @@
 
   <section class="card section">
     <div class="toolbar">
+      <h2 style="margin-right:auto">v0.5 redesign · monolithic Link CPU ↔ GPU differential</h2>
+      <span class="muted">#92 experimental physical kernel · not yet the live renderer</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Fixture</th><th>Status</th><th>Steps</th><th>Tolerance</th>
+          <th>max Δcenter</th><th>max Δvelocity</th>
+        </tr>
+      </thead>
+      <tbody id="monolithic-diff-body"></tbody>
+    </table>
+    <div class="camera-hint">
+      Temporary control mapping: node mass → CENTER mass · longitudinal k → stretch k ·
+      transverse k → straightening k · linear damping → CENTER damping.
+    </div>
+  </section>
+
+  <section class="card section">
+    <div class="toolbar">
       <h2 style="margin-right:auto">v0.5 rigid-section zero-copy live render</h2>
       <span class="muted">tunable CPU/WebGPU physical contract</span>
     </div>
