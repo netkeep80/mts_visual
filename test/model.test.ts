@@ -7,6 +7,7 @@ import "./octahedral-link3d.test.js";
 import "./octahedral-live3d.test.js";
 import "./octahedral-performance3d.test.js";
 import "./octahedral-webgpu-compute.test.js";
+import "./octahedral-webgpu-renderer.test.js";
 import "./live-physics3d.test.js";
 import "./three-scene.test.js";
 import "./three-renderer.test.js";
