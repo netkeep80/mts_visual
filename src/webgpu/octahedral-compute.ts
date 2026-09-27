@@ -152,10 +152,70 @@ export interface OctahedralWebGpuDispatch2D {
   readonly coveredInvocations: number;
 }
 
+export interface OctahedralCenterDragVertex3D {
+  readonly linkIndex: number;
+  readonly vertexIndex: number;
+}
+
+export function collectOctahedralCenterDragVertices3D(
+  topology: OctahedralLinkTopology3D,
+  template: OctahedralLinkTemplate3D,
+  selectedLink: number,
+): readonly OctahedralCenterDragVertex3D[] {
+  if (
+    !Number.isSafeInteger(selectedLink)
+    || selectedLink < 0
+    || selectedLink >= topology.linkCount
+  ) {
+    throw new Error(`invalid center-drag linkIndex: ${String(selectedLink)}`);
+  }
+
+  const vertices = new Map<number, OctahedralCenterDragVertex3D>();
+  const includeTriangle = (
+    linkIndex: number,
+    triangle: readonly [number, number, number],
+  ): void => {
+    for (const vertexIndex of triangle) {
+      const globalVertex = linkIndex * template.vertexCount + vertexIndex;
+      if (!vertices.has(globalVertex)) {
+        vertices.set(globalVertex, Object.freeze({ linkIndex, vertexIndex }));
+      }
+    }
+  };
+
+  includeTriangle(selectedLink, template.centerTriangle);
+  for (let source = 0; source < topology.linkCount; source += 1) {
+    if (topology.startIndices[source] === selectedLink) {
+      includeTriangle(source, template.startTriangle);
+    }
+    if (topology.endIndices[source] === selectedLink) {
+      includeTriangle(source, template.endTriangle);
+    }
+  }
+
+  return Object.freeze([...vertices.values()]);
+}
+
 export interface OctahedralWebGpuComputeOptions {
   readonly aspectRatio: number;
   readonly stiffness: number;
   readonly simulationSpeed: number;
+}
+
+export type OctahedralWebGpuVec3 = readonly [number, number, number];
+
+export interface OctahedralWebGpuVertexOverride3D {
+  readonly linkIndex: number;
+  readonly vertexIndex: number;
+  readonly position: OctahedralWebGpuVec3;
+  readonly velocity?: OctahedralWebGpuVec3;
+}
+
+export interface OctahedralWebGpuOverrideStats3D {
+  readonly vertexCount: number;
+  readonly bufferWrites: number;
+  readonly positionBytes: number;
+  readonly velocityBytes: number;
 }
 
 export interface OctahedralWebGpuStepStats {
@@ -192,6 +252,9 @@ export interface OctahedralWebGpuCompute3D {
   step(): OctahedralWebGpuStepStats;
   setStiffness(stiffness: number): void;
   setSimulationSpeed(simulationSpeed: number): void;
+  writeVertexOverrides(
+    overrides: readonly OctahedralWebGpuVertexOverride3D[],
+  ): OctahedralWebGpuOverrideStats3D;
   readBackPositions(): Promise<Float32Array>;
   readBackVelocities(): Promise<Float32Array>;
   snapshot(): OctahedralWebGpuSnapshot3D;
@@ -881,6 +944,95 @@ class OctahedralWebGpuController implements OctahedralWebGpuCompute3D {
     this.assertAlive();
     this.currentSimulationSpeed = requireNonNegativeFinite(simulationSpeed, "simulationSpeed");
     this.updateGlobals();
+  }
+
+  writeVertexOverrides(
+    overrides: readonly OctahedralWebGpuVertexOverride3D[],
+  ): OctahedralWebGpuOverrideStats3D {
+    this.assertAlive();
+    if (overrides.length === 0) {
+      return Object.freeze({
+        vertexCount: 0,
+        bufferWrites: 0,
+        positionBytes: 0,
+        velocityBytes: 0,
+      });
+    }
+
+    const byGlobalVertex = new Map<number, OctahedralWebGpuVertexOverride3D>();
+    for (const override of overrides) {
+      if (
+        !Number.isSafeInteger(override.linkIndex)
+        || override.linkIndex < 0
+        || override.linkIndex >= this.topology.linkCount
+      ) {
+        throw new Error(`invalid override linkIndex: ${String(override.linkIndex)}`);
+      }
+      if (
+        !Number.isSafeInteger(override.vertexIndex)
+        || override.vertexIndex < 0
+        || override.vertexIndex >= this.template.vertexCount
+      ) {
+        throw new Error(`invalid override vertexIndex: ${String(override.vertexIndex)}`);
+      }
+      if (
+        override.position.length !== 3
+        || !override.position.every(Number.isFinite)
+        || (override.velocity !== undefined
+          && (override.velocity.length !== 3 || !override.velocity.every(Number.isFinite)))
+      ) {
+        throw new Error("vertex override position/velocity must be finite vec3");
+      }
+
+      const globalVertex =
+        override.linkIndex * this.template.vertexCount + override.vertexIndex;
+      if (byGlobalVertex.has(globalVertex)) {
+        throw new Error(
+          `duplicate vertex override: link=${override.linkIndex} vertex=${override.vertexIndex}`,
+        );
+      }
+      byGlobalVertex.set(globalVertex, override);
+    }
+
+    const ordered = [...byGlobalVertex.entries()].sort((left, right) => left[0] - right[0]);
+    let bufferWrites = 0;
+    let positionBytes = 0;
+    let velocityBytes = 0;
+    let cursor = 0;
+
+    while (cursor < ordered.length) {
+      const runStart = cursor;
+      const firstGlobal = ordered[cursor]![0];
+      let previousGlobal = firstGlobal;
+      cursor += 1;
+      while (cursor < ordered.length && ordered[cursor]![0] === previousGlobal + 1) {
+        previousGlobal = ordered[cursor]![0];
+        cursor += 1;
+      }
+
+      const run = ordered.slice(runStart, cursor);
+      const positions = new Float32Array(run.length * 3);
+      const velocities = new Float32Array(run.length * 3);
+      for (let index = 0; index < run.length; index += 1) {
+        const override = run[index]![1];
+        positions.set(override.position, index * 3);
+        velocities.set(override.velocity ?? [0, 0, 0], index * 3);
+      }
+
+      const byteOffset = firstGlobal * 3 * 4;
+      this.device.queue.writeBuffer(this.positionBuffer, byteOffset, positions);
+      this.device.queue.writeBuffer(this.velocityBuffer, byteOffset, velocities);
+      bufferWrites += 2;
+      positionBytes += positions.byteLength;
+      velocityBytes += velocities.byteLength;
+    }
+
+    return Object.freeze({
+      vertexCount: ordered.length,
+      bufferWrites,
+      positionBytes,
+      velocityBytes,
+    });
   }
 
   step(): OctahedralWebGpuStepStats {

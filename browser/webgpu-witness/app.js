@@ -569,6 +569,77 @@ function multiply4(a, b) {
   return out;
 }
 
+function transformPoint4(matrix, point) {
+  const [x, y, z] = point;
+  return [
+    matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+    matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+    matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+    matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15],
+  ];
+}
+
+function currentViewProjection(state) {
+  const eye = cameraEye(state.camera);
+  const view = lookAt(eye, state.camera.target, [0, 1, 0]);
+  const projection = perspective(
+    Math.PI / 4,
+    Math.max(1e-9, ui.canvas.width / ui.canvas.height),
+    0.1,
+    state.camera.maxDistance * 4,
+  );
+  return multiply4(projection, view);
+}
+
+function projectWorldToClient(state, world) {
+  const clip = transformPoint4(currentViewProjection(state), world);
+  if (!(clip[3] > 1e-6)) return null;
+  const ndcX = clip[0] / clip[3];
+  const ndcY = clip[1] / clip[3];
+  if (!Number.isFinite(ndcX) || !Number.isFinite(ndcY)) return null;
+  const rect = ui.canvas.getBoundingClientRect();
+  return [
+    rect.left + (ndcX * 0.5 + 0.5) * rect.width,
+    rect.top + (0.5 - ndcY * 0.5) * rect.height,
+  ];
+}
+
+function centerDragVertexSet(state, linkIndex, positions, center) {
+  const { template, topology } = state.compute;
+  return webgpu.collectOctahedralCenterDragVertices3D(
+    topology,
+    template,
+    linkIndex,
+  ).map(({ linkIndex: sourceLink, vertexIndex }) => {
+    const point = readVertex3(template, positions, sourceLink, vertexIndex);
+    return {
+      linkIndex: sourceLink,
+      vertexIndex,
+      offset: [
+        point[0] - center[0],
+        point[1] - center[1],
+        point[2] - center[2],
+      ],
+    };
+  });
+}
+
+function applyCenterDrag(state) {
+  const drag = state.centerDrag;
+  if (!drag) return null;
+  const overrides = drag.vertices.map((entry) => ({
+    linkIndex: entry.linkIndex,
+    vertexIndex: entry.vertexIndex,
+    position: [
+      drag.target[0] + entry.offset[0],
+      drag.target[1] + entry.offset[1],
+      drag.target[2] + entry.offset[2],
+    ],
+    velocity: [0, 0, 0],
+  }));
+  return state.compute.writeVertexOverrides(overrides);
+}
+
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -622,13 +693,92 @@ function installCameraControls(state) {
   let mode = null;
   let lastX = 0;
   let lastY = 0;
+  let pickGeneration = 0;
 
-  const endDrag = (event) => {
+  const finishPointer = (event) => {
     if (pointerId !== event.pointerId) return;
+    const releasedMode = mode;
+    const releasedDrag = state.centerDrag;
     try { canvas.releasePointerCapture(pointerId); } catch {}
     pointerId = null;
     mode = null;
+    state.centerDrag = null;
     canvas.classList.remove("dragging");
+    if (releasedMode === "center" && releasedDrag) {
+      log(`center drag released: ${releasedDrag.key}`);
+      setStatus(
+        ui.renderCompute,
+        `AVAILABLE · k=${state.compute.stiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+        "ok",
+      );
+    }
+  };
+
+  const beginCenterPick = async (event) => {
+    const generation = ++pickGeneration;
+    mode = "picking";
+    try {
+      const positions = await state.compute.readBackPositions();
+      if (
+        generation !== pickGeneration
+        || pointerId !== event.pointerId
+        || renderState !== state
+      ) return;
+
+      let selected = -1;
+      let selectedDistance = Number.POSITIVE_INFINITY;
+      const hitRadius = 16;
+      for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
+        const center = center3(state.compute.template, positions, link);
+        const screen = projectWorldToClient(state, center);
+        if (!screen) continue;
+        const distance = Math.hypot(event.clientX - screen[0], event.clientY - screen[1]);
+        if (distance <= hitRadius && distance < selectedDistance) {
+          selected = link;
+          selectedDistance = distance;
+        }
+      }
+
+      if (selected < 0) {
+        mode = "orbit";
+        return;
+      }
+
+      const center = center3(state.compute.template, positions, selected);
+      const basis = cameraBasis(state.camera);
+      const depth = Math.max(
+        0.1,
+        dot(
+          [
+            center[0] - basis.eye[0],
+            center[1] - basis.eye[1],
+            center[2] - basis.eye[2],
+          ],
+          basis.forward,
+        ),
+      );
+      state.centerDrag = {
+        linkIndex: selected,
+        key: state.compute.topology.keys[selected],
+        target: [...center],
+        depth,
+        vertices: centerDragVertexSet(state, selected, positions, center),
+        uploadedBytes: 0,
+      };
+      mode = "center";
+      log(
+        `center drag selected: ${state.centerDrag.key} · ${state.centerDrag.vertices.length} physical vertices · one-shot readback ${positions.byteLength} B`,
+      );
+      setStatus(
+        ui.renderCompute,
+        `DRAG ${state.centerDrag.key} · sparse GPU override`,
+        "warn",
+      );
+    } catch (error) {
+      if (generation !== pickGeneration || renderState !== state) return;
+      log(`center pick ERROR — ${error.stack ?? error}`);
+      mode = "orbit";
+    }
   };
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault(), listenerOptions);
@@ -638,11 +788,16 @@ function installCameraControls(state) {
     pointerId = event.pointerId;
     lastX = event.clientX;
     lastY = event.clientY;
-    mode = event.button === 2 || (event.button === 0 && event.shiftKey)
-      ? "pan"
-      : "orbit";
     canvas.setPointerCapture(pointerId);
     canvas.classList.add("dragging");
+
+    if (event.button === 2 || (event.button === 0 && event.shiftKey)) {
+      mode = "pan";
+    } else if (event.button === 0) {
+      void beginCenterPick(event);
+    } else {
+      mode = "orbit";
+    }
     event.preventDefault();
   }, listenerOptions);
 
@@ -660,17 +815,29 @@ function installCameraControls(state) {
         -Math.PI * 0.48,
         Math.PI * 0.48,
       );
-    } else {
+    } else if (mode === "pan") {
       panCamera(state.camera, dx, dy);
+    } else if (mode === "center" && state.centerDrag) {
+      const { right, up } = cameraBasis(state.camera);
+      const rect = canvas.getBoundingClientRect();
+      const worldPerPixel =
+        2 * state.centerDrag.depth * Math.tan(Math.PI / 8)
+        / Math.max(1, rect.height);
+      for (let axis = 0; axis < 3; axis += 1) {
+        state.centerDrag.target[axis] +=
+          right[axis] * dx * worldPerPixel
+          - up[axis] * dy * worldPerPixel;
+      }
     }
     event.preventDefault();
   }, listenerOptions);
 
-  canvas.addEventListener("pointerup", endDrag, listenerOptions);
-  canvas.addEventListener("pointercancel", endDrag, listenerOptions);
+  canvas.addEventListener("pointerup", finishPointer, listenerOptions);
+  canvas.addEventListener("pointercancel", finishPointer, listenerOptions);
 
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
+    if (state.centerDrag) return;
     const factor = Math.exp(event.deltaY * 0.001);
     state.camera.distance = clamp(
       state.camera.distance * factor,
@@ -680,6 +847,8 @@ function installCameraControls(state) {
   }, { passive: false, signal: abortController.signal });
 
   return () => {
+    pickGeneration += 1;
+    state.centerDrag = null;
     abortController.abort();
     canvas.classList.remove("dragging");
   };
@@ -809,6 +978,7 @@ async function startRender() {
       target: [0, 0, 0],
     },
     cleanupCameraControls: null,
+    centerDrag: null,
     scene,
     network,
   };
@@ -839,21 +1009,18 @@ async function startRender() {
         state.compute.step();
         state.steps += 1;
       }
+      const dragStats = applyCenterDrag(state);
+      if (dragStats && state.centerDrag) {
+        state.centerDrag.uploadedBytes +=
+          dragStats.positionBytes + dragStats.velocityBytes;
+      }
 
       const frameDeltaSeconds = Math.min(0.1, Math.max(0, (now - state.lastFrameAt) / 1000));
       state.lastFrameAt = now;
-      if (ui.autoRotate.checked) {
+      if (ui.autoRotate.checked && !state.centerDrag) {
         state.camera.yaw += frameDeltaSeconds * 0.16;
       }
-      const eye = cameraEye(state.camera);
-      const view = lookAt(eye, state.camera.target, [0, 1, 0]);
-      const projection = perspective(
-        Math.PI / 4,
-        ui.canvas.width / ui.canvas.height,
-        0.1,
-        state.camera.maxDistance * 4,
-      );
-      const viewProjection = multiply4(projection, view);
+      const viewProjection = currentViewProjection(state);
 
       const stats = state.renderer.render({
         targetView: state.context.getCurrentTexture().createView(),
