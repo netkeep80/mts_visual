@@ -341,6 +341,54 @@ function normalizedDirection(
   return [dx / length, dy / length, dz / length];
 }
 
+const rootPairNetwork: VisualLinkNetwork = {
+  links: [
+    { key: "R", startKey: "R", endKey: "R" },
+    { key: "O", startKey: "O", endKey: "R" },
+  ],
+};
+const rootPair = createOctahedralLivePhysics3D(rootPairNetwork, {
+  aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+  stiffness: 5,
+  simulationSpeed: 4,
+});
+same(rootPair.template.octahedronCount, 100, "R+O separation witness uses 100 octahedra");
+const rootIndex = rootPair.topology.keys.indexOf("R");
+const openIndex = rootPair.topology.keys.indexOf("O");
+assert(rootIndex >= 0 && openIndex >= 0, "R+O separation witness resolves canonical keys");
+
+function rootOpenDistance(): number {
+  const r = geometricCenter(rootPair, rootIndex);
+  const o = geometricCenter(rootPair, openIndex);
+  return Math.hypot(o[0] - r[0], o[1] - r[1], o[2] - r[2]);
+}
+
+const halfRestLength = rootPair.template.restLength / 2;
+const rootOpenSamples = new Map<number, number>();
+rootOpenSamples.set(0, rootOpenDistance());
+let rootOpenMaxDistance = rootOpenSamples.get(0)!;
+for (let step = 1; step <= 1200; step += 1) {
+  rootPair.step();
+  const distance = rootOpenDistance();
+  rootOpenMaxDistance = Math.max(rootOpenMaxDistance, distance);
+  if (step === 1 || step === 30 || step === 300 || step === 1200) {
+    rootOpenSamples.set(step, distance);
+  }
+}
+const rootOpenDiagnostic = [0, 1, 30, 300, 1200]
+  .map((step) => {
+    const distance = rootOpenSamples.get(step)!;
+    return `${step}:${distance.toFixed(6)}(${(distance / halfRestLength).toFixed(4)}L)`;
+  })
+  .join(" ");
+console.log(
+  `[M5/P2 R+O self-separation] halfLength=${halfRestLength.toFixed(6)} ${rootOpenDiagnostic} max=${rootOpenMaxDistance.toFixed(6)}(${(rootOpenMaxDistance / halfRestLength).toFixed(4)}L)`,
+);
+assert(
+  rootOpenMaxDistance > rootOpenSamples.get(0)!,
+  `R+O compressed non-self half must create some center separation: initial=${rootOpenSamples.get(0)} max=${rootOpenMaxDistance}`,
+);
+
 const planarNetwork: VisualLinkNetwork = {
   links: Array.from({ length: 4 }, (_, index) => ({
     key: `P${index}`,
