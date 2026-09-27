@@ -457,13 +457,33 @@ fn init_main(
   let rest = rest_xyz(local);
   let half_length = abs(rest_xyz(globals.counts.w).z);
   let fraction = min(1.0, abs(rest.z) / max(half_length, 1e-12));
-  let start_target = seed_center(topology[link * 2u]);
-  let end_target = seed_center(topology[link * 2u + 1u]);
-  let target_center = select(end_target, start_target, rest.z < 0.0);
-  let centerline = center + (target_center - center) * fraction;
-  let seeded = centerline
-    + basis_x * rest.x
-    + basis_y * rest.y;
+  let start_target_link = topology[link * 2u];
+  let end_target_link = topology[link * 2u + 1u];
+  let target_link = select(end_target_link, start_target_link, rest.z < 0.0);
+  let target_center = seed_center(target_link);
+  let self_half = target_link == link;
+
+  var seeded: vec3<f32>;
+  if (self_half) {
+    // Self-incidence must begin as a finite material loop rather than a
+    // longitudinally collapsed mast. The loop returns exactly to CENTER at
+    // fraction=0 and fraction=1; START/END hinge projection therefore remains
+    // exact while the interior has a deterministic nonzero spatial extent.
+    let side = select(1.0, -1.0, rest.z < 0.0);
+    let theta = 6.283185307179586 * fraction;
+    let sin_theta = sin(theta);
+    let cos_theta = cos(theta);
+    let loop_radius = half_length / 6.283185307179586;
+    let centerline = center + side * loop_radius * (
+      sin_theta * axis + (1.0 - cos_theta) * basis_x
+    );
+    let normal = cos_theta * basis_x - sin_theta * axis;
+    seeded = centerline + normal * rest.x + basis_y * rest.y;
+  } else {
+    let centerline = center + (target_center - center) * fraction;
+    seeded = centerline + basis_x * rest.x + basis_y * rest.y;
+  }
+
   store_position(scalar, seeded);
   store_velocity(scalar, vec3<f32>(0.0));
   store_force(scalar, vec3<f32>(0.0));
