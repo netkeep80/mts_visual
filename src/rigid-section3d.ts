@@ -67,6 +67,42 @@ export interface RigidSectionStepEvaluation3D {
   readonly pairwiseSemanticLinkEvaluations: 0;
 }
 
+export interface RigidSectionReverseIncidence3D {
+  readonly incomingOffsets: Uint32Array;
+  readonly incomingRefs: Uint32Array;
+}
+
+export function buildRigidSectionReverseIncidence3D(
+  topology: OctahedralLinkTopology3D,
+): RigidSectionReverseIncidence3D {
+  const counts = new Uint32Array(topology.linkCount);
+  for (let source = 0; source < topology.linkCount; source += 1) {
+    const startTarget = topology.startIndices[source]!;
+    const endTarget = topology.endIndices[source]!;
+    counts[startTarget] = counts[startTarget]! + 1;
+    counts[endTarget] = counts[endTarget]! + 1;
+  }
+
+  const incomingOffsets = new Uint32Array(topology.linkCount + 1);
+  for (let link = 0; link < topology.linkCount; link += 1) {
+    incomingOffsets[link + 1] = incomingOffsets[link]! + counts[link]!;
+  }
+
+  const incomingRefs = new Uint32Array(topology.linkCount * 2);
+  const cursors = incomingOffsets.slice(0, topology.linkCount);
+  for (let source = 0; source < topology.linkCount; source += 1) {
+    const startTarget = topology.startIndices[source]!;
+    incomingRefs[cursors[startTarget]!] = source * 2;
+    cursors[startTarget] = cursors[startTarget]! + 1;
+
+    const endTarget = topology.endIndices[source]!;
+    incomingRefs[cursors[endTarget]!] = source * 2 + 1;
+    cursors[endTarget] = cursors[endTarget]! + 1;
+  }
+
+  return Object.freeze({ incomingOffsets, incomingRefs });
+}
+
 export interface RigidSectionPhysicsOptions3D {
   readonly aspectRatio: number;
   readonly stiffness: number;
@@ -587,6 +623,9 @@ export class RigidSectionPhysics3D {
   readonly angularVelocities: Float32Array;
   readonly forces: Float64Array;
   readonly torques: Float64Array;
+  readonly reverseIncidence: RigidSectionReverseIncidence3D;
+  private readonly hingeScratchCenters: Float32Array;
+  private readonly hingeScratchVelocities: Float32Array;
   stiffness: number;
   simulationSpeed: number;
 
@@ -603,6 +642,9 @@ export class RigidSectionPhysics3D {
     this.angularVelocities = new Float32Array(bodyCount * 3);
     this.forces = new Float64Array(bodyCount * 3);
     this.torques = new Float64Array(bodyCount * 3);
+    this.reverseIncidence = buildRigidSectionReverseIncidence3D(this.topology);
+    this.hingeScratchCenters = new Float32Array(bodyCount * 3);
+    this.hingeScratchVelocities = new Float32Array(bodyCount * 3);
 
     const semanticCenters = resolveRigidSectionSemanticCenters3D(this.template, this.topology);
     for (let link = 0; link < this.topology.linkCount; link += 1) {
@@ -732,36 +774,94 @@ export class RigidSectionPhysics3D {
     }
   }
 
-  private constrainCenters(left: number, right: number): void {
-    if (left === right) return;
-    const leftCenter = readVec3(this.centers, left);
-    const rightCenter = readVec3(this.centers, right);
-    const midpoint = scale3(add3(leftCenter, rightCenter), 0.5);
-    writeVec3(this.centers, left, midpoint);
-    writeVec3(this.centers, right, midpoint);
-
-    const leftVelocity = readVec3(this.linearVelocities, left);
-    const rightVelocity = readVec3(this.linearVelocities, right);
-    const meanVelocity = scale3(add3(leftVelocity, rightVelocity), 0.5);
-    writeVec3(this.linearVelocities, left, meanVelocity);
-    writeVec3(this.linearVelocities, right, meanVelocity);
-  }
-
-  projectHinges(): void {
+  private jacobiHingePass(
+    readCenters: Float32Array,
+    readVelocities: Float32Array,
+    writeCenters: Float32Array,
+    writeVelocities: Float32Array,
+  ): void {
+    const sectionCount = this.template.sectionCount;
     const middle = this.template.centerSection;
-    const endSection = this.template.sectionCount - 1;
+    const endSection = sectionCount - 1;
 
-    for (let iteration = 0; iteration < HINGE_SOLVER_ITERATIONS; iteration += 1) {
-      for (let link = 0; link < this.topology.linkCount; link += 1) {
-        this.constrainCenters(
-          this.sectionBodyIndex(link, 0),
+    for (let body = 0; body < this.bodyCount; body += 1) {
+      const link = Math.floor(body / sectionCount);
+      const local = body - link * sectionCount;
+      const selfCenter = readVec3(readCenters, body);
+      const selfVelocity = readVec3(readVelocities, body);
+      let correction: Vec3 = [0, 0, 0];
+      let velocityCorrection: Vec3 = [0, 0, 0];
+      let degree = 0;
+
+      const accumulateOther = (otherBody: number): void => {
+        correction = add3(
+          correction,
+          scale3(subtract3(readVec3(readCenters, otherBody), selfCenter), 0.5),
+        );
+        velocityCorrection = add3(
+          velocityCorrection,
+          scale3(subtract3(readVec3(readVelocities, otherBody), selfVelocity), 0.5),
+        );
+        degree += 1;
+      };
+
+      if (local === 0) {
+        accumulateOther(
           this.sectionBodyIndex(this.topology.startIndices[link]!, middle),
         );
-        this.constrainCenters(
-          this.sectionBodyIndex(link, endSection),
+      }
+      if (local === endSection) {
+        accumulateOther(
           this.sectionBodyIndex(this.topology.endIndices[link]!, middle),
         );
       }
+      if (local === middle) {
+        const begin = this.reverseIncidence.incomingOffsets[link]!;
+        const end = this.reverseIncidence.incomingOffsets[link + 1]!;
+        for (let cursor = begin; cursor < end; cursor += 1) {
+          const encoded = this.reverseIncidence.incomingRefs[cursor]!;
+          const sourceLink = Math.floor(encoded / 2);
+          const role = encoded & 1;
+          accumulateOther(
+            this.sectionBodyIndex(sourceLink, role === 0 ? 0 : endSection),
+          );
+        }
+      }
+
+      if (degree === 0) {
+        writeVec3(writeCenters, body, selfCenter);
+        writeVec3(writeVelocities, body, selfVelocity);
+      } else {
+        writeVec3(
+          writeCenters,
+          body,
+          add3(selfCenter, scale3(correction, 1 / degree)),
+        );
+        writeVec3(
+          writeVelocities,
+          body,
+          add3(selfVelocity, scale3(velocityCorrection, 1 / degree)),
+        );
+      }
+    }
+  }
+
+  projectHinges(): void {
+    for (let iteration = 0; iteration < HINGE_SOLVER_ITERATIONS; iteration += 1) {
+      const readCenters = iteration % 2 === 0 ? this.centers : this.hingeScratchCenters;
+      const readVelocities = iteration % 2 === 0
+        ? this.linearVelocities
+        : this.hingeScratchVelocities;
+      const writeCenters = iteration % 2 === 0 ? this.hingeScratchCenters : this.centers;
+      const writeVelocities = iteration % 2 === 0
+        ? this.hingeScratchVelocities
+        : this.linearVelocities;
+      this.jacobiHingePass(
+        readCenters,
+        readVelocities,
+        writeCenters,
+        writeVelocities,
+      );
     }
   }
 
