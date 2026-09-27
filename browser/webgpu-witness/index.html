@@ -21,7 +21,9 @@
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 8px; border-bottom: 1px solid #25334a; text-align: left; }
     th { color: #9fb1c9; font-weight: 600; }
-    canvas { width: 100%; aspect-ratio: 16/9; background: #000; display: block; border-radius: 10px; border: 1px solid #25334a; }
+    canvas { width: 100%; aspect-ratio: 16/9; background: #000; display: block; border-radius: 10px; border: 1px solid #25334a; cursor: grab; touch-action: none; user-select: none; }
+    canvas.dragging { cursor: grabbing; }
+    .camera-hint { margin-top: 8px; font-size: 12px; color: #98a7bd; }
     button, select { background: #172338; color: #e9eef7; border: 1px solid #395070; border-radius: 8px; padding: 8px 12px; }
     button:hover { background: #20304a; }
     .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
@@ -71,6 +73,8 @@
         </select>
       </label>
       <button id="restart-render">Restart render</button>
+      <button id="reset-view">Reset view</button>
+      <label><input id="auto-rotate" type="checkbox"> Auto rotate</label>
       <button id="pause-render">Pause</button>
     </div>
     <div class="physics-controls" aria-label="Live physics controls">
@@ -97,6 +101,7 @@
       </div>
     </div>
     <canvas id="gpu-canvas"></canvas>
+    <div class="camera-hint">Mouse: left drag = orbit · wheel = zoom · right drag or Shift+left drag = pan</div>
     <div class="grid" style="margin-top:12px">
       <div><span class="muted">Compute</span><div id="render-compute" class="value">pending</div></div>
       <div><span class="muted">Topology</span><div id="render-topology" class="value">pending</div></div>
