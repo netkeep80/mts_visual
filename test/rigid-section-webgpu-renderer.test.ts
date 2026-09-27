@@ -131,7 +131,7 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
     readonly primitive?: object;
     readonly depthStencil?: object;
   }): Promise<{ readonly label?: string }> {
-    return { label: descriptor.label };
+    return descriptor.label === undefined ? {} : { label: descriptor.label };
   }
 
   createBindGroup(descriptor: {
