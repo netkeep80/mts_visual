@@ -6,6 +6,7 @@ import {
 import {
   deriveMonolithicLinkShape3D,
   deriveMonolithicNetworkShape3D,
+  resolveMonolithicLinkRollGauge3D,
 } from "../src/monolithic-link-shape3d.js";
 import type { VisualLinkNetwork } from "../src/index.js";
 
@@ -72,6 +73,87 @@ function pointDelta(
 
 const template = getMonolithicLinkSpringTemplate3D(16 * Math.SQRT2);
 assert(template.octahedronCount === 32, "shape witness resolves 32 octahedra");
+
+// #100: the material roll plane is an oriented gauge, not a new physical
+// angular DOF. It must survive a passage through S/C/E collinearity without
+// the n <-> -n ambiguity rotating the carrier by 180 degrees.
+const gaugeStart: MonolithicLinkVec3 = [-1, 0, 0];
+const gaugeEnd: MonolithicLinkVec3 = [1, 0, 0];
+let previousGauge: MonolithicLinkVec3 | undefined;
+let minimumConsecutiveGaugeDot = 1;
+let zeroGaugeWeight = -1;
+for (const offset of [0.20, 0.08, 0.03, 0.01, 0.001, 0, -0.001, -0.01, -0.03, -0.08, -0.20]) {
+  const gauge = resolveMonolithicLinkRollGauge3D(
+    gaugeStart,
+    [0, offset, 0],
+    gaugeEnd,
+    17,
+    previousGauge,
+  );
+  approx(length3(gauge.normal), 1, `roll gauge norm offset=${offset}`, 1e-9);
+  assert(Number.isFinite(gauge.bendSine), `roll gauge bend sine finite offset=${offset}`);
+  assert(
+    gauge.geometricWeight >= 0 && gauge.geometricWeight <= 1,
+    `roll gauge weight bounded offset=${offset}`,
+  );
+  if (previousGauge !== undefined) {
+    minimumConsecutiveGaugeDot = Math.min(
+      minimumConsecutiveGaugeDot,
+      dot3(previousGauge, gauge.normal),
+    );
+  }
+  if (offset === 0) zeroGaugeWeight = gauge.geometricWeight;
+  previousGauge = gauge.normal;
+}
+assert(
+  minimumConsecutiveGaugeDot > 0.95,
+  `roll gauge crosses collinearity without antipodal jump: minDot=${minimumConsecutiveGaugeDot}`,
+);
+approx(
+  zeroGaugeWeight,
+  0,
+  "exact collinearity keeps the previous/deterministic gauge",
+  1e-12,
+);
+
+const strongGauge = resolveMonolithicLinkRollGauge3D(
+  gaugeStart,
+  [0, 0.25, 0.35],
+  gaugeEnd,
+  17,
+);
+const firstStrong = subtract3([0, 0.25, 0.35], gaugeStart);
+const secondStrong = subtract3(gaugeEnd, [0, 0.25, 0.35]);
+const geometricStrong: MonolithicLinkVec3 = [
+  firstStrong[1] * secondStrong[2] - firstStrong[2] * secondStrong[1],
+  firstStrong[2] * secondStrong[0] - firstStrong[0] * secondStrong[2],
+  firstStrong[0] * secondStrong[1] - firstStrong[1] * secondStrong[0],
+];
+assert(
+  Math.abs(dot3(strongGauge.normal, normalized(geometricStrong))) > 0.999,
+  "well-bent Link gauge follows the geometric S/C/E plane",
+);
+assert(
+  strongGauge.geometricWeight > 0.99,
+  "well-bent Link gives geometric plane full authority",
+);
+
+const scaledGauge = resolveMonolithicLinkRollGauge3D(
+  [-1000, 0, 0],
+  [0, 250, 350],
+  [1000, 0, 0],
+  17,
+);
+approx(
+  scaledGauge.bendSine,
+  strongGauge.bendSine,
+  "roll gauge degeneracy threshold is scale-relative",
+  1e-12,
+);
+assert(
+  Math.abs(dot3(scaledGauge.normal, strongGauge.normal)) > 0.999999,
+  "roll gauge direction is scale-invariant",
+);
 const halfSegments = template.octahedronCount / 2;
 const h = template.halfRestLength;
 
