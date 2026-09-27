@@ -69,8 +69,12 @@ for (let index = 0; index < controller.template.vertexCount; index += 1) {
     `surface gradient t[${index}]`,
   );
 }
-same(gradient.getX(controller.template.startApex), 0, "surface START is exact red endpoint t=0");
-same(gradient.getX(controller.template.endApex), 1, "surface END is exact blue endpoint t=1");
+for (const vertex of controller.template.startTriangle) {
+  same(gradient.getX(vertex), 0, "surface START terminal triangle is exact red endpoint t=0");
+}
+for (const vertex of controller.template.endTriangle) {
+  same(gradient.getX(vertex), 1, "surface END terminal triangle is exact blue endpoint t=1");
+}
 
 const surfaceInstanceAddress = batch.surface.geometry.getAttribute("instanceTexel");
 const centerInstanceAddress = batch.centers.geometry.getAttribute("instanceTexel");
