@@ -1,5 +1,8 @@
 import type { VisualLinkNetwork } from "./index.js";
-import { writeFittedOctahedralTemplate3D } from "./octahedral-layout3d.js";
+import {
+  resolveOctahedralSeedCenters3D,
+  writeFittedOctahedralTemplate3D,
+} from "./octahedral-layout3d.js";
 import {
   accumulateOctahedralSpringForces3D,
   buildOctahedralLinkTopology3D,
@@ -126,12 +129,17 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
     this.currentVelocities = new Float32Array(length);
     this.forces = new Float32Array(length);
 
+    const seedCenters = resolveOctahedralSeedCenters3D(
+      this.template,
+      this.currentTopology,
+    );
     for (let link = 0; link < this.currentTopology.linkCount; link += 1) {
       writeFittedOctahedralTemplate3D(
         this.template,
         this.currentTopology,
         this.currentPositions,
         link,
+        seedCenters,
       );
     }
     projectOctahedralHinges3D(this.currentTopology, this.template, this.currentPositions);
@@ -236,6 +244,7 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
 
     const oldByKey = new Map(this.currentTopology.keys.map((key, index) => [key, index] as const));
     const span = this.template.vertexCount * 3;
+    const nextSeedCenters = resolveOctahedralSeedCenters3D(this.template, nextTopology);
 
     for (let nextIndex = 0; nextIndex < nextTopology.linkCount; nextIndex += 1) {
       const key = nextTopology.keys[nextIndex]!;
@@ -251,6 +260,7 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
           nextTopology,
           nextPositions,
           nextIndex,
+          nextSeedCenters,
         );
       }
     }

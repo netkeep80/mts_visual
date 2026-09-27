@@ -249,9 +249,9 @@ for (const entryPoint of [
   );
 }
 same(
-  [...OCTAHEDRAL_WEBGPU_WGSL.matchAll(/@group\(0\) @binding\([0-6]\) var<storage/g)].length,
-  7,
-  "WGSL uses exactly seven storage-buffer bindings",
+  [...OCTAHEDRAL_WEBGPU_WGSL.matchAll(/@group\(0\) @binding\((?:[0-6]|9)\) var<storage/g)].length,
+  8,
+  "WGSL uses seven runtime storage fields plus one immutable seed-center buffer",
 );
 assert(!/atomic</.test(OCTAHEDRAL_WEBGPU_WGSL), "WGSL uses no atomic force buffer");
 assert(!/pairwise/i.test(OCTAHEDRAL_WEBGPU_WGSL), "WGSL contains no semantic all-pairs path");
@@ -283,22 +283,27 @@ assert(
   OCTAHEDRAL_WEBGPU_WGSL.includes("gid.y * 65535u * 64u"),
   "browser WGSL uses the accepted fixed 65,535-workgroup spill slab",
 );
-assert(OCTAHEDRAL_WEBGPU_WGSL.includes("fn seed_center"), "WGSL exposes deterministic 3D seed-center helper");
+assert(OCTAHEDRAL_WEBGPU_WGSL.includes("fn seed_center"), "WGSL exposes deterministic seed-center helper");
 assert(OCTAHEDRAL_WEBGPU_WGSL.includes("fn seed_axis"), "WGSL exposes topology-directed mast orientation helper");
-assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let x_index = link % side"), "WGSL seed layout spans grid X");
-assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let y_index = (link / side) % side"), "WGSL seed layout spans grid Y");
-assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let z_index = link / plane"), "WGSL seed layout spans grid Z");
 assert(
-  !OCTAHEDRAL_WEBGPU_WGSL.includes("var center_x ="),
-  "WGSL no longer contains the former one-dimensional center seed",
+  OCTAHEDRAL_WEBGPU_WGSL.includes("@group(0) @binding(9) var<storage, read> seed_centers: array<f32>;"),
+  "WGSL consumes the exact host-resolved immutable seed-center buffer",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("seed_centers[scalar + 2u]"),
+  "WGSL reads packed XYZ topology-aware seed centers directly",
+);
+assert(
+  !OCTAHEDRAL_WEBGPU_WGSL.includes("let x_index = link % side"),
+  "WGSL no longer recomputes an independent compact-grid center layout",
 );
 
 const gpuGrid = getOctahedralSeedGrid3D(template, 333);
-same(gpuGrid.side, 7, "CPU contract supplies seven-wide 333-Link grid to GPU globals");
-same(gpuGrid.depth, 7, "CPU contract supplies seven-deep 333-Link grid to GPU globals");
+same(gpuGrid.side, 7, "CPU compact initial guess remains seven-wide for 333 Links");
+same(gpuGrid.depth, 7, "CPU compact initial guess remains seven-deep for 333 Links");
 assert(
   Math.abs(gpuGrid.spacing - template.diameter * 1.5) <= 1e-12,
-  "CPU seed spacing is exactly 1.5x Link diameter and independent of rest length",
+  "compact symmetry-breaking grid scale remains a cross-section property",
 );
 assert(
   OCTAHEDRAL_WEBGPU_WGSL.includes("let half_length = abs(rest_xyz(globals.counts.w).z);"),
@@ -338,9 +343,13 @@ assert(!initialWriteLabels.includes("octahedral-velocities"), "GPU initializatio
 assert(!initialWriteLabels.includes("octahedral-forces"), "GPU initialization does not upload CPU force state");
 assert(initialWriteLabels.includes("octahedral-topology"), "topology is uploaded once");
 assert(initialWriteLabels.includes("octahedral-template-words"), "cached template words are uploaded once");
+assert(initialWriteLabels.includes("octahedral-seed-centers"), "resolved semantic centers are uploaded once");
+const seedCentersWrite = fake.queue.writes.find((write) => write.label === "octahedral-seed-centers");
+assert(seedCentersWrite !== undefined, "GPU initialization uploads immutable topology-aware seed centers");
+same(seedCentersWrite.bytes, fanInTopology.linkCount * 3 * 4, "seed-center upload is exactly packed XYZ Float32");
 const globalsWrite = fake.queue.writes.find((write) => write.label === "octahedral-globals");
 assert(globalsWrite !== undefined, "GPU initialization uploads one globals block");
-same(globalsWrite.bytes, 80, "GPU globals include explicit grid side/depth plus physics controls");
+same(globalsWrite.bytes, 80, "GPU globals retain fixed-size physics controls");
 
 const snapshot = controller.snapshot();
 same(snapshot.status, "available", "fresh GPU controller reports available status");

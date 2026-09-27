@@ -66,6 +66,167 @@ export function computeOctahedralSeedCenter3D(
   ];
 }
 
+const TOPOLOGY_SEED_ITERATIONS = 64;
+const TOPOLOGY_SEED_RELAXATION = 0.8;
+
+function seedCenterFromBuffer(
+  centers: Float32Array,
+  linkIndex: number,
+  linkCount: number,
+): readonly [number, number, number] {
+  const index = requireLinkIndex(linkIndex, linkCount);
+  if (centers.length !== linkCount * 3) {
+    throw new Error(
+      `invalid resolved seed-center buffer: ${centers.length} != ${linkCount * 3}`,
+    );
+  }
+  const offset = index * 3;
+  return [centers[offset]!, centers[offset + 1]!, centers[offset + 2]!];
+}
+
+function fallbackPairAxis3D(
+  source: number,
+  target: number,
+): readonly [number, number, number] {
+  const low = Math.min(source, target);
+  const high = Math.max(source, target);
+  const hash = (
+    Math.imul(low + 1, 73_856_093)
+    ^ Math.imul(high + 1, 19_349_663)
+  ) >>> 0;
+  const base = fallbackAxis3D(hash % 6);
+  if (source <= target) return base;
+  return [-base[0], -base[1], -base[2]];
+}
+
+/**
+ * Resolve a deterministic topology-aware physical center seed.
+ *
+ * The compact cubic grid is only a symmetry-breaking initial guess. Every
+ * non-self START/END incidence then contributes one distance constraint whose
+ * target is exactly one half of the Link rest length. The fixed Jacobi schedule
+ * is O(iterations * N): there are exactly two outgoing incidence roles per Link.
+ *
+ * Self-incidence is deliberately excluded here; finite self material shape is
+ * handled by the accepted loop seed in writeFittedOctahedralTemplate3D().
+ */
+export function resolveOctahedralSeedCenters3D(
+  template: OctahedralLinkTemplate3D,
+  topology: OctahedralLinkTopology3D,
+): Float32Array {
+  const count = requireLinkCount(topology.linkCount);
+  if (count === 0) return new Float32Array(0);
+
+  const centers = new Float64Array(count * 3);
+  let initialMeanX = 0;
+  let initialMeanY = 0;
+  let initialMeanZ = 0;
+  for (let link = 0; link < count; link += 1) {
+    const center = computeOctahedralSeedCenter3D(template, link, count);
+    const offset = link * 3;
+    centers[offset] = center[0];
+    centers[offset + 1] = center[1];
+    centers[offset + 2] = center[2];
+    initialMeanX += center[0];
+    initialMeanY += center[1];
+    initialMeanZ += center[2];
+  }
+  initialMeanX /= count;
+  initialMeanY /= count;
+  initialMeanZ /= count;
+
+  let nonSelfConstraintCount = 0;
+  for (let link = 0; link < count; link += 1) {
+    if (topology.startIndices[link]! !== link) nonSelfConstraintCount += 1;
+    if (topology.endIndices[link]! !== link) nonSelfConstraintCount += 1;
+  }
+  if (nonSelfConstraintCount === 0) return new Float32Array(centers);
+
+  const corrections = new Float64Array(count * 3);
+  const weights = new Float64Array(count);
+  const targetLength = template.restLength / 2;
+
+  const accumulateConstraint = (source: number, target: number): void => {
+    if (source === target) return;
+    const sourceOffset = source * 3;
+    const targetOffset = target * 3;
+    let dx = centers[targetOffset]! - centers[sourceOffset]!;
+    let dy = centers[targetOffset + 1]! - centers[sourceOffset + 1]!;
+    let dz = centers[targetOffset + 2]! - centers[sourceOffset + 2]!;
+    let length = Math.hypot(dx, dy, dz);
+
+    if (!Number.isFinite(length) || length <= EPSILON) {
+      const fallback = fallbackPairAxis3D(source, target);
+      dx = fallback[0];
+      dy = fallback[1];
+      dz = fallback[2];
+      length = 1;
+    }
+
+    const halfDelta = (targetLength - length) * 0.5 / length;
+    const cx = dx * halfDelta;
+    const cy = dy * halfDelta;
+    const cz = dz * halfDelta;
+
+    corrections[sourceOffset] = corrections[sourceOffset]! - cx;
+    corrections[sourceOffset + 1] = corrections[sourceOffset + 1]! - cy;
+    corrections[sourceOffset + 2] = corrections[sourceOffset + 2]! - cz;
+    corrections[targetOffset] = corrections[targetOffset]! + cx;
+    corrections[targetOffset + 1] = corrections[targetOffset + 1]! + cy;
+    corrections[targetOffset + 2] = corrections[targetOffset + 2]! + cz;
+    weights[source] = weights[source]! + 1;
+    weights[target] = weights[target]! + 1;
+  };
+
+  for (let iteration = 0; iteration < TOPOLOGY_SEED_ITERATIONS; iteration += 1) {
+    corrections.fill(0);
+    weights.fill(0);
+
+    for (let link = 0; link < count; link += 1) {
+      accumulateConstraint(link, topology.startIndices[link]!);
+      accumulateConstraint(link, topology.endIndices[link]!);
+    }
+
+    let meanX = 0;
+    let meanY = 0;
+    let meanZ = 0;
+    for (let link = 0; link < count; link += 1) {
+      const weight = weights[link]!;
+      const offset = link * 3;
+      if (weight > 0) {
+        const scale = TOPOLOGY_SEED_RELAXATION / weight;
+        centers[offset] = centers[offset]! + corrections[offset]! * scale;
+        centers[offset + 1] = centers[offset + 1]! + corrections[offset + 1]! * scale;
+        centers[offset + 2] = centers[offset + 2]! + corrections[offset + 2]! * scale;
+      }
+      meanX += centers[offset]!;
+      meanY += centers[offset + 1]!;
+      meanZ += centers[offset + 2]!;
+    }
+
+    // Per-node Jacobi normalization can introduce a small translation when
+    // degrees differ. Recenter deterministically so only relative topology
+    // affects the seed.
+    meanX = meanX / count - initialMeanX;
+    meanY = meanY / count - initialMeanY;
+    meanZ = meanZ / count - initialMeanZ;
+    for (let link = 0; link < count; link += 1) {
+      const offset = link * 3;
+      centers[offset] = centers[offset]! - meanX;
+      centers[offset + 1] = centers[offset + 1]! - meanY;
+      centers[offset + 2] = centers[offset + 2]! - meanZ;
+    }
+  }
+
+  const resolved = new Float32Array(centers);
+  for (let index = 0; index < resolved.length; index += 1) {
+    if (!Number.isFinite(resolved[index]!)) {
+      throw new Error(`non-finite topology-aware seed center at ${index}`);
+    }
+  }
+  return resolved;
+}
+
 function normalize3(
   x: number,
   y: number,
@@ -91,12 +252,13 @@ export function computeOctahedralSeedAxis3D(
   template: OctahedralLinkTemplate3D,
   topology: OctahedralLinkTopology3D,
   linkIndex: number,
+  seedCenters: Float32Array = resolveOctahedralSeedCenters3D(template, topology),
 ): readonly [number, number, number] {
   const index = requireLinkIndex(linkIndex, topology.linkCount);
   const startTarget = topology.startIndices[index]!;
   const endTarget = topology.endIndices[index]!;
-  const start = computeOctahedralSeedCenter3D(template, startTarget, topology.linkCount);
-  const end = computeOctahedralSeedCenter3D(template, endTarget, topology.linkCount);
+  const start = seedCenterFromBuffer(seedCenters, startTarget, topology.linkCount);
+  const end = seedCenterFromBuffer(seedCenters, endTarget, topology.linkCount);
   return normalize3(
     end[0] - start[0],
     end[1] - start[1],
@@ -136,6 +298,7 @@ export function writeFittedOctahedralTemplate3D(
   topology: OctahedralLinkTopology3D,
   positions: Float32Array,
   linkIndex: number,
+  seedCenters: Float32Array = resolveOctahedralSeedCenters3D(template, topology),
 ): void {
   const index = requireLinkIndex(linkIndex, topology.linkCount);
   const span = template.vertexCount * 3;
@@ -146,20 +309,14 @@ export function writeFittedOctahedralTemplate3D(
     );
   }
 
-  const center = computeOctahedralSeedCenter3D(template, index, topology.linkCount);
+  const center = seedCenterFromBuffer(seedCenters, index, topology.linkCount);
   const startTarget = topology.startIndices[index]!;
   const endTarget = topology.endIndices[index]!;
-  const startCenter = computeOctahedralSeedCenter3D(
-    template,
-    startTarget,
-    topology.linkCount,
+  const startCenter = seedCenterFromBuffer(seedCenters, startTarget, topology.linkCount);
+  const endCenter = seedCenterFromBuffer(seedCenters, endTarget, topology.linkCount);
+  const basis = basisForAxis(
+    computeOctahedralSeedAxis3D(template, topology, index, seedCenters),
   );
-  const endCenter = computeOctahedralSeedCenter3D(
-    template,
-    endTarget,
-    topology.linkCount,
-  );
-  const basis = basisForAxis(computeOctahedralSeedAxis3D(template, topology, index));
   const halfLength = template.restLength / 2;
 
   for (let vertex = 0; vertex < template.vertexCount; vertex += 1) {
