@@ -514,7 +514,7 @@ const rootPairNetwork: VisualLinkNetwork = {
   ],
 };
 const rootPair = createOctahedralLivePhysics3D(rootPairNetwork, {
-  aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+  aspectRatio: Math.SQRT2 * (100 / 2),
   stiffness: 5,
   simulationSpeed: 4,
 });
@@ -566,7 +566,7 @@ const seedRatioResults: string[] = [];
 
 for (const seedRatio of seedRatioSweep) {
   const candidate = createOctahedralLivePhysics3D(rootPairNetwork, {
-    aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+    aspectRatio: Math.SQRT2 * (100 / 2),
     stiffness: 5,
     simulationSpeed: 4,
   });
@@ -653,7 +653,7 @@ const rootBasisNetwork: VisualLinkNetwork = {
 };
 const rootBasisTopology = buildOctahedralLinkTopology3D(rootBasisNetwork);
 const rootBasisTemplate = getOctahedralLinkTemplate3D(
-  Math.SQRT2 * (100 / 2 + 1),
+  Math.SQRT2 * (100 / 2),
 );
 const rootBasisSeed = resolveOctahedralSeedCenters3D(
   rootBasisTemplate,
@@ -679,7 +679,7 @@ for (let link = 0; link < rootBasisTopology.linkCount; link += 1) {
 }
 
 const centerDynamics = createOctahedralLivePhysics3D(rootBasisNetwork, {
-  aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+  aspectRatio: Math.SQRT2 * (100 / 2),
   stiffness: 5,
   simulationSpeed: 4,
 });
@@ -716,7 +716,7 @@ console.log(
 );
 
 const perturbedCenters = createOctahedralLivePhysics3D(rootBasisNetwork, {
-  aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+  aspectRatio: Math.SQRT2 * (100 / 2),
   stiffness: 5,
   simulationSpeed: 4,
 });
