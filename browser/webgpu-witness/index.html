@@ -25,6 +25,12 @@
     button, select { background: #172338; color: #e9eef7; border: 1px solid #395070; border-radius: 8px; padding: 8px 12px; }
     button:hover { background: #20304a; }
     .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    .physics-controls { display: grid; grid-template-columns: repeat(3,minmax(220px,1fr)); gap: 12px; margin: 10px 0 14px; }
+    .physics-control { background: #0d1521; border: 1px solid #25334a; border-radius: 9px; padding: 10px 12px; }
+    .physics-control label { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 7px; color: #9fb1c9; }
+    .physics-control output { color: #65d98b; font: 600 13px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .physics-control input[type="range"] { width: 100%; accent-color: #65d98b; }
+    @media (max-width: 850px) { .physics-controls { grid-template-columns: 1fr; } }
     pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 260px; overflow: auto; }
     .section { margin-top: 16px; }
   </style>
@@ -66,6 +72,29 @@
       </label>
       <button id="restart-render">Restart render</button>
       <button id="pause-render">Pause</button>
+    </div>
+    <div class="physics-controls" aria-label="Live physics controls">
+      <div class="physics-control">
+        <label for="length-octa">
+          <span>Link length</span>
+          <output id="length-value">20 octa · aspect 15.556</output>
+        </label>
+        <input id="length-octa" type="range" min="10" max="100" step="2" value="20">
+      </div>
+      <div class="physics-control">
+        <label for="stiffness">
+          <span>Spring stiffness</span>
+          <output id="stiffness-value">1.00</output>
+        </label>
+        <input id="stiffness" type="range" min="0" max="5" step="0.05" value="1">
+      </div>
+      <div class="physics-control">
+        <label for="simulation-speed">
+          <span>Simulation speed</span>
+          <output id="simulation-speed-value">1.00×</output>
+        </label>
+        <input id="simulation-speed" type="range" min="0" max="4" step="0.05" value="1">
+      </div>
     </div>
     <canvas id="gpu-canvas"></canvas>
     <div class="grid" style="margin-top:12px">
