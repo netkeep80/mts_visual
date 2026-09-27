@@ -39,9 +39,35 @@ Numerical damping and base timestep are fixed engine constants, not user-visible
 
 ## Initial embedding
 
-Each Link receives one copy of the cached normalized template translated to a deterministic presentation center.
+Each Link receives one copy of the cached normalized template placed into a deterministic **volumetric** presentation seed.
 
-After placement, START and END apexes are projected to the virtual geometric centers named by `start[i]` and `end[i]`.
+The accepted seed layout is a centered cubic lattice:
+
+```text
+side  = ceil(cuberoot(linkCount))
+depth = ceil(linkCount / (side * side))
+spacing = max(template.diameter * 2.5, template.restLength * 0.75)
+
+x = linkIndex % side
+y = floor(linkIndex / side) % side
+z = floor(linkIndex / (side * side))
+```
+
+Coordinates are centered around the used lattice extents. For fixed template geometry this is O(N) to materialize and the scene extent grows O(cuberoot(N)), not O(N).
+
+A one-dimensional seed such as `[(i-(N-1)/2)*spacing,0,0]` is forbidden: it creates a symmetry trap in which large A-networks initialize as a string.
+
+Before hinge projection, the normalized mast local +Z axis is rotated toward:
+
+```text
+seedCenter(end[i]) - seedCenter(start[i])
+```
+
+when that vector is nonzero. Coincident target centers, including self-incidence, use a deterministic finite fallback axis based only on Link index. This orientation is presentation initialization only; it does not constrain later hinge orientation.
+
+The mast's virtual center remains exactly at its own seeded center.
+
+After placement/orientation, START and END apexes are projected to the virtual geometric centers named by `start[i]` and `end[i]`.
 
 Self-incidence therefore starts finite:
 
@@ -119,6 +145,9 @@ Tests must prove:
 
 - packed array sizes are exact;
 - initial double-self Link is finite and non-collapsed;
+- representative multi-Link seed centers are non-collinear and have genuine 3D span;
+- seed spatial extent follows the cubic O(cuberoot(N)) bound rather than the former linear string layout;
+- non-self mast longitudinal orientation follows START-target -> END-target seed direction before apex projection;
 - zero stiffness produces no free internal motion;
 - nonzero stiffness deforms a projected self-Link and remains finite;
 - speed 0 pauses integration;
