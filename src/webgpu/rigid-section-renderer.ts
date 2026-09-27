@@ -178,42 +178,23 @@ export function estimateRigidSectionWebGpuRender3D(
   });
 }
 
+const CENTER_ICO_VERTICES_WGSL =
+  RIGID_SECTION_CENTER_ICOSAHEDRON_VERTICES
+    .map(([x, y, z]) =>
+      `vec3<f32>(${x.toPrecision(10)}, ${y.toPrecision(10)}, ${z.toPrecision(10)})`)
+    .join(",\\n  ");
+
+const CENTER_ICO_FACES_WGSL =
+  RIGID_SECTION_CENTER_ICOSAHEDRON_FACES
+    .map(([a, b, c]) => `vec3<u32>(${a}u, ${b}u, ${c}u)`)
+    .join(",\\n  ");
+
 export const RIGID_SECTION_WEBGPU_RENDER_WGSL = /* wgsl */ `
 const CENTER_ICO_VERTICES: array<vec3<f32>, 12> = array<vec3<f32>, 12>(
-  vec3<f32>(-0.5257311121, 0.8506508084, 0.000000000),
-  vec3<f32>(0.5257311121, 0.8506508084, 0.000000000),
-  vec3<f32>(-0.5257311121, -0.8506508084, 0.000000000),
-  vec3<f32>(0.5257311121, -0.8506508084, 0.000000000),
-  vec3<f32>(0.000000000, -0.5257311121, 0.8506508084),
-  vec3<f32>(0.000000000, 0.5257311121, 0.8506508084),
-  vec3<f32>(0.000000000, -0.5257311121, -0.8506508084),
-  vec3<f32>(0.000000000, 0.5257311121, -0.8506508084),
-  vec3<f32>(0.8506508084, 0.000000000, -0.5257311121),
-  vec3<f32>(0.8506508084, 0.000000000, 0.5257311121),
-  vec3<f32>(-0.8506508084, 0.000000000, -0.5257311121),
-  vec3<f32>(-0.8506508084, 0.000000000, 0.5257311121)
+  ${CENTER_ICO_VERTICES_WGSL}
 );
 const CENTER_ICO_FACES: array<vec3<u32>, 20> = array<vec3<u32>, 20>(
-  vec3<u32>(0u, 11u, 5u),
-  vec3<u32>(0u, 5u, 1u),
-  vec3<u32>(0u, 1u, 7u),
-  vec3<u32>(0u, 7u, 10u),
-  vec3<u32>(0u, 10u, 11u),
-  vec3<u32>(1u, 5u, 9u),
-  vec3<u32>(5u, 11u, 4u),
-  vec3<u32>(11u, 10u, 2u),
-  vec3<u32>(10u, 7u, 6u),
-  vec3<u32>(7u, 1u, 8u),
-  vec3<u32>(3u, 9u, 4u),
-  vec3<u32>(3u, 4u, 2u),
-  vec3<u32>(3u, 2u, 6u),
-  vec3<u32>(3u, 6u, 8u),
-  vec3<u32>(3u, 8u, 9u),
-  vec3<u32>(4u, 9u, 5u),
-  vec3<u32>(2u, 4u, 11u),
-  vec3<u32>(6u, 2u, 10u),
-  vec3<u32>(8u, 6u, 7u),
-  vec3<u32>(9u, 8u, 1u)
+  ${CENTER_ICO_FACES_WGSL}
 );
 const TAU: f32 = 6.283185307179586;
 
