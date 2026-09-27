@@ -67,6 +67,19 @@ interface WebGpuComputePipelineLike {
   readonly label?: string;
 }
 
+interface WebGpuCompilationMessageLike {
+  readonly type?: "error" | "warning" | "info" | string;
+  readonly message: string;
+  readonly lineNum?: number;
+  readonly linePos?: number;
+}
+
+interface WebGpuShaderModuleLike {
+  getCompilationInfo?(): Promise<{
+    readonly messages: readonly WebGpuCompilationMessageLike[];
+  }>;
+}
+
 export interface WebGpuDeviceLike {
   readonly queue: WebGpuQueueLike;
   readonly lost?: Promise<{
@@ -83,7 +96,7 @@ export interface WebGpuDeviceLike {
     readonly usage: number;
     readonly mappedAtCreation?: boolean;
   }): WebGpuBufferLike;
-  createShaderModule(descriptor: { readonly label?: string; readonly code: string }): object;
+  createShaderModule(descriptor: { readonly label?: string; readonly code: string }): WebGpuShaderModuleLike;
   createBindGroupLayout(descriptor: { readonly label?: string; readonly entries: readonly object[] }): object;
   createPipelineLayout(descriptor: { readonly label?: string; readonly bindGroupLayouts: readonly object[] }): object;
   createComputePipelineAsync(descriptor: {
@@ -325,8 +338,11 @@ struct Globals {
 @group(0) @binding(7) var<uniform> globals: Globals;
 @group(0) @binding(8) var<uniform> batch: vec4<u32>;
 
-fn linear_id(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
-  return gid.x + gid.y * groups.x * ${WORKGROUP_SIZE}u;
+fn linear_id(gid: vec3<u32>) -> u32 {
+  // Host dispatches one X row when the workload fits. Once it spills into Y,
+  // X is clamped to the WebGPU baseline slab width (65,535 workgroups).
+  // This keeps 2D linearization deterministic without @builtin(num_workgroups).
+  return gid.x + gid.y * ${DEFAULT_MAX_WORKGROUPS_PER_DIMENSION}u * ${WORKGROUP_SIZE}u;
 }
 
 fn vertex_scalar(link: u32, vertex: u32) -> u32 {
@@ -421,9 +437,8 @@ fn seed_axis(link: u32) -> vec3<f32> {
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn init_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
-  @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-  let linear = linear_id(gid, groups);
+  let linear = linear_id(gid);
   if (linear >= globals.bases_total.w) { return; }
 
   let vertex_count = globals.counts.y;
@@ -457,9 +472,8 @@ fn init_main(
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn clear_forces_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
-  @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-  let linear = linear_id(gid, groups);
+  let linear = linear_id(gid);
   if (linear >= globals.bases_total.w) { return; }
   store_force(linear * 3u, vec3<f32>(0.0));
 }
@@ -467,9 +481,8 @@ fn clear_forces_main(
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn spring_batch_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
-  @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-  let linear = linear_id(gid, groups);
+  let linear = linear_id(gid);
   let batch_count = batch.y;
   let total = globals.counts.x * batch_count;
   if (linear >= total || batch_count == 0u) { return; }
@@ -501,9 +514,8 @@ fn spring_batch_main(
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn hinge_gather_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
-  @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-  let target = linear_id(gid, groups);
+  let target = linear_id(gid);
   if (target >= globals.counts.x) { return; }
 
   let begin = incoming_offsets[target];
@@ -533,9 +545,8 @@ fn hinge_gather_main(
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn hinge_zero_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
-  @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-  let link = linear_id(gid, groups);
+  let link = linear_id(gid);
   if (link >= globals.counts.x) { return; }
 
   store_force(vertex_scalar(link, globals.counts.z), vec3<f32>(0.0));
@@ -545,9 +556,8 @@ fn hinge_zero_main(
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn integrate_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
-  @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-  let linear = linear_id(gid, groups);
+  let linear = linear_id(gid);
   if (linear >= globals.bases_total.w) { return; }
 
   let local = linear % globals.counts.y;
@@ -563,9 +573,8 @@ fn integrate_main(
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn project_hinges_main(
   @builtin(global_invocation_id) gid: vec3<u32>,
-  @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-  let link = linear_id(gid, groups);
+  let link = linear_id(gid);
   if (link >= globals.counts.x) { return; }
 
   let start_target = topology[link * 2u];
@@ -658,9 +667,34 @@ function batchData(offset: number, count: number): Uint32Array {
 
 function maxWorkgroups(device: WebGpuDeviceLike): number {
   const value = device.limits?.maxComputeWorkgroupsPerDimension;
-  return value === undefined
-    ? DEFAULT_MAX_WORKGROUPS_PER_DIMENSION
-    : requirePositiveSafeInteger(value, "device.maxComputeWorkgroupsPerDimension");
+  if (value === undefined) return DEFAULT_MAX_WORKGROUPS_PER_DIMENSION;
+  return Math.min(
+    requirePositiveSafeInteger(value, "device.maxComputeWorkgroupsPerDimension"),
+    DEFAULT_MAX_WORKGROUPS_PER_DIMENSION,
+  );
+}
+
+async function assertShaderModuleCompilation(
+  shaderModule: WebGpuShaderModuleLike,
+  label: string,
+): Promise<void> {
+  if (typeof shaderModule.getCompilationInfo !== "function") return;
+
+  const info = await shaderModule.getCompilationInfo();
+  const errors = info.messages.filter((message) => message.type === "error");
+  if (errors.length === 0) return;
+
+  const details = errors.map((message) => {
+    const line = message.lineNum;
+    const column = message.linePos;
+    const location = line === undefined
+      ? ""
+      : column === undefined
+        ? ` line ${line}`
+        : ` line ${line}:${column}`;
+    return `- ${label}${location}: ${message.message}`;
+  });
+  throw new Error(`${label} WGSL compilation failed:\n${details.join("\n")}`);
 }
 
 function encodeDispatch(
@@ -1072,6 +1106,7 @@ export async function createOctahedralWebGpuCompute3D(
     label: "octahedral-webgpu-compute",
     code: OCTAHEDRAL_WEBGPU_WGSL,
   });
+  await assertShaderModuleCompilation(shaderModule, "octahedral-webgpu-compute");
 
   const bindGroupLayout = device.createBindGroupLayout({
     label: "octahedral-webgpu-layout",
