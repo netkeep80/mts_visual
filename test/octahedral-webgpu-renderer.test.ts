@@ -349,7 +349,7 @@ same(
 same(device.draws[0]!.instanceCount, network.links.length, "surface draw instances semantic Links");
 same(device.draws[1]!.vertexCount, 6, "center marker is six procedural billboard vertices");
 same(device.draws[1]!.instanceCount, network.links.length, "center draw instances semantic Links");
-same(device.draws[2]!.vertexCount, 3, "END arrow is three procedural billboard vertices");
+same(device.draws[2]!.vertexCount, 6, "END arrow is a six-vertex procedural kite");
 same(device.draws[2]!.instanceCount, network.links.length, "arrow draw instances semantic Links");
 
 assert(
@@ -377,6 +377,14 @@ assert(
   "END arrow derives direction from last transverse triangle",
 );
 assert(
+  OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("let local = vertex_index % 6u;"),
+  "END marker is rendered as a six-vertex kite",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("vec3<f32>(0.0, 0.95, 1.0)"),
+  "END marker uses high-contrast cyan distinct from the blue Link surface",
+);
+assert(
   !/texture_/.test(OCTAHEDRAL_WEBGPU_RENDER_WGSL),
   "zero-copy WGSL has no position texture bridge",
 );
@@ -393,7 +401,7 @@ const million = estimateOctahedralWebGpuRender3D(1_000_000, compute.template);
 same(million.surfaceVerticesPerLink, 54, "minimum template renders 54 surface vertices per Link");
 same(million.surfaceVertexInvocations, 54_000_000, "million Links imply 54M surface vertex invocations");
 same(million.centerVertexInvocations, 6_000_000, "million Links imply 6M center billboard vertices");
-same(million.arrowVertexInvocations, 3_000_000, "million Links imply 3M arrow vertices");
+same(million.arrowVertexInvocations, 6_000_000, "million Links imply 6M arrow vertices");
 same(million.drawCalls, 3, "million-Link structural witness remains three draws");
 same(million.rendererDynamicPositionBytes, 0, "million-Link renderer owns zero dynamic position bytes");
 same(million.rendererInstanceAddressBytes, 0, "million-Link renderer owns zero instance-address bytes");
