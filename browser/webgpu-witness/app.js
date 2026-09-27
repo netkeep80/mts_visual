@@ -16,6 +16,8 @@ const ui = {
   simulationSpeed: $("simulation-speed"),
   simulationSpeedValue: $("simulation-speed-value"),
   restartRender: $("restart-render"),
+  resetView: $("reset-view"),
+  autoRotate: $("auto-rotate"),
   pauseRender: $("pause-render"),
   renderCompute: $("render-compute"),
   renderTopology: $("render-topology"),
@@ -423,6 +425,122 @@ function multiply4(a, b) {
   return out;
 }
 
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function cameraEye(camera) {
+  const cp = Math.cos(camera.pitch);
+  return [
+    camera.target[0] + Math.cos(camera.yaw) * cp * camera.distance,
+    camera.target[1] + Math.sin(camera.pitch) * camera.distance,
+    camera.target[2] + Math.sin(camera.yaw) * cp * camera.distance,
+  ];
+}
+
+function resetCamera(camera, distance) {
+  camera.yaw = -0.8;
+  camera.pitch = 0.38;
+  camera.distance = distance;
+  camera.defaultDistance = distance;
+  camera.minDistance = Math.max(2, distance * 0.08);
+  camera.maxDistance = distance * 20;
+  camera.target[0] = 0;
+  camera.target[1] = 0;
+  camera.target[2] = 0;
+}
+
+function cameraBasis(camera) {
+  const eye = cameraEye(camera);
+  const forward = normalize3([
+    camera.target[0] - eye[0],
+    camera.target[1] - eye[1],
+    camera.target[2] - eye[2],
+  ]);
+  const right = normalize3(cross(forward, [0, 1, 0]));
+  const up = normalize3(cross(right, forward));
+  return { eye, forward, right, up };
+}
+
+function panCamera(camera, dx, dy) {
+  const { right, up } = cameraBasis(camera);
+  const scale = camera.distance * 0.0015;
+  for (let axis = 0; axis < 3; axis += 1) {
+    camera.target[axis] += right[axis] * (-dx * scale) + up[axis] * (dy * scale);
+  }
+}
+
+function installCameraControls(state) {
+  const canvas = ui.canvas;
+  const abortController = new AbortController();
+  const listenerOptions = { signal: abortController.signal };
+  let pointerId = null;
+  let mode = null;
+  let lastX = 0;
+  let lastY = 0;
+
+  const endDrag = (event) => {
+    if (pointerId !== event.pointerId) return;
+    try { canvas.releasePointerCapture(pointerId); } catch {}
+    pointerId = null;
+    mode = null;
+    canvas.classList.remove("dragging");
+  };
+
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault(), listenerOptions);
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (pointerId !== null) return;
+    pointerId = event.pointerId;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    mode = event.button === 2 || (event.button === 0 && event.shiftKey)
+      ? "pan"
+      : "orbit";
+    canvas.setPointerCapture(pointerId);
+    canvas.classList.add("dragging");
+    event.preventDefault();
+  }, listenerOptions);
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (pointerId !== event.pointerId || mode === null) return;
+    const dx = event.clientX - lastX;
+    const dy = event.clientY - lastY;
+    lastX = event.clientX;
+    lastY = event.clientY;
+
+    if (mode === "orbit") {
+      state.camera.yaw -= dx * 0.006;
+      state.camera.pitch = clamp(
+        state.camera.pitch - dy * 0.006,
+        -Math.PI * 0.48,
+        Math.PI * 0.48,
+      );
+    } else {
+      panCamera(state.camera, dx, dy);
+    }
+    event.preventDefault();
+  }, listenerOptions);
+
+  canvas.addEventListener("pointerup", endDrag, listenerOptions);
+  canvas.addEventListener("pointercancel", endDrag, listenerOptions);
+
+  canvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const factor = Math.exp(event.deltaY * 0.001);
+    state.camera.distance = clamp(
+      state.camera.distance * factor,
+      state.camera.minDistance,
+      state.camera.maxDistance,
+    );
+  }, { passive: false, signal: abortController.signal });
+
+  return () => {
+    abortController.abort();
+    canvas.classList.remove("dragging");
+  };
+}
+
 function resizeCanvas(canvas) {
   const scale = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.round(canvas.clientWidth * scale));
@@ -441,6 +559,7 @@ function stopRender() {
   try { renderState.renderer.destroy(); } catch {}
   try { renderState.compute.destroy(); } catch {}
   try { renderState.depthTexture?.destroy(); } catch {}
+  try { renderState.cleanupCameraControls?.(); } catch {}
   renderState = null;
   renderPass = false;
 }
@@ -519,6 +638,9 @@ async function startRender() {
   setStatus(ui.renderZeroCopy, "PASS — shared positionBuffer · 0 B dynamic upload", "ok");
   updateOverall();
 
+  const side = Math.ceil(Math.cbrt(linkCount));
+  const spacing = compute.template.diameter * 1.5;
+  const defaultCameraDistance = Math.max(18, side * spacing * 2.6);
   const state = {
     compute,
     renderer,
@@ -530,8 +652,21 @@ async function startRender() {
     steps: 0,
     paused: false,
     startedAt: performance.now(),
+    lastFrameAt: performance.now(),
     lastUiAt: 0,
+    camera: {
+      yaw: 0,
+      pitch: 0,
+      distance: defaultCameraDistance,
+      defaultDistance: defaultCameraDistance,
+      minDistance: Math.max(2, defaultCameraDistance * 0.08),
+      maxDistance: defaultCameraDistance * 20,
+      target: [0, 0, 0],
+    },
+    cleanupCameraControls: null,
   };
+  resetCamera(state.camera, defaultCameraDistance);
+  state.cleanupCameraControls = installCameraControls(state);
   renderState = state;
   ui.pauseRender.textContent = "Pause";
 
@@ -558,21 +693,18 @@ async function startRender() {
         state.steps += 1;
       }
 
-      const seconds = (now - state.startedAt) / 1000;
-      const side = Math.ceil(Math.cbrt(linkCount));
-      const spacing = state.compute.template.diameter * 1.5;
-      const radius = Math.max(18, side * spacing * 2.6);
-      const eye = [
-        Math.cos(seconds * 0.16) * radius,
-        radius * 0.46,
-        Math.sin(seconds * 0.16) * radius,
-      ];
-      const view = lookAt(eye, [0, 0, 0], [0, 1, 0]);
+      const frameDeltaSeconds = Math.min(0.1, Math.max(0, (now - state.lastFrameAt) / 1000));
+      state.lastFrameAt = now;
+      if (ui.autoRotate.checked) {
+        state.camera.yaw += frameDeltaSeconds * 0.16;
+      }
+      const eye = cameraEye(state.camera);
+      const view = lookAt(eye, state.camera.target, [0, 1, 0]);
       const projection = perspective(
         Math.PI / 4,
         ui.canvas.width / ui.canvas.height,
         0.1,
-        radius * 8,
+        state.camera.maxDistance * 4,
       );
       const viewProjection = multiply4(projection, view);
 
@@ -635,6 +767,15 @@ ui.restartRender.addEventListener("click", () => {
     log(`render setup ERROR — ${error.stack ?? error}`);
     updateOverall();
   });
+});
+
+ui.resetView.addEventListener("click", () => {
+  if (!renderState) return;
+  resetCamera(renderState.camera, renderState.camera.defaultDistance);
+});
+
+ui.autoRotate.addEventListener("change", () => {
+  log(`camera auto-rotate ${ui.autoRotate.checked ? "enabled" : "disabled"}`);
 });
 
 ui.lengthOcta.addEventListener("input", () => {
