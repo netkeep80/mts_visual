@@ -6,6 +6,7 @@ import {
   type OctahedralLivePhysics3D,
   type VisualLinkNetwork,
 } from "../src/index.js";
+import { getOctahedralSeedGrid3D } from "../src/octahedral-layout3d.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`@mts/visual M5/#27: ${message}`);
@@ -259,10 +260,10 @@ assert(
   `20-octahedron baseline is line-like with aspectRatio≈15.56, got ${controller.template.aspectRatio}`,
 );
 
-const seedSpacing = controller.template.diameter * 1.5;
+const seedGrid = getOctahedralSeedGrid3D(controller.template, controller.topology.linkCount);
 assert(
-  Math.abs(seedSpacing - controller.template.diameter * 1.5) <= 1e-12,
-  "hub-heavy baseline uses diameter-derived seed spacing",
+  Math.abs(seedGrid.spacing - controller.template.diameter * 1.5) <= 1e-12,
+  "hub-heavy baseline uses diameter-derived seed spacing independent of rod rest length",
 );
 
 const initialSprings = springMetrics(controller);
