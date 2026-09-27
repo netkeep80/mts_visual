@@ -7,6 +7,7 @@ import {
   RIGID_SECTION_ANGULAR_DAMPING_RATE,
   RIGID_SECTION_BASE_TIME_STEP,
   RIGID_SECTION_LINEAR_DAMPING_RATE,
+  RIGID_SECTION_NODE_MASS,
   buildRigidSectionReverseIncidence3D,
   createRigidSectionPhysics3D,
   getRigidSectionTemplate3D,
@@ -70,7 +71,24 @@ interface WebGpuCommandEncoderLike {
 
 export interface RigidSectionWebGpuComputeOptions3D {
   readonly aspectRatio: number;
-  readonly stiffness: number;
+  /** Legacy isotropic alias. */
+  readonly stiffness?: number;
+  readonly longitudinalStiffness?: number;
+  readonly transverseStiffness?: number;
+  readonly nonlinearity?: number;
+  readonly nodeMass?: number;
+  readonly linearDampingRate?: number;
+  readonly angularDampingRate?: number;
+  readonly simulationSpeed: number;
+}
+
+interface ResolvedRigidSectionWebGpuPhysics3D {
+  readonly longitudinalStiffness: number;
+  readonly transverseStiffness: number;
+  readonly nonlinearity: number;
+  readonly nodeMass: number;
+  readonly linearDampingRate: number;
+  readonly angularDampingRate: number;
   readonly simulationSpeed: number;
 }
 
@@ -156,6 +174,12 @@ export interface RigidSectionWebGpuSnapshot3D {
   readonly forceBytes: number;
   readonly torqueBytes: number;
   readonly stiffness: number;
+  readonly longitudinalStiffness: number;
+  readonly transverseStiffness: number;
+  readonly nonlinearity: number;
+  readonly nodeMass: number;
+  readonly linearDampingRate: number;
+  readonly angularDampingRate: number;
   readonly simulationSpeed: number;
 }
 
@@ -167,9 +191,22 @@ export interface RigidSectionWebGpuCompute3D {
   readonly linearVelocityBuffer: WebGpuBufferLike;
   readonly angularVelocityBuffer: WebGpuBufferLike;
   readonly stiffness: number;
+  readonly longitudinalStiffness: number;
+  readonly transverseStiffness: number;
+  readonly nonlinearity: number;
+  readonly nodeMass: number;
+  readonly linearDampingRate: number;
+  readonly angularDampingRate: number;
   readonly simulationSpeed: number;
   step(): RigidSectionWebGpuStepStats3D;
+  /** Legacy isotropic setter; updates both longitudinal and transverse stiffness. */
   setStiffness(value: number): void;
+  setLongitudinalStiffness(value: number): void;
+  setTransverseStiffness(value: number): void;
+  setNonlinearity(value: number): void;
+  setNodeMass(value: number): void;
+  setLinearDampingRate(value: number): void;
+  setAngularDampingRate(value: number): void;
   setSimulationSpeed(value: number): void;
   writeCenterOverrides(
     overrides: readonly RigidSectionWebGpuCenterOverride3D[],
@@ -194,9 +231,10 @@ export const RIGID_SECTION_WEBGPU_WGSL = `
 struct Globals {
   counts: vec4<u32>,
   counts2: vec4<u32>,
-  physics: vec4<f32>,
-  geometry: vec4<f32>,
+  physics: vec4<f32>,          // kLongitudinal, kTransverse, nonlinearity, dt
+  geometry: vec4<f32>,         // moduleHeight, triangleRadius, inverseMass, characteristicLength
   inverse_inertia: vec4<f32>,
+  damping: vec4<f32>,          // linearFactor, angularFactor, 0, 0
 };
 
 @group(0) @binding(0) var<storage, read_write> centers: array<vec4<f32>>;
@@ -301,7 +339,9 @@ fn relation_batch_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let upper_center = centers[upper].xyz;
   let lower_q = orientations[lower];
   let upper_q = orientations[upper];
-  let k = globals.physics.x;
+  let longitudinal_axis = q_rotate(lower_q, vec3<f32>(0.0, 0.0, 1.0));
+  let characteristic_length_squared =
+    globals.geometry.w * globals.geometry.w;
 
   var lower_force = accumulation[force_slot(lower)].xyz;
   var upper_force = accumulation[force_slot(upper)].xyz;
@@ -314,13 +354,35 @@ fn relation_batch_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let actual = upper_center + q_rotate(upper_q, local_upper);
     let target_point = lower_center + q_rotate(lower_q, local_target);
     let delta = actual - target_point;
-    let force_upper = -k * delta;
-    let force_lower = -force_upper;
+    let longitudinal = dot(delta, longitudinal_axis);
+    let longitudinal_delta = longitudinal_axis * longitudinal;
+    let transverse_delta = delta - longitudinal_delta;
+    let longitudinal_squared = longitudinal * longitudinal;
+    let transverse_squared = dot(transverse_delta, transverse_delta);
+    let longitudinal_scale =
+      globals.physics.x
+      * (1.0 + globals.physics.z
+        * longitudinal_squared / characteristic_length_squared);
+    let transverse_scale =
+      globals.physics.y
+      * (1.0 + globals.physics.z
+        * transverse_squared / characteristic_length_squared);
+    let potential_gradient =
+      longitudinal_scale * longitudinal_delta
+      + transverse_scale * transverse_delta;
+    let force_upper = -potential_gradient;
+    let force_lower = potential_gradient;
+    let axis_gradient_scalar =
+      longitudinal * (longitudinal_scale - transverse_scale);
+    let axis_torque =
+      -axis_gradient_scalar * cross(longitudinal_axis, delta);
 
     upper_force = upper_force + force_upper;
     lower_force = lower_force + force_lower;
     upper_torque = upper_torque + cross(actual - upper_center, force_upper);
-    lower_torque = lower_torque + cross(target_point - lower_center, force_lower);
+    lower_torque = lower_torque
+      + cross(target_point - lower_center, force_lower)
+      + axis_torque;
   }
 
   accumulation[force_slot(lower)] = vec4<f32>(lower_force, 0.0);
@@ -336,13 +398,13 @@ fn integrate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     return;
   }
 
-  let dt = globals.physics.y;
+  let dt = globals.physics.w;
   if (dt == 0.0) {
     return;
   }
 
   var v = linear_velocities[body].xyz;
-  v = (v + accumulation[force_slot(body)].xyz * globals.geometry.z * dt) * globals.physics.z;
+  v = (v + accumulation[force_slot(body)].xyz * globals.geometry.z * dt) * globals.damping.x;
   let next_center = centers[body].xyz + v * dt;
 
   let q = q_normalize(orientations[body]);
@@ -355,7 +417,7 @@ fn integrate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let alpha_local = (torque_local - gyroscopic) * globals.inverse_inertia.xyz;
   let alpha_world = q_rotate(q, alpha_local);
 
-  omega = (omega + alpha_world * dt) * globals.physics.w;
+  omega = (omega + alpha_world * dt) * globals.damping.y;
   let dq = q_mul_raw(vec4<f32>(omega, 0.0), q);
   let next_q = q_normalize(q + 0.5 * dq * dt);
 
@@ -435,6 +497,49 @@ function requireNonNegativeFinite(value: number, label: string): number {
   return value;
 }
 
+function requirePositiveFinite(value: number, label: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`invalid rigid-section WebGPU ${label}: ${value}`);
+  }
+  return value;
+}
+
+function resolveWebGpuPhysics(
+  options: RigidSectionWebGpuComputeOptions3D,
+): ResolvedRigidSectionWebGpuPhysics3D {
+  const isotropic = options.stiffness;
+  return Object.freeze({
+    longitudinalStiffness: requireNonNegativeFinite(
+      options.longitudinalStiffness ?? isotropic ?? 1,
+      "longitudinalStiffness",
+    ),
+    transverseStiffness: requireNonNegativeFinite(
+      options.transverseStiffness ?? isotropic ?? 1,
+      "transverseStiffness",
+    ),
+    nonlinearity: requireNonNegativeFinite(
+      options.nonlinearity ?? 0,
+      "nonlinearity",
+    ),
+    nodeMass: requirePositiveFinite(
+      options.nodeMass ?? RIGID_SECTION_NODE_MASS,
+      "nodeMass",
+    ),
+    linearDampingRate: requireNonNegativeFinite(
+      options.linearDampingRate ?? RIGID_SECTION_LINEAR_DAMPING_RATE,
+      "linearDampingRate",
+    ),
+    angularDampingRate: requireNonNegativeFinite(
+      options.angularDampingRate ?? RIGID_SECTION_ANGULAR_DAMPING_RATE,
+      "angularDampingRate",
+    ),
+    simulationSpeed: requireNonNegativeFinite(
+      options.simulationSpeed,
+      "simulationSpeed",
+    ),
+  });
+}
+
 function createBuffer(
   device: WebGpuDeviceLike,
   label: string,
@@ -505,10 +610,9 @@ function packedTopologyData(
 function globalsData(
   topology: OctahedralLinkTopology3D,
   template: RigidSectionTemplate3D,
-  stiffness: number,
-  simulationSpeed: number,
+  physics: ResolvedRigidSectionWebGpuPhysics3D,
 ): ArrayBuffer {
-  const buffer = new ArrayBuffer(80);
+  const buffer = new ArrayBuffer(96);
   const u32 = new Uint32Array(buffer);
   const f32 = new Float32Array(buffer);
   const bodyCount = topology.linkCount * template.sectionCount;
@@ -522,19 +626,24 @@ function globalsData(
   u32[6] = topology.linkCount * 2;
   u32[7] = u32[6]! + topology.linkCount + 1;
 
-  const dt = RIGID_SECTION_BASE_TIME_STEP * simulationSpeed;
-  f32[8] = stiffness;
-  f32[9] = dt;
-  f32[10] = Math.exp(-RIGID_SECTION_LINEAR_DAMPING_RATE * dt);
-  f32[11] = Math.exp(-RIGID_SECTION_ANGULAR_DAMPING_RATE * dt);
+  const dt = RIGID_SECTION_BASE_TIME_STEP * physics.simulationSpeed;
+  const inverseSectionMass = 1 / (3 * physics.nodeMass);
+  f32[8] = physics.longitudinalStiffness;
+  f32[9] = physics.transverseStiffness;
+  f32[10] = physics.nonlinearity;
+  f32[11] = dt;
   f32[12] = template.moduleHeight;
   f32[13] = template.localTriangleVertices[0]!;
-  f32[14] = template.inverseSectionMass;
-  f32[15] = 0;
-  f32[16] = template.inverseLocalInertia[0];
-  f32[17] = template.inverseLocalInertia[1];
-  f32[18] = template.inverseLocalInertia[2];
+  f32[14] = inverseSectionMass;
+  f32[15] = template.edgeRestLength;
+  f32[16] = template.inverseLocalInertia[0] / physics.nodeMass;
+  f32[17] = template.inverseLocalInertia[1] / physics.nodeMass;
+  f32[18] = template.inverseLocalInertia[2] / physics.nodeMass;
   f32[19] = 0;
+  f32[20] = Math.exp(-physics.linearDampingRate * dt);
+  f32[21] = Math.exp(-physics.angularDampingRate * dt);
+  f32[22] = 0;
+  f32[23] = 0;
   return buffer;
 }
 
@@ -628,7 +737,12 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
   private readonly bindGroups: readonly object[];
   private readonly pipelines: Readonly<Record<string, WebGpuComputePipelineLike>>;
   private readonly maximumWorkgroups: number;
-  private currentStiffness: number;
+  private currentLongitudinalStiffness: number;
+  private currentTransverseStiffness: number;
+  private currentNonlinearity: number;
+  private currentNodeMass: number;
+  private currentLinearDampingRate: number;
+  private currentAngularDampingRate: number;
   private currentSimulationSpeed: number;
   private destroyed = false;
   private deviceLost = false;
@@ -649,8 +763,7 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
     controlBuffers: readonly WebGpuBufferLike[];
     bindGroups: readonly object[];
     pipelines: Readonly<Record<string, WebGpuComputePipelineLike>>;
-    stiffness: number;
-    simulationSpeed: number;
+    physics: ResolvedRigidSectionWebGpuPhysics3D;
   }) {
     this.device = args.device;
     this.topology = args.topology;
@@ -666,8 +779,13 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
     this.controlBuffers = args.controlBuffers;
     this.bindGroups = args.bindGroups;
     this.pipelines = args.pipelines;
-    this.currentStiffness = args.stiffness;
-    this.currentSimulationSpeed = args.simulationSpeed;
+    this.currentLongitudinalStiffness = args.physics.longitudinalStiffness;
+    this.currentTransverseStiffness = args.physics.transverseStiffness;
+    this.currentNonlinearity = args.physics.nonlinearity;
+    this.currentNodeMass = args.physics.nodeMass;
+    this.currentLinearDampingRate = args.physics.linearDampingRate;
+    this.currentAngularDampingRate = args.physics.angularDampingRate;
+    this.currentSimulationSpeed = args.physics.simulationSpeed;
     this.maximumWorkgroups = maxWorkgroups(args.device);
 
     void args.device.lost?.then((info) => {
@@ -682,7 +800,31 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
   }
 
   get stiffness(): number {
-    return this.currentStiffness;
+    return this.currentLongitudinalStiffness;
+  }
+
+  get longitudinalStiffness(): number {
+    return this.currentLongitudinalStiffness;
+  }
+
+  get transverseStiffness(): number {
+    return this.currentTransverseStiffness;
+  }
+
+  get nonlinearity(): number {
+    return this.currentNonlinearity;
+  }
+
+  get nodeMass(): number {
+    return this.currentNodeMass;
+  }
+
+  get linearDampingRate(): number {
+    return this.currentLinearDampingRate;
+  }
+
+  get angularDampingRate(): number {
+    return this.currentAngularDampingRate;
   }
 
   get simulationSpeed(): number {
@@ -696,6 +838,18 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
     }
   }
 
+  private resolvedPhysics(): ResolvedRigidSectionWebGpuPhysics3D {
+    return Object.freeze({
+      longitudinalStiffness: this.currentLongitudinalStiffness,
+      transverseStiffness: this.currentTransverseStiffness,
+      nonlinearity: this.currentNonlinearity,
+      nodeMass: this.currentNodeMass,
+      linearDampingRate: this.currentLinearDampingRate,
+      angularDampingRate: this.currentAngularDampingRate,
+      simulationSpeed: this.currentSimulationSpeed,
+    });
+  }
+
   private updateGlobals(): void {
     writeWhole(
       this.device,
@@ -703,15 +857,56 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
       globalsData(
         this.topology,
         this.template,
-        this.currentStiffness,
-        this.currentSimulationSpeed,
+        this.resolvedPhysics(),
       ),
     );
   }
 
   setStiffness(value: number): void {
     this.assertAlive();
-    this.currentStiffness = requireNonNegativeFinite(value, "stiffness");
+    const stiffness = requireNonNegativeFinite(value, "stiffness");
+    this.currentLongitudinalStiffness = stiffness;
+    this.currentTransverseStiffness = stiffness;
+    this.updateGlobals();
+  }
+
+  setLongitudinalStiffness(value: number): void {
+    this.assertAlive();
+    this.currentLongitudinalStiffness =
+      requireNonNegativeFinite(value, "longitudinalStiffness");
+    this.updateGlobals();
+  }
+
+  setTransverseStiffness(value: number): void {
+    this.assertAlive();
+    this.currentTransverseStiffness =
+      requireNonNegativeFinite(value, "transverseStiffness");
+    this.updateGlobals();
+  }
+
+  setNonlinearity(value: number): void {
+    this.assertAlive();
+    this.currentNonlinearity = requireNonNegativeFinite(value, "nonlinearity");
+    this.updateGlobals();
+  }
+
+  setNodeMass(value: number): void {
+    this.assertAlive();
+    this.currentNodeMass = requirePositiveFinite(value, "nodeMass");
+    this.updateGlobals();
+  }
+
+  setLinearDampingRate(value: number): void {
+    this.assertAlive();
+    this.currentLinearDampingRate =
+      requireNonNegativeFinite(value, "linearDampingRate");
+    this.updateGlobals();
+  }
+
+  setAngularDampingRate(value: number): void {
+    this.assertAlive();
+    this.currentAngularDampingRate =
+      requireNonNegativeFinite(value, "angularDampingRate");
     this.updateGlobals();
   }
 
@@ -908,7 +1103,13 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
       angularVelocityBytes: vec4Bytes,
       forceBytes: vec4Bytes,
       torqueBytes: vec4Bytes,
-      stiffness: this.currentStiffness,
+      stiffness: this.currentLongitudinalStiffness,
+      longitudinalStiffness: this.currentLongitudinalStiffness,
+      transverseStiffness: this.currentTransverseStiffness,
+      nonlinearity: this.currentNonlinearity,
+      nodeMass: this.currentNodeMass,
+      linearDampingRate: this.currentLinearDampingRate,
+      angularDampingRate: this.currentAngularDampingRate,
       simulationSpeed: this.currentSimulationSpeed,
     });
   }
@@ -963,14 +1164,18 @@ export async function createRigidSectionWebGpuCompute3D(
   network: VisualLinkNetwork,
   options: RigidSectionWebGpuComputeOptions3D,
 ): Promise<RigidSectionWebGpuCompute3D> {
-  const stiffness = requireNonNegativeFinite(options.stiffness, "stiffness");
-  const simulationSpeed = requireNonNegativeFinite(options.simulationSpeed, "simulationSpeed");
+  const physics = resolveWebGpuPhysics(options);
   const topology = buildOctahedralLinkTopology3D(network);
   const template = getRigidSectionTemplate3D(options.aspectRatio);
   const cpuSeed = createRigidSectionPhysics3D(network, {
     aspectRatio: options.aspectRatio,
-    stiffness,
-    simulationSpeed,
+    longitudinalStiffness: physics.longitudinalStiffness,
+    transverseStiffness: physics.transverseStiffness,
+    nonlinearity: physics.nonlinearity,
+    nodeMass: physics.nodeMass,
+    linearDampingRate: physics.linearDampingRate,
+    angularDampingRate: physics.angularDampingRate,
+    simulationSpeed: physics.simulationSpeed,
   });
   const reverse = buildRigidSectionReverseIncidence3D(topology);
   const bodyCount = topology.linkCount * template.sectionCount;
@@ -1016,7 +1221,7 @@ export async function createRigidSectionWebGpuCompute3D(
     topologyData.byteLength,
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST,
   );
-  const globalsBuffer = createBuffer(device, "rigid-section-globals", 80,
+  const globalsBuffer = createBuffer(device, "rigid-section-globals", 96,
     GPU_BUFFER_USAGE.UNIFORM | GPU_BUFFER_USAGE.COPY_DST);
 
   writeWhole(device, centerBuffer, packVec3ToVec4(cpuSeed.centers));
@@ -1024,7 +1229,7 @@ export async function createRigidSectionWebGpuCompute3D(
   writeWhole(device, linearVelocityBuffer, packVec3ToVec4(cpuSeed.linearVelocities));
   writeWhole(device, angularVelocityBuffer, packVec3ToVec4(cpuSeed.angularVelocities));
   writeWhole(device, topologyDataBuffer, topologyData);
-  writeWhole(device, globalsBuffer, globalsData(topology, template, stiffness, simulationSpeed));
+  writeWhole(device, globalsBuffer, globalsData(topology, template, physics));
 
   const controlValues = [0, 1] as const;
   const controlBuffers = controlValues.map((value, index) => {
@@ -1104,8 +1309,7 @@ export async function createRigidSectionWebGpuCompute3D(
     controlBuffers,
     bindGroups,
     pipelines,
-    stiffness,
-    simulationSpeed,
+    physics,
   });
 }
 
