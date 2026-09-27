@@ -303,12 +303,17 @@ function fakeShape(
     topology.linkCount * 16,
     "monolithic-link-roll-gauge",
   );
+  const sectionFrameBuffer = new FakeBuffer(
+    topology.linkCount * (template.octahedronCount + 1) * 16,
+    "monolithic-link-section-frames",
+  );
   let destroyed = false;
   return {
     compute,
     template,
     parameterBuffer,
     gaugeBuffer,
+    sectionFrameBuffer,
     update() {
       return {
         dispatches: 1,
@@ -324,14 +329,19 @@ function fakeShape(
         sectionCount: template.octahedronCount + 1,
         parameterBytes: topology.linkCount * 16,
         gaugeBytes: topology.linkCount * 16,
+        sectionFrameBytes:
+          topology.linkCount * (template.octahedronCount + 1) * 16,
         topologyBytes: topology.linkCount * 2 * 4,
-        dynamicStateBytes: topology.linkCount * 32,
+        dynamicStateBytes:
+          topology.linkCount * 32
+          + topology.linkCount * (template.octahedronCount + 1) * 16,
       };
     },
     destroy() {
       destroyed = true;
       parameterBuffer.destroy();
       gaugeBuffer.destroy();
+      sectionFrameBuffer.destroy();
     },
   };
 }
@@ -340,7 +350,10 @@ for (const needle of [
   "@group(0) @binding(0) var<storage, read> semantic_centers",
   "@group(0) @binding(1) var<storage, read> shape_parameters",
   "@group(0) @binding(2) var<storage, read> roll_gauge",
+  "@group(0) @binding(3) var<storage, read> section_frames",
   "fn sample_section",
+  "let descriptor = section_frames[link * scene.counts.w + section];",
+  "let twist = select(0.0, PI / 3.0, (section & 1u) == 1u);",
   "fn ordinary_sample",
   "fn self_sample",
   "let center = semantic_centers[instance_index].xyz;",
@@ -357,6 +370,18 @@ assert(
     MONOLITHIC_LINK_WEBGPU_RENDER_WGSL,
   ),
   "renderer contains no per-section physical rotation state",
+);
+assert(
+  !MONOLITHIC_LINK_WEBGPU_RENDER_WGSL.includes(
+    "f32(section) / f32(scene.counts.z)",
+  ),
+  "renderer does not use raw curve parameter as arc-length section coordinate",
+);
+assert(
+  !MONOLITHIC_LINK_WEBGPU_RENDER_WGSL.includes(
+    "f32(section) * PI / 3.0",
+  ),
+  "renderer does not cumulatively relabel octahedral triangle corners",
 );
 
 const compute = fakeCompute();
@@ -386,6 +411,11 @@ same(
   renderer.shapeGaugeBuffer,
   shape.gaugeBuffer,
   "renderer shares exact persistent roll-gauge buffer",
+);
+same(
+  renderer.shapeSectionFrameBuffer,
+  shape.sectionFrameBuffer,
+  "renderer shares exact GPU-derived arc/frame buffer",
 );
 
 const surfacePipeline = device.pipelineDescriptors.find(
@@ -424,6 +454,7 @@ const bound = bind.entries.map(
 same(bound[0], compute.centerBuffer, "binding 0 is semantic CENTER buffer");
 same(bound[1], shape.parameterBuffer, "binding 1 is compact shape buffer");
 same(bound[2], shape.gaugeBuffer, "binding 2 is persistent roll gauge");
+same(bound[3], shape.sectionFrameBuffer, "binding 3 is derived section frame buffer");
 
 const identity = new Float32Array([
   1, 0, 0, 0,
@@ -492,7 +523,7 @@ renderer.destroy();
 same(renderer.snapshot().status, "destroyed", "renderer destroy updates status");
 
 console.log(
-  "[v0.5 #92 monolithic renderer] PASS links="
+  "[v0.5 #102 monolithic carrier renderer] PASS links="
   + snapshot.linkCount
   + " octa="
   + snapshot.octahedronCount
