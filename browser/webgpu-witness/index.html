@@ -96,8 +96,8 @@
 
   <section class="card section">
     <div class="toolbar">
-      <h2 style="margin-right:auto">v0.5 redesign · monolithic Link CPU ↔ GPU differential</h2>
-      <span class="muted">#92 experimental physical kernel · not yet the live renderer</span>
+      <h2 style="margin-right:auto">v0.5 monolithic Link CPU ↔ GPU differential</h2>
+      <span class="muted">#92 authoritative live physical kernel</span>
     </div>
     <table>
       <thead>
@@ -109,15 +109,15 @@
       <tbody id="monolithic-diff-body"></tbody>
     </table>
     <div class="camera-hint">
-      Temporary control mapping: node mass → CENTER mass · longitudinal k → stretch k ·
-      transverse k → straightening k · linear damping → CENTER damping.
+      Live physical contract: CENTER mass · stretch stiffness · straightening stiffness ·
+      conservative nonlinearity · CENTER damping.
     </div>
   </section>
 
   <section class="card section">
     <div class="toolbar">
-      <h2 style="margin-right:auto">v0.5 rigid-section zero-copy live render</h2>
-      <span class="muted">tunable CPU/WebGPU physical contract</span>
+      <h2 style="margin-right:auto">v0.5 monolithic Link zero-copy live render</h2>
+      <span class="muted">semantic CENTER physics · globally derived octahedral carrier</span>
     </div>
 
     <div class="live-lab">
@@ -152,7 +152,7 @@
 
         <div class="physics-control">
           <label for="node-mass">
-            <span>Node mass</span>
+            <span>CENTER mass</span>
             <output id="node-mass-value">1.00</output>
           </label>
           <input id="node-mass" type="range" min="0.05" max="20" step="0.05" value="1">
@@ -160,7 +160,7 @@
 
         <div class="physics-control">
           <label for="longitudinal-stiffness">
-            <span>Longitudinal k</span>
+            <span>Stretch k</span>
             <output id="longitudinal-stiffness-value">1.00</output>
           </label>
           <input id="longitudinal-stiffness" type="range" min="0" max="100" step="0.1" value="1">
@@ -168,7 +168,7 @@
 
         <div class="physics-control">
           <label for="transverse-stiffness">
-            <span>Transverse k</span>
+            <span>Straightening k</span>
             <output id="transverse-stiffness-value">1.00</output>
           </label>
           <input id="transverse-stiffness" type="range" min="0" max="100" step="0.1" value="1">
@@ -184,7 +184,7 @@
 
         <div class="physics-control">
           <label for="linear-damping">
-            <span>Linear damping</span>
+            <span>CENTER damping</span>
             <output id="linear-damping-value">1.50</output>
           </label>
           <input id="linear-damping" type="range" min="0" max="10" step="0.05" value="1.5">
@@ -192,7 +192,7 @@
 
         <div class="physics-control">
           <label for="angular-damping">
-            <span>Angular damping</span>
+            <span>Legacy rigid angular damping</span>
             <output id="angular-damping-value">1.50</output>
           </label>
           <input id="angular-damping" type="range" min="0" max="10" step="0.05" value="1.5">
@@ -264,13 +264,13 @@
           <tr>
             <th>Link</th>
             <th>Equation</th>
-            <th>START hinge err</th>
-            <th>END hinge err</th>
+            <th>|S-C|</th>
+            <th>|C-E|</th>
+            <th>bend |S-2C+E|</th>
             <th>Δ CENTER</th>
             <th>Potential E</th>
-            <th>max |v|</th>
-            <th>max |ω|</th>
-            <th>max |q|-1</th>
+            <th>|v CENTER|</th>
+            <th>rest L</th>
           </tr>
         </thead>
         <tbody id="geometry-body">
