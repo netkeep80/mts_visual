@@ -3,6 +3,7 @@ import {
   computeOctahedralGeometricCenter3D,
   createOctahedralLivePhysics3D,
   getOctahedralLinkTemplate3D,
+  projectOctahedralHinges3D,
   transitionOctahedralLivePhysics3DNetwork,
   type OctahedralLivePhysics3D,
 } from "../src/index.js";
@@ -565,6 +566,99 @@ for (let link = 0; link < rootBasisTopology.linkCount; link += 1) {
     );
   }
 }
+
+const centerDynamics = createOctahedralLivePhysics3D(rootBasisNetwork, {
+  aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+  stiffness: 5,
+  simulationSpeed: 4,
+});
+const centerInitial = new Map<string, readonly [number, number, number]>();
+for (let link = 0; link < centerDynamics.topology.linkCount; link += 1) {
+  centerInitial.set(centerDynamics.topology.keys[link]!, geometricCenter(centerDynamics, link));
+}
+
+const centerDisplacements = new Map<number, Map<string, number>>();
+for (let step = 1; step <= 1200; step += 1) {
+  centerDynamics.step();
+  if (step === 1 || step === 30 || step === 300 || step === 1200) {
+    const snapshot = new Map<string, number>();
+    for (let link = 0; link < centerDynamics.topology.linkCount; link += 1) {
+      const key = centerDynamics.topology.keys[link]!;
+      snapshot.set(
+        key,
+        distance3(centerInitial.get(key)!, geometricCenter(centerDynamics, link)),
+      );
+    }
+    centerDisplacements.set(step, snapshot);
+  }
+}
+
+console.log(
+  `[M5/P2 ROCLU center drift] ${[1, 30, 300, 1200]
+    .map((step) => {
+      const snapshot = centerDisplacements.get(step)!;
+      return `${step}:{${centerDynamics.topology.keys
+        .map((key) => `${key}=${snapshot.get(key)!.toExponential(4)}`)
+        .join(",")}}`;
+    })
+    .join(" ")}`,
+);
+
+const perturbedCenters = createOctahedralLivePhysics3D(rootBasisNetwork, {
+  aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+  stiffness: 5,
+  simulationSpeed: 4,
+});
+const perturbedO = perturbedCenters.topology.keys.indexOf("O");
+assert(perturbedO >= 0, "perturbed center witness resolves O");
+const unperturbedOCenter = geometricCenter(perturbedCenters, perturbedO);
+const centerKick = [0.75, -0.50, 0.60] as const;
+
+for (const vertex of perturbedCenters.template.centerTriangle) {
+  const offset = packedVertexOffset(perturbedCenters, perturbedO, vertex);
+  perturbedCenters.positions[offset] = perturbedCenters.positions[offset]! + centerKick[0];
+  perturbedCenters.positions[offset + 1] = perturbedCenters.positions[offset + 1]! + centerKick[1];
+  perturbedCenters.positions[offset + 2] = perturbedCenters.positions[offset + 2]! + centerKick[2];
+}
+projectOctahedralHinges3D(
+  perturbedCenters.topology,
+  perturbedCenters.template,
+  perturbedCenters.positions,
+);
+perturbedCenters.velocities.fill(0);
+
+const kickedOCenter = geometricCenter(perturbedCenters, perturbedO);
+const kickedDistance = distance3(unperturbedOCenter, kickedOCenter);
+assert(kickedDistance > 1, `O center perturbation is material: ${kickedDistance}`);
+
+const perturbedSamples = new Map<number, {
+  readonly movedFromKick: number;
+  readonly distanceToOriginal: number;
+}>();
+for (let step = 1; step <= 1200; step += 1) {
+  perturbedCenters.step();
+  if (step === 1 || step === 30 || step === 300 || step === 1200) {
+    const center = geometricCenter(perturbedCenters, perturbedO);
+    perturbedSamples.set(step, {
+      movedFromKick: distance3(kickedOCenter, center),
+      distanceToOriginal: distance3(unperturbedOCenter, center),
+    });
+  }
+}
+
+console.log(
+  `[M5/P2 O center perturbation] kick=${kickedDistance.toFixed(6)} ${[1, 30, 300, 1200]
+    .map((step) => {
+      const sample = perturbedSamples.get(step)!;
+      return `${step}:moved=${sample.movedFromKick.toExponential(4)},toOriginal=${sample.distanceToOriginal.toExponential(4)}`;
+    })
+    .join(" ")}`,
+);
+
+assert(
+  perturbedSamples.get(30)!.movedFromKick > 1e-3,
+  `O geometric center must dynamically move after perturbation: ${perturbedSamples.get(30)!.movedFromKick}`,
+);
 
 const rootBasisReordered = buildOctahedralLinkTopology3D({
   links: [...rootBasisNetwork.links].reverse(),
