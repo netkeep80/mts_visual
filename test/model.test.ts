@@ -12,6 +12,7 @@ import "./octahedral-performance3d.test.js";
 import "./octahedral-webgpu-compute.test.js";
 import "./rigid-section-webgpu-compute.test.js";
 import "./rigid-section-webgpu-renderer.test.js";
+import "./rigid-section-interaction.test.js";
 import "./octahedral-webgpu-renderer.test.js";
 import "./live-physics3d.test.js";
 import "./three-scene.test.js";
