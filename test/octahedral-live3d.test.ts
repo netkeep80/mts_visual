@@ -264,6 +264,14 @@ const settled = attractorSamples.get(5000)!;
 assert(disturbed.shapeError > 1e-4, "self-loop attractor witness applies a measurable non-rigid perturbation");
 assert(Number.isFinite(settled.shapeError), "self-loop attractor witness remains finite after 5000 steps");
 assert(Number.isFinite(settled.maxStrain), "self-loop attractor spring strain remains finite after 5000 steps");
+assert(
+  settled.p95Strain < 0.05,
+  `perturbed self-loop relaxes to low spring strain: p95=${settled.p95Strain}`,
+);
+assert(
+  settled.shapeError > 0.2,
+  `low-strain relaxed self-loop does not converge back to seeded figure-eight: shapeError=${settled.shapeError}`,
+);
 
 const paused = createOctahedralLivePhysics3D(selfNetwork, {
   aspectRatio: ratio,
