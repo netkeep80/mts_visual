@@ -1,5 +1,6 @@
 import {
   RIGID_SECTION_WEBGPU_WGSL,
+  collectRigidSectionCenterDragBodies3D,
   createRigidSectionWebGpuCompute3D,
   runRigidSectionWebGpuDifferential3D,
   type WebGpuBufferLike,
@@ -37,7 +38,7 @@ class FakeBuffer implements WebGpuBufferLike {
 }
 
 class FakeQueue {
-  readonly writes: { label: string; bytes: number }[] = [];
+  readonly writes: { label: string; bytes: number; offset: number }[] = [];
   submissions = 0;
 
   writeBuffer(
@@ -53,7 +54,7 @@ class FakeQueue {
       : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     const byteLength = size ?? source.byteLength - dataOffset;
     new Uint8Array(target.bytes).set(source.subarray(dataOffset, dataOffset + byteLength), bufferOffset);
-    this.writes.push({ label: buffer.label ?? "", bytes: byteLength });
+    this.writes.push({ label: buffer.label ?? "", bytes: byteLength, offset: bufferOffset });
   }
 
   submit(_commandBuffers: readonly object[]): void {
@@ -238,6 +239,43 @@ same(snapshot.bodyCount, 105, "GPU root-basis body count");
 same(snapshot.centerBytes, 105 * 16, "centers are packed vec4 per rigid section");
 same(snapshot.orientationBytes, 105 * 16, "quaternions are packed vec4 per rigid section");
 
+const rDragBodies = collectRigidSectionCenterDragBodies3D(
+  controller.topology,
+  controller.template,
+  0,
+);
+same(
+  rDragBodies.length,
+  5,
+  "R center drag includes R middle, R START/END, O END and C START rigid sections",
+);
+same(
+  new Set(rDragBodies.map(({ bodyIndex }) => bodyIndex)).size,
+  rDragBodies.length,
+  "rigid center drag de-duplicates body indices",
+);
+assert(
+  rDragBodies.some(
+    ({ linkIndex, localSection }) =>
+      linkIndex === 0 && localSection === controller.template.centerSection,
+  ),
+  "rigid center drag includes selected semantic CENTER body",
+);
+
+try {
+  collectRigidSectionCenterDragBodies3D(
+    controller.topology,
+    controller.template,
+    99,
+  );
+  throw new Error("invalid rigid center-drag link should reject");
+} catch (error) {
+  assert(
+    error instanceof Error && /invalid rigid center-drag linkIndex/.test(error.message),
+    "invalid rigid center-drag selection fails closed",
+  );
+}
+
 const initialLabels = fake.queue.writes.map((write) => write.label);
 for (const label of [
   "rigid-section-centers",
@@ -248,6 +286,37 @@ for (const label of [
   "rigid-section-globals",
 ]) {
   assert(initialLabels.includes(label), `initialization uploads ${label} exactly as immutable/initial state`);
+}
+
+fake.queue.resetWrites();
+const centerBody = controller.template.centerSection;
+const overrideStats = controller.writeCenterOverrides([
+  {
+    bodyIndex: centerBody,
+    position: [1.25, -2.5, 3.75],
+  },
+]);
+same(overrideStats.bodyCount, 1, "rigid drag overrides one selected body");
+same(overrideStats.bufferWrites, 2, "one rigid body override writes center and linear velocity");
+same(overrideStats.centerBytes, 16, "rigid center override writes one packed vec4");
+same(overrideStats.velocityBytes, 16, "rigid velocity override writes one packed vec4");
+same(fake.queue.writes.length, 2, "rigid drag produces exactly two sparse queue writes");
+same(fake.queue.writes[0]!.label, "rigid-section-centers", "rigid drag writes centerBuffer first");
+same(fake.queue.writes[1]!.label, "rigid-section-linear-velocities", "rigid drag zeroes linear velocity");
+same(fake.queue.writes[0]!.offset, centerBody * 16, "rigid center override uses exact packed body offset");
+same(fake.queue.writes[1]!.offset, centerBody * 16, "rigid velocity override uses exact packed body offset");
+
+try {
+  controller.writeCenterOverrides([
+    { bodyIndex: centerBody, position: [0, 0, 0] },
+    { bodyIndex: centerBody, position: [1, 1, 1] },
+  ]);
+  throw new Error("duplicate rigid center override should reject");
+} catch (error) {
+  assert(
+    error instanceof Error && /duplicate rigid center override/.test(error.message),
+    "duplicate rigid center override fails closed",
+  );
 }
 
 fake.queue.resetWrites();
