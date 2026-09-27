@@ -720,6 +720,7 @@ export async function createRigidSectionWebGpuZeroCopyRenderer3D(
     label: string,
     entryPoint: string,
     topologyMode: "triangle-list" | "line-list" = "triangle-list",
+    overlay = false,
   ): Parameters<WebGpuRenderDeviceLike["createRenderPipelineAsync"]>[0] => {
     const descriptor = {
       label,
@@ -743,8 +744,8 @@ export async function createRigidSectionWebGpuZeroCopyRenderer3D(
       ...descriptor,
       depthStencil: {
         format: depthFormat,
-        depthWriteEnabled: true,
-        depthCompare: "less-equal",
+        depthWriteEnabled: !overlay,
+        depthCompare: overlay ? "always" : "less-equal",
       },
     };
   };
@@ -766,10 +767,20 @@ export async function createRigidSectionWebGpuZeroCopyRenderer3D(
       ),
     ),
     device.createRenderPipelineAsync(
-      pipelineDescriptor("rigid-section-webgpu-center-pipeline", "center_vertex"),
+      pipelineDescriptor(
+        "rigid-section-webgpu-center-pipeline",
+        "center_vertex",
+        "triangle-list",
+        true,
+      ),
     ),
     device.createRenderPipelineAsync(
-      pipelineDescriptor("rigid-section-webgpu-arrow-pipeline", "arrow_vertex"),
+      pipelineDescriptor(
+        "rigid-section-webgpu-arrow-pipeline",
+        "arrow_vertex",
+        "triangle-list",
+        true,
+      ),
     ),
   ]);
 
