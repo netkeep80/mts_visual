@@ -88,6 +88,61 @@ export interface RigidSectionWebGpuState3D {
   readonly angularVelocities: Float32Array;
 }
 
+export interface RigidSectionCenterDragBody3D {
+  readonly linkIndex: number;
+  readonly localSection: number;
+  readonly bodyIndex: number;
+}
+
+export function collectRigidSectionCenterDragBodies3D(
+  topology: OctahedralLinkTopology3D,
+  template: RigidSectionTemplate3D,
+  selectedLink: number,
+): readonly RigidSectionCenterDragBody3D[] {
+  if (
+    !Number.isSafeInteger(selectedLink)
+    || selectedLink < 0
+    || selectedLink >= topology.linkCount
+  ) {
+    throw new Error(`invalid rigid center-drag linkIndex: ${String(selectedLink)}`);
+  }
+
+  const bodies = new Map<number, RigidSectionCenterDragBody3D>();
+  const include = (linkIndex: number, localSection: number): void => {
+    const bodyIndex = linkIndex * template.sectionCount + localSection;
+    if (!bodies.has(bodyIndex)) {
+      bodies.set(
+        bodyIndex,
+        Object.freeze({ linkIndex, localSection, bodyIndex }),
+      );
+    }
+  };
+
+  include(selectedLink, template.centerSection);
+  const endSection = template.sectionCount - 1;
+  for (let source = 0; source < topology.linkCount; source += 1) {
+    if (topology.startIndices[source] === selectedLink) include(source, 0);
+    if (topology.endIndices[source] === selectedLink) include(source, endSection);
+  }
+
+  return Object.freeze([...bodies.values()]);
+}
+
+export type RigidSectionWebGpuVec3 = readonly [number, number, number];
+
+export interface RigidSectionWebGpuCenterOverride3D {
+  readonly bodyIndex: number;
+  readonly position: RigidSectionWebGpuVec3;
+  readonly velocity?: RigidSectionWebGpuVec3;
+}
+
+export interface RigidSectionWebGpuOverrideStats3D {
+  readonly bodyCount: number;
+  readonly bufferWrites: number;
+  readonly centerBytes: number;
+  readonly velocityBytes: number;
+}
+
 export interface RigidSectionWebGpuSnapshot3D {
   readonly status: "available" | "device-lost" | "destroyed";
   readonly deviceLostReason: string | null;
@@ -116,6 +171,10 @@ export interface RigidSectionWebGpuCompute3D {
   step(): RigidSectionWebGpuStepStats3D;
   setStiffness(value: number): void;
   setSimulationSpeed(value: number): void;
+  writeCenterOverrides(
+    overrides: readonly RigidSectionWebGpuCenterOverride3D[],
+  ): RigidSectionWebGpuOverrideStats3D;
+  readBackCenters(): Promise<Float32Array>;
   readBackState(): Promise<RigidSectionWebGpuState3D>;
   snapshot(): RigidSectionWebGpuSnapshot3D;
   destroy(): void;
@@ -660,6 +719,84 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
     this.updateGlobals();
   }
 
+  writeCenterOverrides(
+    overrides: readonly RigidSectionWebGpuCenterOverride3D[],
+  ): RigidSectionWebGpuOverrideStats3D {
+    this.assertAlive();
+    if (overrides.length === 0) {
+      return Object.freeze({
+        bodyCount: 0,
+        bufferWrites: 0,
+        centerBytes: 0,
+        velocityBytes: 0,
+      });
+    }
+
+    const bodyCount = this.topology.linkCount * this.template.sectionCount;
+    const byBody = new Map<number, RigidSectionWebGpuCenterOverride3D>();
+    for (const override of overrides) {
+      if (
+        !Number.isSafeInteger(override.bodyIndex)
+        || override.bodyIndex < 0
+        || override.bodyIndex >= bodyCount
+      ) {
+        throw new Error(`invalid rigid center override bodyIndex: ${String(override.bodyIndex)}`);
+      }
+      if (
+        override.position.length !== 3
+        || !override.position.every(Number.isFinite)
+        || (override.velocity !== undefined
+          && (override.velocity.length !== 3 || !override.velocity.every(Number.isFinite)))
+      ) {
+        throw new Error("rigid center override position/velocity must be finite vec3");
+      }
+      if (byBody.has(override.bodyIndex)) {
+        throw new Error(`duplicate rigid center override bodyIndex: ${override.bodyIndex}`);
+      }
+      byBody.set(override.bodyIndex, override);
+    }
+
+    const ordered = [...byBody.entries()].sort((left, right) => left[0] - right[0]);
+    let bufferWrites = 0;
+    let centerBytes = 0;
+    let velocityBytes = 0;
+    let cursor = 0;
+
+    while (cursor < ordered.length) {
+      const runStart = cursor;
+      const firstBody = ordered[cursor]![0];
+      let previousBody = firstBody;
+      cursor += 1;
+      while (cursor < ordered.length && ordered[cursor]![0] === previousBody + 1) {
+        previousBody = ordered[cursor]![0];
+        cursor += 1;
+      }
+
+      const run = ordered.slice(runStart, cursor);
+      const centers4 = new Float32Array(run.length * 4);
+      const velocities4 = new Float32Array(run.length * 4);
+      for (let index = 0; index < run.length; index += 1) {
+        const override = run[index]![1];
+        centers4.set(override.position, index * 4);
+        velocities4.set(override.velocity ?? [0, 0, 0], index * 4);
+      }
+
+      const byteOffset = firstBody * 4 * Float32Array.BYTES_PER_ELEMENT;
+      this.device.queue.writeBuffer(this.centerBuffer, byteOffset, centers4);
+      this.device.queue.writeBuffer(this.linearVelocityBuffer, byteOffset, velocities4);
+      bufferWrites += 2;
+      centerBytes += centers4.byteLength;
+      velocityBytes += velocities4.byteLength;
+    }
+
+    return Object.freeze({
+      bodyCount: ordered.length,
+      bufferWrites,
+      centerBytes,
+      velocityBytes,
+    });
+  }
+
   step(): RigidSectionWebGpuStepStats3D {
     this.assertAlive();
     const encoder = this.device.createCommandEncoder({ label: "rigid-section-step" }) as WebGpuCommandEncoderLike;
@@ -722,6 +859,18 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
       computePasses: computePasses as 6,
       dynamicStateUploadBytes: 0 as const,
     });
+  }
+
+  async readBackCenters(): Promise<Float32Array> {
+    this.assertAlive();
+    const bodyCount = this.topology.linkCount * this.template.sectionCount;
+    const vec4Bytes = bodyCount * 4 * 4;
+    const centers4 = await readBackBuffer(
+      this.device,
+      this.centerBuffer,
+      vec4Bytes,
+    );
+    return unpackVec4ToVec3(centers4);
   }
 
   async readBackState(): Promise<RigidSectionWebGpuState3D> {
