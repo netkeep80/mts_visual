@@ -10,6 +10,7 @@ import {
   computeOctahedralSpringForces3D,
   getOctahedralLinkTemplate3D,
   projectOctahedralHinges3D,
+  projectOctahedralHingeVelocities3D,
   resolveOctahedralAspectRatio,
   transferOctahedralHingeForces3D,
   type OctahedralLinkTemplate3D,
@@ -60,7 +61,41 @@ function sumVector(values: Float32Array): readonly [number, number, number] {
   return [x, y, z];
 }
 
-const minimumRatio = 2 * Math.SQRT2;
+function triangleCentroid(
+  template: OctahedralLinkTemplate3D,
+  positions: Float32Array,
+  triangle: readonly [number, number, number],
+): readonly [number, number, number] {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const index of triangle) {
+    const p = vertex(template, positions, index);
+    x += p.x;
+    y += p.y;
+    z += p.z;
+  }
+  return [x / 3, y / 3, z / 3];
+}
+
+function triangleForceSum(
+  template: OctahedralLinkTemplate3D,
+  forces: Float32Array,
+  triangle: readonly [number, number, number],
+): readonly [number, number, number] {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const index of triangle) {
+    const offset = index * 3;
+    x += forces[offset]!;
+    y += forces[offset + 1]!;
+    z += forces[offset + 2]!;
+  }
+  return [x, y, z];
+}
+
+const minimumRatio = Math.SQRT2;
 const minimumResolution = resolveOctahedralAspectRatio(minimumRatio);
 same(minimumResolution.pairCount, 1, "minimum legal ratio resolves one octahedron pair");
 same(minimumResolution.octahedronCount, 2, "minimum template has two octahedra");
@@ -70,7 +105,7 @@ const clampedResolution = resolveOctahedralAspectRatio(0.01);
 same(clampedResolution.pairCount, 1, "short requested ratio resolves to minimum legal pair count");
 same(clampedResolution.octahedronCount % 2, 0, "resolved octahedron count is always even");
 
-const pairTwoRatio = 3 * Math.SQRT2;
+const pairTwoRatio = 2 * Math.SQRT2;
 const pairTwoResolution = resolveOctahedralAspectRatio(pairTwoRatio);
 same(pairTwoResolution.pairCount, 2, "second legal ratio resolves two pairs");
 same(pairTwoResolution.octahedronCount, 4, "second legal ratio has four octahedra");
@@ -78,18 +113,18 @@ same(pairTwoResolution.octahedronCount, 4, "second legal ratio has four octahedr
 const minimum = getOctahedralLinkTemplate3D(minimumRatio);
 same(minimum.pairCount, 1, "template retains pair count");
 same(minimum.octahedronCount, 2, "template retains even octahedron count");
-same(minimum.vertexCount, 11, "two-octahedron template has exact vertex count");
-same(minimum.edgeCount, 27, "two-octahedron template has exact unique spring count");
-same(minimum.surfaceTriangleCount, 18, "surface omits shared internal triangles");
+same(minimum.vertexCount, 9, "two-octahedron template has exactly three triangular sections");
+same(minimum.edgeCount, 21, "two-octahedron template has exact unique spring count");
+same(minimum.surfaceTriangleCount, 14, "surface has two terminal faces plus octahedral sides");
 approx(minimum.restLength / minimum.diameter, minimum.aspectRatio, "aspect ratio derives from normalized geometry");
 approx(minimum.diameter, OCTAHEDRAL_DIAMETER, "normalized diameter is fixed");
 same(minimum.edgeRestLength, OCTAHEDRAL_EDGE_REST_LENGTH, "normalized spring rest length is one");
 
 const pairTwo = getOctahedralLinkTemplate3D(pairTwoRatio);
-same(pairTwo.vertexCount, 17, "four-octahedron template vertex count");
-same(pairTwo.edgeCount, 45, "four-octahedron template edge count");
-same(pairTwo.surfaceTriangleCount, 30, "four-octahedron surface triangle count");
-same(pairTwo.surfaceTriangleCount, 6 * pairTwo.octahedronCount + 6, "surface triangle formula");
+same(pairTwo.vertexCount, 15, "four-octahedron template has five triangular sections");
+same(pairTwo.edgeCount, 39, "four-octahedron template edge count");
+same(pairTwo.surfaceTriangleCount, 26, "four-octahedron surface triangle count");
+same(pairTwo.surfaceTriangleCount, 6 * pairTwo.octahedronCount + 2, "surface triangle formula");
 
 for (let edge = 0; edge < pairTwo.edgeCount; edge += 1) {
   approx(
@@ -105,21 +140,25 @@ approx(center[0], 0, "central triangle centroid x");
 approx(center[1], 0, "central triangle centroid y");
 approx(center[2], 0, "central triangle centroid z");
 
-const start = vertex(pairTwo, pairTwo.restPositions, pairTwo.startApex);
-const end = vertex(pairTwo, pairTwo.restPositions, pairTwo.endApex);
-approx(start.x, 0, "START apex on axis x");
-approx(start.y, 0, "START apex on axis y");
-approx(end.x, 0, "END apex on axis x");
-approx(end.y, 0, "END apex on axis y");
-approx(start.z, -end.z, "template is longitudinally symmetric");
-approx(end.z - start.z, pairTwo.restLength, "apex-to-apex rest length");
+const start = triangleCentroid(pairTwo, pairTwo.restPositions, pairTwo.startTriangle);
+const end = triangleCentroid(pairTwo, pairTwo.restPositions, pairTwo.endTriangle);
+approx(start[0], 0, "START triangle centroid on axis x");
+approx(start[1], 0, "START triangle centroid on axis y");
+approx(end[0], 0, "END triangle centroid on axis x");
+approx(end[1], 0, "END triangle centroid on axis y");
+approx(start[2], -end[2], "template is longitudinally symmetric");
+approx(end[2] - start[2], pairTwo.restLength, "terminal-centroid rest length");
 approx(
   pairTwo.restLength,
-  (pairTwo.octahedronCount + 2) * OCTAHEDRAL_MODULE_HEIGHT,
-  "rest length is module-height stack",
+  pairTwo.octahedronCount * OCTAHEDRAL_MODULE_HEIGHT,
+  "rest length is exactly the octahedral module-height stack",
 );
-same(pairTwo.gradientT[pairTwo.startApex]!, 0, "START gradient coordinate is exact zero");
-same(pairTwo.gradientT[pairTwo.endApex]!, 1, "END gradient coordinate is exact one");
+for (const index of pairTwo.startTriangle) {
+  same(pairTwo.gradientT[index]!, 0, "START triangle gradient coordinate is exact zero");
+}
+for (const index of pairTwo.endTriangle) {
+  same(pairTwo.gradientT[index]!, 1, "END triangle gradient coordinate is exact one");
+}
 for (const index of pairTwo.centerTriangle) {
   approx(pairTwo.gradientT[index]!, 0.5, "central triangle gradient coordinate is half");
 }
@@ -170,11 +209,11 @@ same(restForces.evaluations.explicitBendEvaluations, 0, "spring kernel has no ex
 for (const value of restForces.forces) approx(value, 0, "regular rest template has zero force", 2e-5);
 
 const stretchedPositions = pairTwo.restPositions.slice();
-const stretchedEndZ = pairTwo.endApex * 3 + 2;
+const stretchedEndZ = pairTwo.endTriangle[0] * 3 + 2;
 stretchedPositions[stretchedEndZ] = stretchedPositions[stretchedEndZ]! + 0.2;
 const stretchedForces = computeOctahedralSpringForces3D(pairTwo, stretchedPositions, 4);
 const stretchedNorm = Math.hypot(...stretchedForces.forces);
-assert(stretchedNorm > 0, "stretching END tetra apex creates spring force");
+assert(stretchedNorm > 0, "deforming the terminal END triangle creates spring force");
 const stretchedTotal = sumVector(stretchedForces.forces);
 approx(stretchedTotal[0], 0, "internal spring force conserves x");
 approx(stretchedTotal[1], 0, "internal spring force conserves y");
@@ -202,45 +241,89 @@ same(selfTopology.startIndices[0]!, 0, "self START targets own geometric center"
 same(selfTopology.endIndices[0]!, 0, "self END targets own geometric center");
 
 const selfPositions = pairTwo.restPositions.slice();
-same(projectOctahedralHinges3D(selfTopology, pairTwo, selfPositions), 2, "double self-Link projects two hinges");
+same(projectOctahedralHinges3D(selfTopology, pairTwo, selfPositions), 2, "double self-Link projects two terminal centroids");
 const selfCenter = computeOctahedralGeometricCenter3D(pairTwo, selfPositions);
-const selfStart = vertex(pairTwo, selfPositions, pairTwo.startApex);
-const selfEnd = vertex(pairTwo, selfPositions, pairTwo.endApex);
-approx(selfStart.x, selfCenter[0], "self START apex attaches to geometric center x");
-approx(selfStart.y, selfCenter[1], "self START apex attaches to geometric center y");
-approx(selfStart.z, selfCenter[2], "self START apex attaches to geometric center z");
-approx(selfEnd.x, selfCenter[0], "self END apex attaches to geometric center x");
-approx(selfEnd.y, selfCenter[1], "self END apex attaches to geometric center y");
-approx(selfEnd.z, selfCenter[2], "self END apex attaches to geometric center z");
-assert(selfPositions.every(Number.isFinite), "double self-Link projection remains finite");
-
-let nonApexRadius = 0;
-for (let index = 0; index < pairTwo.vertexCount; index += 1) {
-  if (index === pairTwo.startApex || index === pairTwo.endApex) continue;
-  const p = vertex(pairTwo, selfPositions, index);
-  nonApexRadius = Math.max(nonApexRadius, Math.hypot(p.x - selfCenter[0], p.y - selfCenter[1], p.z - selfCenter[2]));
+const selfStart = triangleCentroid(pairTwo, selfPositions, pairTwo.startTriangle);
+const selfEnd = triangleCentroid(pairTwo, selfPositions, pairTwo.endTriangle);
+for (let axis = 0; axis < 3; axis += 1) {
+  approx(selfStart[axis]!, selfCenter[axis]!, `self START centroid attaches to center axis ${axis}`);
+  approx(selfEnd[axis]!, selfCenter[axis]!, `self END centroid attaches to center axis ${axis}`);
 }
-assert(nonApexRadius > 0.5, "double self-Link does not collapse all material vertices to its center");
+assert(selfPositions.every(Number.isFinite), "double self-Link projection remains finite");
+for (const triangle of [pairTwo.startTriangle, pairTwo.endTriangle] as const) {
+  for (let edge = 0; edge < 3; edge += 1) {
+    approx(
+      distance(
+        pairTwo,
+        selfPositions,
+        triangle[edge]!,
+        triangle[(edge + 1) % 3]!,
+      ),
+      1,
+      "terminal triangle remains finite and rigid under centroid projection",
+      2e-6,
+    );
+  }
+}
+
+let materialRadius = 0;
+for (let index = 0; index < pairTwo.vertexCount; index += 1) {
+  const p = vertex(pairTwo, selfPositions, index);
+  materialRadius = Math.max(
+    materialRadius,
+    Math.hypot(p.x - selfCenter[0], p.y - selfCenter[1], p.z - selfCenter[2]),
+  );
+}
+assert(materialRadius > 0.5, "double self-Link does not collapse all material vertices to its center");
+
+const selfVelocities = new Float32Array(pairTwo.vertexCount * 3);
+for (const vertexIndex of pairTwo.startTriangle) {
+  const offset = vertexIndex * 3;
+  selfVelocities[offset] = 1 + vertexIndex * 0.01;
+  selfVelocities[offset + 1] = -0.25;
+}
+same(
+  projectOctahedralHingeVelocities3D(selfTopology, pairTwo, selfVelocities),
+  2,
+  "double self-Link projects two terminal velocity centroids",
+);
+const projectedStartVelocity = triangleCentroid(pairTwo, selfVelocities, pairTwo.startTriangle);
+const projectedCenterVelocity = triangleCentroid(pairTwo, selfVelocities, pairTwo.centerTriangle);
+for (let axis = 0; axis < 3; axis += 1) {
+  approx(
+    projectedStartVelocity[axis]!,
+    projectedCenterVelocity[axis]!,
+    `START velocity centroid follows target center axis ${axis}`,
+  );
+}
 
 const selfForces = new Float32Array(pairTwo.vertexCount * 3);
-let offset = pairTwo.startApex * 3;
+let offset = pairTwo.startTriangle[0] * 3;
 selfForces[offset] = 3;
 selfForces[offset + 1] = 6;
 selfForces[offset + 2] = 9;
-offset = pairTwo.endApex * 3;
+offset = pairTwo.endTriangle[0] * 3;
 selfForces[offset] = -6;
 selfForces[offset + 1] = 3;
 selfForces[offset + 2] = 12;
 const forceBeforeTransfer = sumVector(selfForces);
-same(transferOctahedralHingeForces3D(selfTopology, pairTwo, selfForces), 2, "double self-Link transfers two hinge reactions");
+same(transferOctahedralHingeForces3D(selfTopology, pairTwo, selfForces), 2, "double self-Link transfers two terminal-ring reactions");
 const forceAfterTransfer = sumVector(selfForces);
 approx(forceAfterTransfer[0], forceBeforeTransfer[0], "self hinge transfer conserves x force");
 approx(forceAfterTransfer[1], forceBeforeTransfer[1], "self hinge transfer conserves y force");
 approx(forceAfterTransfer[2], forceBeforeTransfer[2], "self hinge transfer conserves z force");
-offset = pairTwo.startApex * 3;
-approx(selfForces[offset]!, 0, "START apex reaction is consumed by hinge");
-offset = pairTwo.endApex * 3;
-approx(selfForces[offset]!, 0, "END apex reaction is consumed by hinge");
+const startResidual = triangleForceSum(pairTwo, selfForces, pairTwo.startTriangle);
+const endResidual = triangleForceSum(pairTwo, selfForces, pairTwo.endTriangle);
+approx(startResidual[0], 0, "START terminal ring has zero residual translational x force");
+approx(startResidual[1], 0, "START terminal ring has zero residual translational y force");
+approx(startResidual[2], 0, "START terminal ring has zero residual translational z force");
+approx(endResidual[0], 0, "END terminal ring has zero residual translational x force");
+approx(endResidual[1], 0, "END terminal ring has zero residual translational y force");
+approx(endResidual[2], 0, "END terminal ring has zero residual translational z force");
+assert(
+  Math.abs(selfForces[pairTwo.startTriangle[0] * 3]!) > 0,
+  "terminal ring preserves zero-net residual force instead of zeroing every vertex",
+);
 
 const topologyNetwork: VisualLinkNetwork = {
   links: [
@@ -272,10 +355,10 @@ for (let link = 0; link < linkCount; link += 1) {
 same(evaluations, linkCount * minimum.edgeCount, "packed 1000-Link spring work is exactly N*E");
 assert(packedForces.every((value) => Math.abs(value) <= 2e-5), "packed regular templates remain at spring rest");
 
-const longTemplate = getOctahedralLinkTemplate3D(Math.SQRT2 * (500 + 1));
+const longTemplate = getOctahedralLinkTemplate3D(Math.SQRT2 * 500);
 same(longTemplate.octahedronCount, 1_000, "large cached template resolves 1000 octahedra");
-same(longTemplate.edgeCount, 9 * (longTemplate.octahedronCount + 1), "edge count grows linearly with octahedron count");
-same(longTemplate.surfaceTriangleCount, 6 * longTemplate.octahedronCount + 6, "surface grows linearly with octahedron count");
+same(longTemplate.edgeCount, 9 * longTemplate.octahedronCount + 3, "edge count grows linearly with octahedron count");
+same(longTemplate.surfaceTriangleCount, 6 * longTemplate.octahedronCount + 2, "surface grows linearly with octahedron count");
 
 for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
   try {
