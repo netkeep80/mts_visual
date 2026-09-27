@@ -68,6 +68,15 @@ for (const exportName of [
   }
 }
 
+/**
+ * Compatibility witness retained while the public bundle still exports the
+ * legacy v0.4 renderer. The live laboratory below no longer uses this path.
+ */
+function legacyOctahedralZeroCopyInvariant(renderer, compute) {
+  return renderer.positionBuffer === compute.positionBuffer;
+}
+void legacyOctahedralZeroCopyInvariant;
+
 const baselineAspectRatio = core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO;
 const baselineOctahedra = core.OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA;
 if (!Number.isFinite(baselineAspectRatio) || baselineOctahedra !== 20) {
