@@ -12,6 +12,7 @@ import {
   computeOctahedralSeedCenter3D,
   getOctahedralSeedGrid3D,
   resolveOctahedralSeedCenters3D,
+  writeFittedOctahedralTemplate3D,
 } from "../src/octahedral-layout3d.js";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -530,6 +531,86 @@ assert(
   rootOpenFinalRatio >= 0.1,
   `R+O dynamics must not collapse back below 10% of half-rest length: ratio=${rootOpenFinalRatio}`,
 );
+
+const seedRatioSweep = [0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00] as const;
+const seedRatioResults: string[] = [];
+
+for (const seedRatio of seedRatioSweep) {
+  const candidate = createOctahedralLivePhysics3D(rootPairNetwork, {
+    aspectRatio: Math.SQRT2 * (100 / 2 + 1),
+    stiffness: 5,
+    simulationSpeed: 4,
+  });
+  const resolved = resolveOctahedralSeedCenters3D(candidate.template, candidate.topology);
+
+  let meanX = 0;
+  let meanY = 0;
+  let meanZ = 0;
+  for (let link = 0; link < candidate.topology.linkCount; link += 1) {
+    const offset = link * 3;
+    meanX += resolved[offset]!;
+    meanY += resolved[offset + 1]!;
+    meanZ += resolved[offset + 2]!;
+  }
+  meanX /= candidate.topology.linkCount;
+  meanY /= candidate.topology.linkCount;
+  meanZ /= candidate.topology.linkCount;
+
+  const scaledCenters = new Float32Array(resolved.length);
+  for (let link = 0; link < candidate.topology.linkCount; link += 1) {
+    const offset = link * 3;
+    scaledCenters[offset] = meanX + (resolved[offset]! - meanX) * seedRatio;
+    scaledCenters[offset + 1] = meanY + (resolved[offset + 1]! - meanY) * seedRatio;
+    scaledCenters[offset + 2] = meanZ + (resolved[offset + 2]! - meanZ) * seedRatio;
+  }
+
+  for (let link = 0; link < candidate.topology.linkCount; link += 1) {
+    writeFittedOctahedralTemplate3D(
+      candidate.template,
+      candidate.topology,
+      candidate.positions,
+      link,
+      scaledCenters,
+    );
+  }
+  projectOctahedralHinges3D(candidate.topology, candidate.template, candidate.positions);
+  candidate.velocities.fill(0);
+
+  const rIndex = candidate.topology.keys.indexOf("R");
+  const oIndex = candidate.topology.keys.indexOf("O");
+  assert(rIndex >= 0 && oIndex >= 0, "seed ratio sweep resolves R and O");
+
+  const pairRatio = (): number => (
+    distance3(
+      geometricCenter(candidate, rIndex),
+      geometricCenter(candidate, oIndex),
+    ) / (candidate.template.restLength / 2)
+  );
+
+  const initialRatio = pairRatio();
+  let maxRatio = initialRatio;
+  let minRatio = initialRatio;
+  for (let step = 1; step <= 1200; step += 1) {
+    candidate.step();
+    const current = pairRatio();
+    maxRatio = Math.max(maxRatio, current);
+    minRatio = Math.min(minRatio, current);
+  }
+  const finalRatio = pairRatio();
+  assert(candidate.positions.every(Number.isFinite), `seed ratio ${seedRatio} remains finite`);
+
+  seedRatioResults.push(
+    [
+      `seed=${seedRatio.toFixed(2)}`,
+      `initial=${initialRatio.toFixed(4)}`,
+      `min=${minRatio.toFixed(4)}`,
+      `max=${maxRatio.toFixed(4)}`,
+      `final=${finalRatio.toFixed(4)}`,
+    ].join(","),
+  );
+}
+
+console.log(`[M5/P2 R+O seed-ratio sweep] ${seedRatioResults.join(" ")}`);
 
 const rootBasisNetwork: VisualLinkNetwork = {
   links: [
