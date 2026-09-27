@@ -1,5 +1,5 @@
 import type { VisualLinkNetwork } from "./index.js";
-import { writeOrientedOctahedralRestTemplate3D } from "./octahedral-layout3d.js";
+import { writeFittedOctahedralTemplate3D } from "./octahedral-layout3d.js";
 import {
   accumulateOctahedralSpringForces3D,
   buildOctahedralLinkTopology3D,
