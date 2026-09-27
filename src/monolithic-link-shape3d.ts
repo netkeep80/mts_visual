@@ -243,12 +243,16 @@ function hermiteDerivative(
 }
 
 function bucklingBasis(t: number): number {
+  // Normalized sixth-order buckling mode:
+  // g(0)=g(1)=0, g'(0)=g'(1)=0, g''(0)=g''(1)=0, g(1/2)=1.
+  // Zero endpoint curvature avoids injecting a fake bending moment at S/C/E.
   const oneMinus = 1 - t;
-  return 16 * t * t * oneMinus * oneMinus;
+  return 64 * t * t * t * oneMinus * oneMinus * oneMinus;
 }
 
 function bucklingBasisDerivative(t: number): number {
-  return 32 * t * (1 - t) * (1 - 2 * t);
+  const oneMinus = 1 - t;
+  return 192 * t * t * oneMinus * oneMinus * (1 - 2 * t);
 }
 
 interface HalfCurve {
