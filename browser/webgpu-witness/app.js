@@ -21,6 +21,7 @@ const ui = {
   restartRender: $("restart-render"),
   resetView: $("reset-view"),
   autoRotate: $("auto-rotate"),
+  wireframe: $("wireframe"),
   pauseRender: $("pause-render"),
   renderCompute: $("render-compute"),
   renderTopology: $("render-topology"),
@@ -860,6 +861,7 @@ async function startRender() {
         viewProjection,
         width: ui.canvas.width,
         height: ui.canvas.height,
+        wireframe: ui.wireframe.checked,
         clearColor: { r: 0.005, g: 0.008, b: 0.014, a: 1 },
       });
       state.frames += 1;
@@ -1036,6 +1038,10 @@ ui.resetView.addEventListener("click", () => {
 
 ui.autoRotate.addEventListener("change", () => {
   log(`camera auto-rotate ${ui.autoRotate.checked ? "enabled" : "disabled"}`);
+});
+
+ui.wireframe.addEventListener("change", () => {
+  log(`wireframe ${ui.wireframe.checked ? "enabled" : "disabled"} — physics state preserved`);
 });
 
 ui.lengthOcta.addEventListener("input", () => {

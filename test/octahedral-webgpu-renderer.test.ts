@@ -1,6 +1,7 @@
 import {
   OCTAHEDRAL_WEBGPU_RENDER_UNIFORM_BYTES,
   OCTAHEDRAL_WEBGPU_RENDER_WGSL,
+  buildOctahedralWireframeIndices3D,
   createOctahedralWebGpuZeroCopyRenderer3D,
   estimateOctahedralWebGpuRender3D,
   type OctahedralWebGpuCompute3D,
@@ -290,9 +291,10 @@ same(
   JSON.stringify([
     "octahedral-render-gradient",
     "octahedral-render-surface-indices",
+    "octahedral-render-wireframe-indices",
     "octahedral-render-uniforms",
   ].sort()),
-  "renderer owns only two static template buffers plus one fixed uniform",
+  "renderer owns three static template buffers plus one fixed uniform",
 );
 assert(
   !rendererOwnedLabels.some((label) => /position|instance-address/.test(label)),
@@ -305,6 +307,7 @@ same(
   JSON.stringify([
     "octahedral-render-gradient",
     "octahedral-render-surface-indices",
+    "octahedral-render-wireframe-indices",
   ].sort()),
   "renderer construction uploads only immutable template data",
 );
@@ -352,6 +355,43 @@ same(device.draws[1]!.instanceCount, network.links.length, "center draw instance
 same(device.draws[2]!.vertexCount, 6, "END arrow is a six-vertex procedural kite");
 same(device.draws[2]!.instanceCount, network.links.length, "arrow draw instances semantic Links");
 
+const wireframeIndices = buildOctahedralWireframeIndices3D(
+  compute.template.surfaceTriangles,
+);
+assert(wireframeIndices.length > 0, "wireframe template contains cached edge vertices");
+same(wireframeIndices.length % 2, 0, "wireframe template is a line-list");
+
+device.resetFrame();
+const wireframeStats = renderer.render({
+  targetView: { kind: "color-view" },
+  depthView: { kind: "depth-view" },
+  viewProjection: identity,
+  width: 1280,
+  height: 720,
+  wireframe: true,
+});
+same(wireframeStats.drawCalls, 3, "wireframe render keeps exactly three draws");
+same(device.draws.length, 3, "wireframe frame still emits three draw commands");
+same(
+  device.draws[0]!.pipeline,
+  "octahedral-webgpu-wireframe-pipeline",
+  "wireframe frame selects dedicated line-list pipeline",
+);
+same(
+  device.draws[0]!.vertexCount,
+  wireframeIndices.length,
+  "wireframe draw expands cached unique surface edges",
+);
+same(
+  device.queue.writes.length,
+  1,
+  "wireframe toggle still writes only fixed render uniforms",
+);
+assert(
+  device.queue.writes[0]!.buffer !== compute.positionBuffer,
+  "wireframe mode never writes shared dynamic positions",
+);
+
 assert(
   OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("@group(0) @binding(0) var<storage, read> positions: array<f32>;"),
   "WGSL reads shared packed XYZ positions directly as storage",
@@ -391,6 +431,11 @@ assert(
 
 const snapshot = renderer.snapshot();
 same(snapshot.status, "available", "live renderer snapshot is available");
+same(
+  snapshot.wireframeVerticesPerLink,
+  wireframeIndices.length,
+  "snapshot exposes cached wireframe line-list size",
+);
 same(snapshot.sharedPositionBuffer, true, "snapshot records shared position-buffer invariant");
 same(snapshot.rendererDynamicPositionBytes, 0, "renderer owns zero dynamic position bytes");
 same(snapshot.rendererInstanceAddressBytes, 0, "renderer owns zero O(N) instance-address bytes");
