@@ -76,11 +76,17 @@ export interface OctahedralSpringForceResult {
 
 const templateCache = new Map<number, OctahedralLinkTemplate3D>();
 
-function requireFiniteBuffer(values: Float32Array, minimumLength: number, label: string): void {
-  if (values.length < minimumLength) {
-    throw new OctahedralLink3DError("invalid-buffer", `${label}: ${values.length} < ${minimumLength}`);
+function requireFiniteRange(
+  values: Float32Array,
+  start: number,
+  length: number,
+  label: string,
+): void {
+  const end = start + length;
+  if (start < 0 || length < 0 || end > values.length) {
+    throw new OctahedralLink3DError("invalid-buffer", `${label}: [${start},${end}) outside ${values.length}`);
   }
-  for (let index = 0; index < minimumLength; index += 1) {
+  for (let index = start; index < end; index += 1) {
     if (!Number.isFinite(values[index]!)) {
       throw new OctahedralLink3DError("non-finite-state", `${label}[${index}]`);
     }
@@ -349,8 +355,8 @@ function writeCenterInto(
   out: Float32Array,
   outOffset: number,
 ): void {
-  const required = (linkIndex + 1) * template.vertexCount * 3;
-  requireFiniteBuffer(positions, required, "positions");
+  const linkBase = linkIndex * template.vertexCount * 3;
+  requireFiniteRange(positions, linkBase, template.vertexCount * 3, "positions");
   let x = 0;
   let y = 0;
   let z = 0;
@@ -386,8 +392,19 @@ export function addOctahedralCenterForce3D(
   if (![fx, fy, fz].every(Number.isFinite)) {
     throw new OctahedralLink3DError("non-finite-state", "center force");
   }
-  const required = (linkIndex + 1) * template.vertexCount * 3;
-  requireFiniteBuffer(forces, required, "forces");
+  const linkBase = linkIndex * template.vertexCount * 3;
+  requireFiniteRange(forces, linkBase, template.vertexCount * 3, "forces");
+  addCenterForceUnchecked(template, forces, linkIndex, fx, fy, fz);
+}
+
+function addCenterForceUnchecked(
+  template: OctahedralLinkTemplate3D,
+  forces: Float32Array,
+  linkIndex: number,
+  fx: number,
+  fy: number,
+  fz: number,
+): void {
   for (const vertex of template.centerTriangle) {
     const offset = packedFloatOffset(template, linkIndex, vertex);
     forces[offset] = forces[offset]! + fx / 3;
@@ -404,9 +421,9 @@ export function accumulateOctahedralSpringForces3D(
   linkIndex = 0,
 ): OctahedralSpringEvaluation {
   requireStiffness(stiffness);
-  const required = (linkIndex + 1) * template.vertexCount * 3;
-  requireFiniteBuffer(positions, required, "positions");
-  requireFiniteBuffer(forces, required, "forces");
+  const linkBase = linkIndex * template.vertexCount * 3;
+  requireFiniteRange(positions, linkBase, template.vertexCount * 3, "positions");
+  requireFiniteRange(forces, linkBase, template.vertexCount * 3, "forces");
 
   for (let edge = 0; edge < template.edgeCount; edge += 1) {
     const a = template.edgeA[edge]!;
@@ -419,16 +436,18 @@ export function accumulateOctahedralSpringForces3D(
     let dz = positions[bOffset + 2]! - positions[aOffset + 2]!;
     let length = Math.hypot(dx, dy, dz);
 
+    let scale: number;
     if (length <= EPSILON) {
       const restA = a * 3;
       const restB = b * 3;
       dx = template.restPositions[restB]! - template.restPositions[restA]!;
       dy = template.restPositions[restB + 1]! - template.restPositions[restA + 1]!;
       dz = template.restPositions[restB + 2]! - template.restPositions[restA + 2]!;
-      length = OCTAHEDRAL_EDGE_REST_LENGTH;
+      // Rest vectors are unit length. A coincident edge is maximally compressed.
+      scale = -stiffness;
+    } else {
+      scale = stiffness * (length - OCTAHEDRAL_EDGE_REST_LENGTH) / length;
     }
-
-    const scale = stiffness * (length - OCTAHEDRAL_EDGE_REST_LENGTH) / length;
     const fx = dx * scale;
     const fy = dy * scale;
     const fz = dz * scale;
@@ -473,7 +492,7 @@ export function projectOctahedralHinges3D(
   if (positions.length !== required) {
     throw new OctahedralLink3DError("invalid-buffer", `positions: ${positions.length} != ${required}`);
   }
-  requireFiniteBuffer(positions, required, "positions");
+  requireFiniteRange(positions, 0, required, "positions");
   const center = new Float32Array(3);
 
   for (let link = 0; link < topology.linkCount; link += 1) {
@@ -504,7 +523,7 @@ export function transferOctahedralHingeForces3D(
   if (forces.length !== required) {
     throw new OctahedralLink3DError("invalid-buffer", `forces: ${forces.length} != ${required}`);
   }
-  requireFiniteBuffer(forces, required, "forces");
+  requireFiniteRange(forces, 0, required, "forces");
 
   for (let link = 0; link < topology.linkCount; link += 1) {
     for (const role of ["start", "end"] as const) {
@@ -517,7 +536,7 @@ export function transferOctahedralHingeForces3D(
       forces[offset] = 0;
       forces[offset + 1] = 0;
       forces[offset + 2] = 0;
-      addOctahedralCenterForce3D(template, forces, target, fx, fy, fz);
+      addCenterForceUnchecked(template, forces, target, fx, fy, fz);
     }
   }
 
