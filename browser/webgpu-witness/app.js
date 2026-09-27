@@ -1097,83 +1097,130 @@ async function startRender() {
   );
 }
 
-function packedPositionOffset(template, linkIndex, vertex) {
-  return (linkIndex * template.vertexCount + vertex) * 3;
-}
-
-function readVertex3(template, positions, linkIndex, vertex) {
-  const offset = packedPositionOffset(template, linkIndex, vertex);
-  return [positions[offset], positions[offset + 1], positions[offset + 2]];
-}
-
-function triangleCenter3(template, positions, linkIndex, triangle) {
-  const result = [0, 0, 0];
-  for (const vertex of triangle) {
-    const point = readVertex3(template, positions, linkIndex, vertex);
-    result[0] += point[0] / 3;
-    result[1] += point[1] / 3;
-    result[2] += point[2] / 3;
-  }
-  return result;
-}
-
-function center3(template, positions, linkIndex) {
-  return triangleCenter3(template, positions, linkIndex, template.centerTriangle);
-}
-
 function distance3(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
-function percentile95(sortedValues) {
-  if (sortedValues.length === 0) return 0;
-  return sortedValues[Math.min(sortedValues.length - 1, Math.ceil(sortedValues.length * 0.95) - 1)];
+function rigidBodyQuat4(orientations, bodyIndex) {
+  const offset = bodyIndex * 4;
+  return [
+    orientations[offset],
+    orientations[offset + 1],
+    orientations[offset + 2],
+    orientations[offset + 3],
+  ];
 }
 
-function diagnosticClass(value) {
-  if (value > 0.1) return "fail";
-  if (value > 0.03) return "warn";
+function rigidBodyVelocity3(values, bodyIndex) {
+  const offset = bodyIndex * 3;
+  return [values[offset], values[offset + 1], values[offset + 2]];
+}
+
+function quaternionNormError(q) {
+  return Math.abs(Math.hypot(q[0], q[1], q[2], q[3]) - 1);
+}
+
+function diagnosticClass(value, warn = 1e-3, fail = 1e-2) {
+  if (value > fail) return "fail";
+  if (value > warn) return "warn";
   return "ok";
+}
+
+function rigidLinkPotentialEnergy(template, state, linkIndex, stiffness) {
+  let energy = 0;
+  const base = linkIndex * template.sectionCount;
+  for (let local = 0; local < template.octahedronCount; local += 1) {
+    const lower = base + local;
+    const upper = lower + 1;
+    energy += core.evaluateRigidSectionPotential3D(
+      template,
+      rigidBodyCenter3(state.centers, lower),
+      rigidBodyQuat4(state.orientations, lower),
+      rigidBodyCenter3(state.centers, upper),
+      rigidBodyQuat4(state.orientations, upper),
+      stiffness,
+    ).energy;
+  }
+  return energy;
 }
 
 async function inspectGeometry() {
   if (!renderState) return;
 
-  const state = renderState;
-  const wasPaused = state.paused;
-  state.paused = true;
+  const render = renderState;
+  const wasPaused = render.paused;
+  render.paused = true;
   ui.inspectGeometry.disabled = true;
 
   try {
-    const positions = await state.compute.readBackPositions();
-    if (renderState !== state) return;
+    const gpuState = await render.compute.readBackState();
+    if (renderState !== render) return;
 
-    const { template, topology } = state.compute;
-    const networkByKey = new Map(state.network.links.map((link) => [link.key, link]));
+    const { template, topology } = render.compute;
+    const networkByKey = new Map(render.network.links.map((link) => [link.key, link]));
     const rowsHtml = [];
+    let globalHingeError = 0;
+    let globalQuaternionError = 0;
+    let globalMaxLinearSpeed = 0;
+    let globalMaxAngularSpeed = 0;
+    let totalPotentialEnergy = 0;
 
     for (let linkIndex = 0; linkIndex < topology.linkCount; linkIndex += 1) {
       const key = topology.keys[linkIndex];
       const source = networkByKey.get(key);
       if (!source) throw new Error(`diagnostic source Link missing: ${key}`);
 
-      const ownCenter = center3(template, positions, linkIndex);
-      const startPoint = triangleCenter3(template, positions, linkIndex, template.startTriangle);
-      const endPoint = triangleCenter3(template, positions, linkIndex, template.endTriangle);
-      const startCenter = center3(template, positions, topology.startIndices[linkIndex]);
-      const endCenter = center3(template, positions, topology.endIndices[linkIndex]);
+      const base = linkIndex * template.sectionCount;
+      const middleBody = base + template.centerSection;
+      const startBody = base;
+      const endBody = base + template.sectionCount - 1;
+      const startTargetBody =
+        topology.startIndices[linkIndex] * template.sectionCount
+        + template.centerSection;
+      const endTargetBody =
+        topology.endIndices[linkIndex] * template.sectionCount
+        + template.centerSection;
 
-      const strains = [];
-      for (let edge = 0; edge < template.edgeCount; edge += 1) {
-        const edgeA = readVertex3(template, positions, linkIndex, template.edgeA[edge]);
-        const edgeB = readVertex3(template, positions, linkIndex, template.edgeB[edge]);
-        strains.push(Math.abs(distance3(edgeA, edgeB) - template.edgeRestLength));
+      const ownCenter = rigidBodyCenter3(gpuState.centers, middleBody);
+      const startError = distance3(
+        rigidBodyCenter3(gpuState.centers, startBody),
+        rigidBodyCenter3(gpuState.centers, startTargetBody),
+      );
+      const endError = distance3(
+        rigidBodyCenter3(gpuState.centers, endBody),
+        rigidBodyCenter3(gpuState.centers, endTargetBody),
+      );
+      const centerDisplacement = distance3(
+        ownCenter,
+        render.initialSemanticCenters[linkIndex],
+      );
+      const energy = rigidLinkPotentialEnergy(
+        template,
+        gpuState,
+        linkIndex,
+        render.compute.stiffness,
+      );
+
+      let maxLinearSpeed = 0;
+      let maxAngularSpeed = 0;
+      let maxQuaternionError = 0;
+      for (let local = 0; local < template.sectionCount; local += 1) {
+        const body = base + local;
+        const velocity = rigidBodyVelocity3(gpuState.linearVelocities, body);
+        const angular = rigidBodyVelocity3(gpuState.angularVelocities, body);
+        maxLinearSpeed = Math.max(maxLinearSpeed, Math.hypot(...velocity));
+        maxAngularSpeed = Math.max(maxAngularSpeed, Math.hypot(...angular));
+        maxQuaternionError = Math.max(
+          maxQuaternionError,
+          quaternionNormError(rigidBodyQuat4(gpuState.orientations, body)),
+        );
       }
-      strains.sort((left, right) => left - right);
-      const p95 = percentile95(strains);
-      const maximum = strains.at(-1) ?? 0;
-      const startError = distance3(startPoint, startCenter);
-      const endError = distance3(endPoint, endCenter);
+
+      globalHingeError = Math.max(globalHingeError, startError, endError);
+      globalQuaternionError = Math.max(globalQuaternionError, maxQuaternionError);
+      globalMaxLinearSpeed = Math.max(globalMaxLinearSpeed, maxLinearSpeed);
+      globalMaxAngularSpeed = Math.max(globalMaxAngularSpeed, maxAngularSpeed);
+      totalPotentialEnergy += energy;
 
       rowsHtml.push(`
         <tr>
@@ -1181,21 +1228,29 @@ async function inspectGeometry() {
           <td>${equationForNetworkLink(source)}</td>
           <td class="${diagnosticClass(startError)}">${fmt(startError)}</td>
           <td class="${diagnosticClass(endError)}">${fmt(endError)}</td>
-          <td>${fmt(distance3(ownCenter, startPoint))}</td>
-          <td>${fmt(distance3(ownCenter, endPoint))}</td>
-          <td class="${diagnosticClass(p95)}">${fmt(p95)}</td>
-          <td class="${diagnosticClass(maximum)}">${fmt(maximum)}</td>
+          <td>${fmt(centerDisplacement)}</td>
+          <td>${fmt(energy)}</td>
+          <td>${fmt(maxLinearSpeed)}</td>
+          <td>${fmt(maxAngularSpeed)}</td>
+          <td class="${diagnosticClass(maxQuaternionError, 1e-5, 1e-3)}">${fmt(maxQuaternionError)}</td>
         </tr>
       `);
     }
 
     ui.geometryBody.innerHTML = rowsHtml.join("");
-    log(`geometry inspection: scene=${state.scene.label}, ${topology.linkCount} Links, one-shot readback ${positions.byteLength} B`);
+    const readbackBytes =
+      gpuState.centers.byteLength
+      + gpuState.orientations.byteLength
+      + gpuState.linearVelocities.byteLength
+      + gpuState.angularVelocities.byteLength;
+    log(
+      `rigid geometry inspection: scene=${render.scene.label}, ${topology.linkCount} Links, readback=${readbackBytes} B, maxHinge=${fmt(globalHingeError)}, maxQNormErr=${fmt(globalQuaternionError)}, potential=${fmt(totalPotentialEnergy)}, maxV=${fmt(globalMaxLinearSpeed)}, maxOmega=${fmt(globalMaxAngularSpeed)}`,
+    );
   } catch (error) {
-    ui.geometryBody.innerHTML = `<tr><td colspan="8" class="fail">Inspection ERROR — ${String(error)}</td></tr>`;
+    ui.geometryBody.innerHTML = `<tr><td colspan="9" class="fail">Inspection ERROR — ${String(error)}</td></tr>`;
     log(`geometry inspection ERROR — ${error.stack ?? error}`);
   } finally {
-    if (renderState === state) state.paused = wasPaused;
+    if (renderState === render) render.paused = wasPaused;
     ui.inspectGeometry.disabled = false;
   }
 }
@@ -1209,7 +1264,7 @@ ui.rerun.addEventListener("click", () => {
 });
 
 ui.scene.addEventListener("change", () => {
-  ui.geometryBody.innerHTML = '<tr><td colspan="8" class="muted">Press Inspect geometry.</td></tr>';
+  ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Press Inspect geometry.</td></tr>';
   startRender().catch((error) => {
     renderPass = false;
     setStatus(ui.renderCompute, "ERROR", "fail");
