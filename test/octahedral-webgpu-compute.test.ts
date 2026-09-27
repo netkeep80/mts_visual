@@ -92,7 +92,13 @@ class FakeDevice implements WebGpuDeviceLike {
   }
 
   createShaderModule(descriptor: { readonly label?: string; readonly code: string }): object {
-    return { label: descriptor.label, code: descriptor.code };
+    return {
+      label: descriptor.label,
+      code: descriptor.code,
+      async getCompilationInfo() {
+        return { messages: [] };
+      },
+    };
   }
 
   createBindGroupLayout(descriptor: { readonly label?: string; readonly entries: readonly object[] }): object {
@@ -249,6 +255,14 @@ same(
 );
 assert(!/atomic</.test(OCTAHEDRAL_WEBGPU_WGSL), "WGSL uses no atomic force buffer");
 assert(!/pairwise/i.test(OCTAHEDRAL_WEBGPU_WGSL), "WGSL contains no semantic all-pairs path");
+assert(
+  !OCTAHEDRAL_WEBGPU_WGSL.includes("num_workgroups"),
+  "browser WGSL linearization does not depend on num_workgroups",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("gid.y * 65535u * 64u"),
+  "browser WGSL uses the accepted fixed 65,535-workgroup spill slab",
+);
 assert(OCTAHEDRAL_WEBGPU_WGSL.includes("fn seed_center"), "WGSL exposes deterministic 3D seed-center helper");
 assert(OCTAHEDRAL_WEBGPU_WGSL.includes("fn seed_axis"), "WGSL exposes topology-directed mast orientation helper");
 assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let x_index = link % side"), "WGSL seed layout spans grid X");
@@ -348,6 +362,48 @@ try {
   throw new Error("destroyed controller step should fail");
 } catch (error) {
   assert(error instanceof Error && /destroyed/.test(error.message), "destroyed controller fails closed");
+}
+
+class InvalidShaderFakeDevice extends FakeDevice {
+  createShaderModule(descriptor: { readonly label?: string; readonly code: string }): object {
+    return {
+      label: descriptor.label,
+      code: descriptor.code,
+      async getCompilationInfo() {
+        return {
+          messages: [{
+            type: "error",
+            message: "synthetic WGSL browser validation failure",
+            lineNum: 17,
+            linePos: 9,
+          }],
+        };
+      },
+    };
+  }
+}
+
+try {
+  await createOctahedralWebGpuCompute3D(new InvalidShaderFakeDevice(), selfNetwork, {
+    aspectRatio: ratio,
+    stiffness: 1,
+    simulationSpeed: 1,
+  });
+  throw new Error("invalid shader module should fail before pipeline creation");
+} catch (error) {
+  assert(error instanceof Error, "invalid shader failure has Error shape");
+  assert(
+    error.message.includes("WGSL compilation failed"),
+    "primary shader compilation failure is surfaced explicitly",
+  );
+  assert(
+    error.message.includes("line 17:9"),
+    "primary shader compilation diagnostic preserves line and column",
+  );
+  assert(
+    error.message.includes("synthetic WGSL browser validation failure"),
+    "primary shader compilation diagnostic preserves browser message",
+  );
 }
 
 class LostFakeDevice extends FakeDevice {
