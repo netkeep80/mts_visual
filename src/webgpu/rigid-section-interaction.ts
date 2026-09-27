@@ -46,7 +46,7 @@ export function pickRigidSectionCenterScreen2D(
   let selectedDistance = Number.POSITIVE_INFINITY;
   for (let index = 0; index < projectedCenters.length; index += 1) {
     const point = projectedCenters[index];
-    if (point === null) continue;
+    if (point === undefined || point === null) continue;
     if (point.length !== 2 || !point.every(Number.isFinite)) {
       throw new Error(`invalid rigid interaction projectedCenters[${index}]`);
     }
