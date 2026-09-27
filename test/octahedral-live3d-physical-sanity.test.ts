@@ -15,7 +15,11 @@ function approx(actual: number, expected: number, message: string, epsilon = 1e-
 
 function hubHeavyNetwork(count = 333): VisualLinkNetwork {
   assert(count >= 8, "hub-heavy fixture requires at least eight Links");
-  const links: VisualLinkNetwork["links"] = [
+  const links: Array<{
+    key: string;
+    startKey: string;
+    endKey: string;
+  }> = [
     { key: "L1", startKey: "L1", endKey: "L1" },
     { key: "L2", startKey: "L2", endKey: "L1" },
     { key: "L3", startKey: "L1", endKey: "L3" },
