@@ -65,7 +65,7 @@
   <section class="card section">
     <div class="toolbar">
       <h2 style="margin-right:auto">v0.5 rigid-section CPU ↔ GPU differential</h2>
-      <span class="muted">P3 compute only · renderer below is still v0.4</span>
+      <span class="muted">P3 differential · live renderer below uses the same v0.5 rigid state</span>
     </div>
     <table>
       <thead>
@@ -80,7 +80,7 @@
 
   <section class="card section">
     <div class="toolbar">
-      <h2 style="margin-right:auto">Real zero-copy live render</h2>
+      <h2 style="margin-right:auto">v0.5 rigid-section zero-copy live render</h2>
       <label>Scene
         <select id="scene">
           <option value="root-r" selected>1 · R only</option>
@@ -143,14 +143,15 @@
             <th>Equation</th>
             <th>START hinge err</th>
             <th>END hinge err</th>
-            <th>CENTER→START</th>
-            <th>CENTER→END</th>
-            <th>p95 |strain|</th>
-            <th>max |strain|</th>
+            <th>Δ CENTER</th>
+            <th>Potential E</th>
+            <th>max |v|</th>
+            <th>max |ω|</th>
+            <th>max |q|-1</th>
           </tr>
         </thead>
         <tbody id="geometry-body">
-          <tr><td colspan="8" class="muted">Press Inspect geometry.</td></tr>
+          <tr><td colspan="9" class="muted">Press Inspect geometry.</td></tr>
         </tbody>
       </table>
     </div>
