@@ -68,6 +68,8 @@ export function computeOctahedralSeedCenter3D(
 
 const TOPOLOGY_SEED_ITERATIONS = 64;
 const TOPOLOGY_SEED_RELAXATION = 0.8;
+/** Internal initialization only; not a third physical Link parameter. */
+export const OCTAHEDRAL_NON_SELF_SEED_RATIO = 0.93;
 
 function seedCenterFromBuffer(
   centers: Float32Array,
@@ -104,7 +106,8 @@ function fallbackPairAxis3D(
  *
  * The compact cubic grid is only a symmetry-breaking initial guess. Every
  * non-self START/END incidence then contributes one distance constraint whose
- * target is exactly one half of the Link rest length. The fixed Jacobi schedule
+ * target is 93% of one half of the Link rest length. This deliberately leaves
+ * safe visible compression for the spring system to resolve. The fixed Jacobi schedule
  * is O(iterations * N): there are exactly two outgoing incidence roles per Link.
  *
  * Self-incidence is deliberately excluded here; finite self material shape is
@@ -144,7 +147,7 @@ export function resolveOctahedralSeedCenters3D(
 
   const corrections = new Float64Array(count * 3);
   const weights = new Float64Array(count);
-  const targetLength = template.restLength / 2;
+  const targetLength = template.restLength / 2 * OCTAHEDRAL_NON_SELF_SEED_RATIO;
 
   const accumulateConstraint = (source: number, target: number): void => {
     if (source === target) return;
