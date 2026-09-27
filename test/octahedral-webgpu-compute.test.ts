@@ -195,7 +195,7 @@ const selfReverse = buildOctahedralReverseIncidence3D(buildOctahedralLinkTopolog
 same(JSON.stringify([...selfReverse.incomingOffsets]), JSON.stringify([0, 2]), "double-self CSR has two incoming refs");
 same(JSON.stringify([...selfReverse.incomingRefs]), JSON.stringify([0, 1]), "double-self CSR retains START and END roles");
 
-const ratio = 2 * Math.SQRT2;
+const ratio = Math.SQRT2;
 const template = getOctahedralLinkTemplate3D(ratio);
 const packed = packOctahedralWebGpuTemplate3D(template);
 same(packed.restBase, 0, "packed template rest positions start at zero");
@@ -221,12 +221,12 @@ for (const batch of packed.batches) {
 same(batchEdges.length, template.edgeCount, "packed batches cover every physical spring");
 same(new Set(batchEdges).size, template.edgeCount, "packed batches contain every spring exactly once");
 
-const millionVertices = computeOctahedralWebGpuDispatch2D(11_000_000);
+const millionVertices = computeOctahedralWebGpuDispatch2D(9_000_000);
 same(millionVertices.workgroupsX, 65_535, "million workload uses full first dispatch dimension");
 same(millionVertices.workgroupsY, 3, "million workload spills deterministically into second dispatch dimension");
-assert(millionVertices.coveredInvocations >= 11_000_000, "million dispatch covers every physical vertex");
+assert(millionVertices.coveredInvocations >= 9_000_000, "million capless dispatch covers every physical vertex");
 assert(
-  millionVertices.coveredInvocations - 11_000_000 < 65_535 * 64,
+  millionVertices.coveredInvocations - 9_000_000 < 65_535 * 64,
   "2D dispatch overrun is bounded by one first-dimension slab",
 );
 
@@ -307,7 +307,7 @@ assert(
 );
 assert(
   OCTAHEDRAL_WEBGPU_WGSL.includes("let half_length = abs(rest_xyz(globals.counts.w).z);"),
-  "WGSL derives half-mast rest length from END apex",
+  "WGSL derives half-mast rest length from the END terminal ring",
 );
 assert(
   OCTAHEDRAL_WEBGPU_WGSL.includes("let centerline = center + (target_center - center) * fraction;"),
@@ -327,7 +327,7 @@ assert(
 );
 assert(
   !OCTAHEDRAL_WEBGPU_WGSL.includes("+ axis * rest.z"),
-  "WGSL no longer leaves the whole mast rigid then tears only its apex springs",
+  "WGSL distributes deformation across the capless mast instead of concentrating it at an endpoint",
 );
 
 const fake = new FakeDevice();
@@ -355,8 +355,8 @@ const snapshot = controller.snapshot();
 same(snapshot.status, "available", "fresh GPU controller reports available status");
 same(snapshot.deviceLostReason, null, "fresh GPU controller has no device-loss reason");
 same(snapshot.linkCount, 4, "GPU controller snapshot Link count");
-same(snapshot.vertexCount, 11, "GPU controller uses minimum cached template");
-same(snapshot.positionBytes, 4 * 11 * 3 * 4, "positions remain tightly packed XYZ Float32");
+same(snapshot.vertexCount, 9, "GPU controller uses minimum capless cached template");
+same(snapshot.positionBytes, 4 * 9 * 3 * 4, "positions remain tightly packed XYZ Float32");
 same(snapshot.gpuDynamicXyzBytes, 3 * snapshot.positionBytes, "three dynamic XYZ fields retain 12-byte vertex packing");
 
 fake.queue.resetWrites();
@@ -377,11 +377,11 @@ same(
 );
 assert(
   sequence.indexOf("hinge_gather_main") < sequence.indexOf("hinge_zero_main"),
-  "hinge gather completes before apex reaction zeroing",
+  "hinge gather completes before terminal-ring translation removal",
 );
 assert(
   sequence.indexOf("hinge_zero_main") < sequence.indexOf("integrate_main"),
-  "apex reactions are zeroed before interior integration",
+  "terminal-ring net translation is removed before all material vertices integrate",
 );
 
 fake.queue.resetWrites();
