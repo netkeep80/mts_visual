@@ -217,6 +217,18 @@ assert(
   "GPU angular integration includes Euler gyroscopic coupling",
 );
 assert(
+  RIGID_SECTION_WEBGPU_WGSL.includes("let longitudinal = dot(delta, longitudinal_axis);"),
+  "GPU relation splits deformation into longitudinal and transverse components",
+);
+assert(
+  RIGID_SECTION_WEBGPU_WGSL.includes("let axis_torque ="),
+  "GPU anisotropic potential includes the rotating-axis conservative torque",
+);
+assert(
+  RIGID_SECTION_WEBGPU_WGSL.includes("globals.physics.z"),
+  "GPU potential consumes the nonlinearity control",
+);
+assert(
   !/\blayout\s*:/.test(RIGID_SECTION_WEBGPU_WGSL),
   "rigid-section WGSL avoids reserved identifier layout",
 );
@@ -248,6 +260,12 @@ same(snapshot.sectionCount, 21, "GPU root-basis section count");
 same(snapshot.bodyCount, 105, "GPU root-basis body count");
 same(snapshot.centerBytes, 105 * 16, "centers are packed vec4 per rigid section");
 same(snapshot.orientationBytes, 105 * 16, "quaternions are packed vec4 per rigid section");
+same(snapshot.nodeMass, 1, "default GPU mass belongs to one octahedral node");
+same(snapshot.longitudinalStiffness, 2, "legacy stiffness seeds GPU longitudinal stiffness");
+same(snapshot.transverseStiffness, 2, "legacy stiffness seeds GPU transverse stiffness");
+same(snapshot.nonlinearity, 0, "default GPU relation is linear");
+same(snapshot.linearDampingRate, 1.5, "default GPU linear damping preserved");
+same(snapshot.angularDampingRate, 1.5, "default GPU angular damping preserved");
 
 const rLinkIndex = controller.topology.keys.indexOf("R");
 assert(rLinkIndex >= 0, "R exists in normalized rigid topology");
@@ -360,8 +378,38 @@ same(
 
 fake.queue.resetWrites();
 controller.setStiffness(3);
+same(controller.longitudinalStiffness, 3, "legacy GPU stiffness setter updates longitudinal stiffness");
+same(controller.transverseStiffness, 3, "legacy GPU stiffness setter updates transverse stiffness");
 same(fake.queue.writes.length, 1, "stiffness update writes only globals");
 same(fake.queue.writes[0]!.label, "rigid-section-globals", "stiffness update targets globals");
+
+for (const [label, apply, expected] of [
+  ["longitudinal", () => controller.setLongitudinalStiffness(7), 7],
+  ["transverse", () => controller.setTransverseStiffness(4), 4],
+  ["nonlinearity", () => controller.setNonlinearity(6), 6],
+  ["node mass", () => controller.setNodeMass(2.5), 2.5],
+  ["linear damping", () => controller.setLinearDampingRate(0.35), 0.35],
+  ["angular damping", () => controller.setAngularDampingRate(0.8), 0.8],
+] as const) {
+  fake.queue.resetWrites();
+  apply();
+  same(fake.queue.writes.length, 1, `${label} update writes only globals`);
+  same(fake.queue.writes[0]!.label, "rigid-section-globals", `${label} update targets globals`);
+  const updated = controller.snapshot();
+  const actual = label === "longitudinal"
+    ? updated.longitudinalStiffness
+    : label === "transverse"
+      ? updated.transverseStiffness
+      : label === "nonlinearity"
+        ? updated.nonlinearity
+        : label === "node mass"
+          ? updated.nodeMass
+          : label === "linear damping"
+            ? updated.linearDampingRate
+            : updated.angularDampingRate;
+  same(actual, expected, `${label} snapshot follows control`);
+}
+
 fake.queue.resetWrites();
 controller.setSimulationSpeed(0.5);
 same(fake.queue.writes.length, 1, "speed update writes only globals");
@@ -377,6 +425,27 @@ const zeroStepDifferential = await runRigidSectionWebGpuDifferential3D(
 assert(zeroStepDifferential.passed, "CPU/GPU initialization state is byte-equivalent at step zero");
 same(zeroStepDifferential.maxCenterDelta, 0, "initial centers match exactly");
 same(zeroStepDifferential.maxOrientationDelta, 0, "initial orientations match exactly");
+
+const tunedZeroStepDifferential = await runRigidSectionWebGpuDifferential3D(
+  new FakeDevice(),
+  rootBasis,
+  {
+    aspectRatio: 8 * Math.SQRT2,
+    longitudinalStiffness: 9,
+    transverseStiffness: 2.5,
+    nonlinearity: 5,
+    nodeMass: 3,
+    linearDampingRate: 0.4,
+    angularDampingRate: 0.9,
+    simulationSpeed: 1.75,
+  },
+  0,
+  1e-7,
+);
+assert(
+  tunedZeroStepDifferential.passed,
+  "non-default tunable CPU/GPU rigid initialization remains identical",
+);
 
 controller.destroy();
 same(controller.snapshot().status, "destroyed", "destroyed rigid-section controller reports destroyed");
