@@ -309,6 +309,18 @@ assert(
   "WGSL distributes incidence fit across the complete half-mast",
 );
 assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let self_half = target_link == link;"),
+  "WGSL detects START-self and END-self halves explicitly",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let loop_radius = half_length / 6.283185307179586;"),
+  "WGSL seeds self-incidence with finite material-loop radius",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_WGSL.includes("let normal = cos_theta * basis_x - sin_theta * axis;"),
+  "WGSL rotates self-loop cross-section with the material tangent",
+);
+assert(
   !OCTAHEDRAL_WEBGPU_WGSL.includes("+ axis * rest.z"),
   "WGSL no longer leaves the whole mast rigid then tears only its apex springs",
 );
