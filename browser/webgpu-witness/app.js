@@ -168,6 +168,18 @@ function physicsSignature(physics = selectedPhysics()) {
   ].join(":");
 }
 
+function monolithicPhysicsSignature(physics = selectedPhysics()) {
+  return [
+    physics.octahedra,
+    physics.nodeMass.toFixed(4),
+    physics.longitudinalStiffness.toFixed(4),
+    physics.transverseStiffness.toFixed(4),
+    physics.nonlinearity.toFixed(4),
+    physics.linearDampingRate.toFixed(4),
+    physics.simulationSpeed.toFixed(4),
+  ].join(":");
+}
+
 function refreshPhysicsControlLabels() {
   const physics = selectedPhysics();
   ui.lengthValue.value =
@@ -291,11 +303,9 @@ let renderPass = false;
 let renderState = null;
 
 function differentialIsCurrent() {
-  const signature = physicsSignature();
-  return differentialAllPass
-    && rigidDifferentialAllPass
-    && differentialPhysicsSignature === signature
-    && rigidDifferentialPhysicsSignature === signature;
+  return monolithicDifferentialAllPass
+    && monolithicDifferentialPhysicsSignature
+      === monolithicPhysicsSignature();
 }
 
 function markDifferentialStale() {
@@ -317,7 +327,7 @@ function markDifferentialStale() {
 function updateOverall() {
   const differentialCurrent = differentialIsCurrent();
   if (differentialCurrent && renderPass) {
-    setStatus(ui.overall, "PASS — compute differential + zero-copy render", "ok");
+    setStatus(ui.overall, "PASS — monolithic differential + zero-copy live render", "ok");
   } else if (device === null) {
     setStatus(ui.overall, "UNAVAILABLE", "warn");
   } else if (differentialCurrent || renderPass) {
@@ -632,7 +642,8 @@ async function runDifferentials() {
   }
 
   monolithicDifferentialAllPass = monolithicAllPass;
-  monolithicDifferentialPhysicsSignature = runSignature;
+  monolithicDifferentialPhysicsSignature =
+    monolithicPhysicsSignature(physics);
   ui.rerun.disabled = false;
   log(
     `differential parameters: ${physics.octahedra} octa, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, dLin=${physics.linearDampingRate.toFixed(2)}, dAng=${physics.angularDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
@@ -1388,49 +1399,6 @@ function distance3(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
-function rigidBodyQuat4(orientations, bodyIndex) {
-  const offset = bodyIndex * 4;
-  return [
-    orientations[offset],
-    orientations[offset + 1],
-    orientations[offset + 2],
-    orientations[offset + 3],
-  ];
-}
-
-function rigidBodyVelocity3(values, bodyIndex) {
-  const offset = bodyIndex * 3;
-  return [values[offset], values[offset + 1], values[offset + 2]];
-}
-
-function quaternionNormError(q) {
-  return Math.abs(Math.hypot(q[0], q[1], q[2], q[3]) - 1);
-}
-
-function diagnosticClass(value, warn = 1e-3, fail = 1e-2) {
-  if (value > fail) return "fail";
-  if (value > warn) return "warn";
-  return "ok";
-}
-
-function rigidLinkPotentialEnergy(template, state, linkIndex, elasticity) {
-  let energy = 0;
-  const base = linkIndex * template.sectionCount;
-  for (let local = 0; local < template.octahedronCount; local += 1) {
-    const lower = base + local;
-    const upper = lower + 1;
-    energy += core.evaluateRigidSectionPotential3D(
-      template,
-      rigidBodyCenter3(state.centers, lower),
-      rigidBodyQuat4(state.orientations, lower),
-      rigidBodyCenter3(state.centers, upper),
-      rigidBodyQuat4(state.orientations, upper),
-      elasticity,
-    ).energy;
-  }
-  return energy;
-}
-
 async function inspectGeometry() {
   if (!renderState) return;
 
@@ -1443,103 +1411,85 @@ async function inspectGeometry() {
     const gpuState = await render.compute.readBackState();
     if (renderState !== render) return;
 
-    const { template, topology } = render.compute;
-    const networkByKey = new Map(render.network.links.map((link) => [link.key, link]));
+    const topology = render.compute.topology;
+    const restLength = render.shape.template.restLength;
+    const networkByKey = new Map(
+      render.network.links.map((link) => [link.key, link]),
+    );
     const rowsHtml = [];
-    let globalHingeError = 0;
-    let globalQuaternionError = 0;
-    let globalMaxLinearSpeed = 0;
-    let globalMaxAngularSpeed = 0;
+    let globalMaxBend = 0;
+    let globalMaxSpeed = 0;
     let totalPotentialEnergy = 0;
 
     for (let linkIndex = 0; linkIndex < topology.linkCount; linkIndex += 1) {
       const key = topology.keys[linkIndex];
       const source = networkByKey.get(key);
-      if (!source) throw new Error(`diagnostic source Link missing: ${key}`);
-
-      const base = linkIndex * template.sectionCount;
-      const middleBody = base + template.centerSection;
-      const startBody = base;
-      const endBody = base + template.sectionCount - 1;
-      const startTargetBody =
-        topology.startIndices[linkIndex] * template.sectionCount
-        + template.centerSection;
-      const endTargetBody =
-        topology.endIndices[linkIndex] * template.sectionCount
-        + template.centerSection;
-
-      const ownCenter = rigidBodyCenter3(gpuState.centers, middleBody);
-      const startError = distance3(
-        rigidBodyCenter3(gpuState.centers, startBody),
-        rigidBodyCenter3(gpuState.centers, startTargetBody),
-      );
-      const endError = distance3(
-        rigidBodyCenter3(gpuState.centers, endBody),
-        rigidBodyCenter3(gpuState.centers, endTargetBody),
-      );
-      const centerDisplacement = distance3(
-        ownCenter,
-        render.initialSemanticCenters[linkIndex],
-      );
-      const energy = rigidLinkPotentialEnergy(
-        template,
-        gpuState,
-        linkIndex,
-        {
-          longitudinalStiffness: render.compute.longitudinalStiffness,
-          transverseStiffness: render.compute.transverseStiffness,
-          nonlinearity: render.compute.nonlinearity,
-        },
-      );
-
-      let maxLinearSpeed = 0;
-      let maxAngularSpeed = 0;
-      let maxQuaternionError = 0;
-      for (let local = 0; local < template.sectionCount; local += 1) {
-        const body = base + local;
-        const velocity = rigidBodyVelocity3(gpuState.linearVelocities, body);
-        const angular = rigidBodyVelocity3(gpuState.angularVelocities, body);
-        maxLinearSpeed = Math.max(maxLinearSpeed, Math.hypot(...velocity));
-        maxAngularSpeed = Math.max(maxAngularSpeed, Math.hypot(...angular));
-        maxQuaternionError = Math.max(
-          maxQuaternionError,
-          quaternionNormError(rigidBodyQuat4(gpuState.orientations, body)),
-        );
+      if (!source) {
+        throw new Error(`diagnostic source Link missing: ${key}`);
       }
 
-      globalHingeError = Math.max(globalHingeError, startError, endError);
-      globalQuaternionError = Math.max(globalQuaternionError, maxQuaternionError);
-      globalMaxLinearSpeed = Math.max(globalMaxLinearSpeed, maxLinearSpeed);
-      globalMaxAngularSpeed = Math.max(globalMaxAngularSpeed, maxAngularSpeed);
+      const startIndex = topology.startIndices[linkIndex];
+      const endIndex = topology.endIndices[linkIndex];
+      const start = packedVec3(gpuState.centers, startIndex);
+      const center = packedVec3(gpuState.centers, linkIndex);
+      const end = packedVec3(gpuState.centers, endIndex);
+      const velocity = packedVec3(gpuState.velocities, linkIndex);
+
+      const startLength = distance3(start, center);
+      const endLength = distance3(center, end);
+      const bendVector = [
+        start[0] - 2 * center[0] + end[0],
+        start[1] - 2 * center[1] + end[1],
+        start[2] - 2 * center[2] + end[2],
+      ];
+      const bend = Math.hypot(...bendVector);
+      const centerDisplacement = distance3(
+        center,
+        render.initialSemanticCenters[linkIndex],
+      );
+      const speed = Math.hypot(...velocity);
+      const energy = core.evaluateMonolithicLinkSpring3D(
+        start,
+        center,
+        end,
+        restLength,
+        {
+          stretchStiffness: render.compute.stretchStiffness,
+          straighteningStiffness:
+            render.compute.straighteningStiffness,
+          nonlinearity: render.compute.nonlinearity,
+        },
+      ).energy;
+
+      globalMaxBend = Math.max(globalMaxBend, bend);
+      globalMaxSpeed = Math.max(globalMaxSpeed, speed);
       totalPotentialEnergy += energy;
 
       rowsHtml.push(`
         <tr>
           <td class="value">${key}</td>
           <td>${equationForNetworkLink(source)}</td>
-          <td class="${diagnosticClass(startError)}">${fmt(startError)}</td>
-          <td class="${diagnosticClass(endError)}">${fmt(endError)}</td>
+          <td>${fmt(startLength)}</td>
+          <td>${fmt(endLength)}</td>
+          <td>${fmt(bend)}</td>
           <td>${fmt(centerDisplacement)}</td>
           <td>${fmt(energy)}</td>
-          <td>${fmt(maxLinearSpeed)}</td>
-          <td>${fmt(maxAngularSpeed)}</td>
-          <td class="${diagnosticClass(maxQuaternionError, 1e-5, 1e-3)}">${fmt(maxQuaternionError)}</td>
+          <td>${fmt(speed)}</td>
+          <td>${fmt(restLength)}</td>
         </tr>
       `);
     }
 
     ui.geometryBody.innerHTML = rowsHtml.join("");
     const readbackBytes =
-      gpuState.centers.byteLength
-      + gpuState.orientations.byteLength
-      + gpuState.linearVelocities.byteLength
-      + gpuState.angularVelocities.byteLength;
+      gpuState.centers.byteLength + gpuState.velocities.byteLength;
     log(
-      `rigid geometry inspection: scene=${render.scene.label}, ${topology.linkCount} Links, readback=${readbackBytes} B, maxHinge=${fmt(globalHingeError)}, maxQNormErr=${fmt(globalQuaternionError)}, potential=${fmt(totalPotentialEnergy)}, maxV=${fmt(globalMaxLinearSpeed)}, maxOmega=${fmt(globalMaxAngularSpeed)}`,
+      `monolithic geometry inspection: scene=${render.scene.label}, ${topology.linkCount} Links, readback=${readbackBytes} B, maxBend=${fmt(globalMaxBend)}, potential=${fmt(totalPotentialEnergy)}, maxCenterV=${fmt(globalMaxSpeed)}, restLength=${fmt(restLength)}`,
     );
   } catch (error) {
-    ui.geometryBody.innerHTML = `<tr><td colspan="9" class="fail">Inspection ERROR — ${String(error)}</td></tr>`;
-    log(`geometry inspection ERROR — ${error.stack ?? error}`);
+    ui.geometryBody.innerHTML =
+      `<tr><td colspan="9" class="fail">Inspection ERROR — ${String(error)}</td></tr>`;
+    log(`monolithic geometry inspection ERROR — ${error.stack ?? error}`);
   } finally {
     if (renderState === render) render.paused = wasPaused;
     ui.inspectGeometry.disabled = false;
@@ -1549,6 +1499,9 @@ async function inspectGeometry() {
 ui.rerun.addEventListener("click", () => {
   runDifferentials().catch((error) => {
     differentialAllPass = false;
+    rigidDifferentialAllPass = false;
+    monolithicDifferentialAllPass = false;
+    monolithicDifferentialPhysicsSignature = null;
     log(`differential runner ERROR — ${error.stack ?? error}`);
     updateOverall();
   });
@@ -1634,22 +1587,28 @@ function applyLivePhysicsControls() {
 
   const physics = selectedPhysics();
   const compute = renderState.compute;
-  compute.setNodeMass(physics.nodeMass);
-  compute.setLongitudinalStiffness(physics.longitudinalStiffness);
-  compute.setTransverseStiffness(physics.transverseStiffness);
+  compute.setCenterMass(physics.nodeMass);
+  compute.setStretchStiffness(physics.longitudinalStiffness);
+  compute.setStraighteningStiffness(physics.transverseStiffness);
   compute.setNonlinearity(physics.nonlinearity);
-  compute.setLinearDampingRate(physics.linearDampingRate);
-  compute.setAngularDampingRate(physics.angularDampingRate);
+  compute.setDampingRate(physics.linearDampingRate);
   compute.setSimulationSpeed(physics.simulationSpeed);
 
   const snapshot = compute.snapshot();
   const checks = [
-    ["nodeMass", snapshot.nodeMass, physics.nodeMass],
-    ["longitudinalStiffness", snapshot.longitudinalStiffness, physics.longitudinalStiffness],
-    ["transverseStiffness", snapshot.transverseStiffness, physics.transverseStiffness],
+    ["centerMass", snapshot.centerMass, physics.nodeMass],
+    [
+      "stretchStiffness",
+      snapshot.stretchStiffness,
+      physics.longitudinalStiffness,
+    ],
+    [
+      "straighteningStiffness",
+      snapshot.straighteningStiffness,
+      physics.transverseStiffness,
+    ],
     ["nonlinearity", snapshot.nonlinearity, physics.nonlinearity],
-    ["linearDampingRate", snapshot.linearDampingRate, physics.linearDampingRate],
-    ["angularDampingRate", snapshot.angularDampingRate, physics.angularDampingRate],
+    ["dampingRate", snapshot.dampingRate, physics.linearDampingRate],
     ["simulationSpeed", snapshot.simulationSpeed, physics.simulationSpeed],
   ];
   for (const [label, actual, expected] of checks) {
@@ -1662,7 +1621,7 @@ function applyLivePhysicsControls() {
 
   setStatus(
     ui.renderCompute,
-    `AVAILABLE · m=${physics.nodeMass.toFixed(2)} · k∥=${physics.longitudinalStiffness.toFixed(2)} · k⊥=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    `AVAILABLE · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
     "ok",
   );
 }
@@ -1673,11 +1632,27 @@ for (const control of [
   ui.transverseStiffness,
   ui.nonlinearity,
   ui.linearDamping,
-  ui.angularDamping,
   ui.simulationSpeed,
 ]) {
   control.addEventListener("input", applyLivePhysicsControls);
 }
+
+ui.angularDamping.addEventListener("input", () => {
+  refreshPhysicsControlLabels();
+  rigidDifferentialAllPass = false;
+  rigidDifferentialPhysicsSignature = null;
+  for (const row of rigidRows.values()) {
+    const status = row.querySelector(".status");
+    if (status.textContent === "PASS") {
+      status.textContent = "STALE";
+      status.className = "status warn";
+    }
+  }
+  log(
+    "legacy rigid angular damping changed — monolithic live physics is unaffected",
+  );
+  updateOverall();
+});
 
 ui.pauseRender.addEventListener("click", () => {
   if (!renderState) return;
