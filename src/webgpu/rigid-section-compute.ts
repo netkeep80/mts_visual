@@ -6,7 +6,6 @@ import {
 import {
   RIGID_SECTION_ANGULAR_DAMPING_RATE,
   RIGID_SECTION_BASE_TIME_STEP,
-  RIGID_SECTION_HINGE_SOLVER_ITERATIONS,
   RIGID_SECTION_LINEAR_DAMPING_RATE,
   buildRigidSectionReverseIncidence3D,
   createRigidSectionPhysics3D,
@@ -77,8 +76,8 @@ export interface RigidSectionWebGpuComputeOptions3D {
 
 export interface RigidSectionWebGpuStepStats3D {
   readonly relationBatchDispatches: 2;
-  readonly hingeDispatches: 12;
-  readonly computePasses: 16;
+  readonly hingeDispatches: 2;
+  readonly computePasses: 6;
   readonly dynamicStateUploadBytes: 0;
 }
 
@@ -286,11 +285,15 @@ fn integrate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let next_center = centers[body].xyz + v * dt;
 
   let q = q_normalize(orientations[body]);
-  let torque_local = q_rotate(q_conjugate(q), accumulation[torque_slot(body)].xyz);
-  let alpha_local = torque_local * globals.inverse_inertia.xyz;
+  var omega = angular_velocities[body].xyz;
+  let conjugate_q = q_conjugate(q);
+  let torque_local = q_rotate(conjugate_q, accumulation[torque_slot(body)].xyz);
+  let omega_local = q_rotate(conjugate_q, omega);
+  let angular_momentum_local = omega_local / globals.inverse_inertia.xyz;
+  let gyroscopic = cross(omega_local, angular_momentum_local);
+  let alpha_local = (torque_local - gyroscopic) * globals.inverse_inertia.xyz;
   let alpha_world = q_rotate(q, alpha_local);
 
-  var omega = angular_velocities[body].xyz;
   omega = (omega + alpha_world * dt) * globals.physics.w;
   let dq = q_mul_raw(vec4<f32>(omega, 0.0), q);
   let next_q = q_normalize(q + 0.5 * dq * dt);
@@ -301,89 +304,66 @@ fn integrate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   orientations[body] = next_q;
 }
 
-fn hinge_read_center(body: u32, direction: u32) -> vec3<f32> {
-  if (direction == 0u) {
-    return centers[body].xyz;
-  }
-  return scratch[scratch_center_slot(body)].xyz;
-}
-
-fn hinge_read_velocity(body: u32, direction: u32) -> vec3<f32> {
-  if (direction == 0u) {
-    return linear_velocities[body].xyz;
-  }
-  return scratch[scratch_velocity_slot(body)].xyz;
-}
-
 @compute @workgroup_size(${WORKGROUP_SIZE})
-fn hinge_jacobi_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let body = linear_index(gid);
-  if (body >= globals.counts.w) {
+fn hinge_star_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let target_link = linear_index(gid);
+  if (target_link >= globals.counts.x) {
     return;
   }
 
-  let direction = control.x;
   let section_count = globals.counts.y;
   let middle = globals.counts.z;
   let end_section = section_count - 1u;
-  let link = body / section_count;
-  let local = body % section_count;
+  let middle_body = target_link * section_count + middle;
 
-  let self_center = hinge_read_center(body, direction);
-  let self_velocity = hinge_read_velocity(body, direction);
-  var correction = vec3<f32>(0.0);
-  var velocity_correction = vec3<f32>(0.0);
-  var degree = 0u;
+  var center_sum = centers[middle_body].xyz;
+  var velocity_sum = linear_velocities[middle_body].xyz;
+  var member_count = 1u;
 
-  if (local == 0u) {
-    let target_link = topology_data[link * 2u];
-    let other = target_link * section_count + middle;
-    correction = correction + 0.5 * (hinge_read_center(other, direction) - self_center);
-    velocity_correction = velocity_correction
-      + 0.5 * (hinge_read_velocity(other, direction) - self_velocity);
-    degree = degree + 1u;
+  let begin = topology_data[globals.counts2.z + target_link];
+  let finish = topology_data[globals.counts2.z + target_link + 1u];
+  for (var cursor = begin; cursor < finish; cursor = cursor + 1u) {
+    let encoded = topology_data[globals.counts2.w + cursor];
+    let source_link = encoded / 2u;
+    let role = encoded & 1u;
+    let source_local = select(0u, end_section, role == 1u);
+    let endpoint_body = source_link * section_count + source_local;
+    center_sum = center_sum + centers[endpoint_body].xyz;
+    velocity_sum = velocity_sum + linear_velocities[endpoint_body].xyz;
+    member_count = member_count + 1u;
   }
 
-  if (local == end_section) {
-    let target_link = topology_data[link * 2u + 1u];
-    let other = target_link * section_count + middle;
-    correction = correction + 0.5 * (hinge_read_center(other, direction) - self_center);
-    velocity_correction = velocity_correction
-      + 0.5 * (hinge_read_velocity(other, direction) - self_velocity);
-    degree = degree + 1u;
+  let inverse_count = 1.0 / f32(member_count);
+  scratch[scratch_center_slot(middle_body)] = vec4<f32>(center_sum * inverse_count, 0.0);
+  scratch[scratch_velocity_slot(middle_body)] = vec4<f32>(velocity_sum * inverse_count, 0.0);
+}
+
+@compute @workgroup_size(${WORKGROUP_SIZE})
+fn hinge_apply_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let link = linear_index(gid);
+  if (link >= globals.counts.x) {
+    return;
   }
 
-  if (local == middle) {
-    let begin = topology_data[globals.counts2.z + link];
-    let finish = topology_data[globals.counts2.z + link + 1u];
-    for (var cursor = begin; cursor < finish; cursor = cursor + 1u) {
-      let encoded = topology_data[globals.counts2.w + cursor];
-      let source_link = encoded / 2u;
-      let role = encoded & 1u;
-      let source_local = select(0u, end_section, role == 1u);
-      let other = source_link * section_count + source_local;
-      correction = correction + 0.5 * (hinge_read_center(other, direction) - self_center);
-      velocity_correction = velocity_correction
-        + 0.5 * (hinge_read_velocity(other, direction) - self_velocity);
-      degree = degree + 1u;
-    }
-  }
+  let section_count = globals.counts.y;
+  let middle = globals.counts.z;
+  let end_section = section_count - 1u;
+  let own_middle = link * section_count + middle;
 
-  var next_center = self_center;
-  var next_velocity = self_velocity;
-  if (degree > 0u) {
-    let inverse_degree = 1.0 / f32(degree);
-    next_center = self_center + correction * inverse_degree;
-    next_velocity = self_velocity + velocity_correction * inverse_degree;
-  }
+  centers[own_middle] = scratch[scratch_center_slot(own_middle)];
+  linear_velocities[own_middle] = scratch[scratch_velocity_slot(own_middle)];
 
-  if (direction == 0u) {
-    scratch[scratch_center_slot(body)] = vec4<f32>(next_center, 0.0);
-    scratch[scratch_velocity_slot(body)] = vec4<f32>(next_velocity, 0.0);
-  } else {
-    centers[body] = vec4<f32>(next_center, 0.0);
-    linear_velocities[body] = vec4<f32>(next_velocity, 0.0);
-  }
+  let start_target = topology_data[link * 2u];
+  let start_target_middle = start_target * section_count + middle;
+  let start_body = link * section_count;
+  centers[start_body] = scratch[scratch_center_slot(start_target_middle)];
+  linear_velocities[start_body] = scratch[scratch_velocity_slot(start_target_middle)];
+
+  let end_target = topology_data[link * 2u + 1u];
+  let end_target_middle = end_target * section_count + middle;
+  let end_body = link * section_count + end_section;
+  centers[end_body] = scratch[scratch_center_slot(end_target_middle)];
+  linear_velocities[end_body] = scratch[scratch_velocity_slot(end_target_middle)];
 }
 `;
 
@@ -719,22 +699,27 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
       this.maximumWorkgroups,
     )) computePasses += 1;
 
-    for (let iteration = 0; iteration < RIGID_SECTION_HINGE_SOLVER_ITERATIONS; iteration += 1) {
-      const group = iteration % 2 === 0 ? this.bindGroups[2]! : this.bindGroups[3]!;
-      if (encodeDispatch(
-        encoder,
-        this.pipelines.hinge_jacobi_main!,
-        group,
-        bodyCount,
-        this.maximumWorkgroups,
-      )) computePasses += 1;
-    }
+    if (encodeDispatch(
+      encoder,
+      this.pipelines.hinge_star_main!,
+      this.bindGroups[0]!,
+      this.topology.linkCount,
+      this.maximumWorkgroups,
+    )) computePasses += 1;
+
+    if (encodeDispatch(
+      encoder,
+      this.pipelines.hinge_apply_main!,
+      this.bindGroups[0]!,
+      this.topology.linkCount,
+      this.maximumWorkgroups,
+    )) computePasses += 1;
 
     this.device.queue.submit([encoder.finish()]);
     return Object.freeze({
       relationBatchDispatches: 2 as const,
-      hingeDispatches: 12 as const,
-      computePasses: computePasses as 16,
+      hingeDispatches: 2 as const,
+      computePasses: computePasses as 6,
       dynamicStateUploadBytes: 0 as const,
     });
   }
@@ -890,7 +875,7 @@ export async function createRigidSectionWebGpuCompute3D(
   writeWhole(device, topologyDataBuffer, topologyData);
   writeWhole(device, globalsBuffer, globalsData(topology, template, stiffness, simulationSpeed));
 
-  const controlValues = [0, 1, 0, 1] as const;
+  const controlValues = [0, 1] as const;
   const controlBuffers = controlValues.map((value, index) => {
     const buffer = createBuffer(
       device,
@@ -931,7 +916,8 @@ export async function createRigidSectionWebGpuCompute3D(
     "clear_force_torque_main",
     "relation_batch_main",
     "integrate_main",
-    "hinge_jacobi_main",
+    "hinge_star_main",
+    "hinge_apply_main",
   ] as const;
   const pipelinePairs = await Promise.all(entries.map(async (entryPoint) => {
     const pipeline = await device.createComputePipelineAsync({
