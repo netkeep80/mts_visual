@@ -69,7 +69,7 @@ export function computeOctahedralSeedCenter3D(
 const TOPOLOGY_SEED_ITERATIONS = 64;
 const TOPOLOGY_SEED_RELAXATION = 0.8;
 /** Internal initialization only; not a third physical Link parameter. */
-export const OCTAHEDRAL_NON_SELF_SEED_RATIO = 0.9;
+export const OCTAHEDRAL_NON_SELF_SEED_RATIO = 0.93;
 
 function seedCenterFromBuffer(
   centers: Float32Array,
@@ -106,7 +106,7 @@ function fallbackPairAxis3D(
  *
  * The compact cubic grid is only a symmetry-breaking initial guess. Every
  * non-self START/END incidence then contributes one distance constraint whose
- * target is 90% of one half of the Link rest length. This deliberately leaves
+ * target is 93% of one half of the Link rest length. This deliberately leaves
  * safe visible compression for the spring system to resolve. The fixed Jacobi schedule
  * is O(iterations * N): there are exactly two outgoing incidence roles per Link.
  *
