@@ -174,6 +174,7 @@ export interface RigidSectionWebGpuCompute3D {
   writeCenterOverrides(
     overrides: readonly RigidSectionWebGpuCenterOverride3D[],
   ): RigidSectionWebGpuOverrideStats3D;
+  readBackCenters(): Promise<Float32Array>;
   readBackState(): Promise<RigidSectionWebGpuState3D>;
   snapshot(): RigidSectionWebGpuSnapshot3D;
   destroy(): void;
@@ -858,6 +859,18 @@ class RigidSectionWebGpuController implements RigidSectionWebGpuCompute3D {
       computePasses: computePasses as 6,
       dynamicStateUploadBytes: 0 as const,
     });
+  }
+
+  async readBackCenters(): Promise<Float32Array> {
+    this.assertAlive();
+    const bodyCount = this.topology.linkCount * this.template.sectionCount;
+    const vec4Bytes = bodyCount * 4 * 4;
+    const centers4 = await readBackBuffer(
+      this.device,
+      this.centerBuffer,
+      vec4Bytes,
+    );
+    return unpackVec4ToVec3(centers4);
   }
 
   async readBackState(): Promise<RigidSectionWebGpuState3D> {
