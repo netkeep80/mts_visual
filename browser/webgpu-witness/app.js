@@ -908,15 +908,19 @@ function readVertex3(template, positions, linkIndex, vertex) {
   return [positions[offset], positions[offset + 1], positions[offset + 2]];
 }
 
-function center3(template, positions, linkIndex) {
+function triangleCenter3(template, positions, linkIndex, triangle) {
   const result = [0, 0, 0];
-  for (const vertex of template.centerTriangle) {
+  for (const vertex of triangle) {
     const point = readVertex3(template, positions, linkIndex, vertex);
     result[0] += point[0] / 3;
     result[1] += point[1] / 3;
     result[2] += point[2] / 3;
   }
   return result;
+}
+
+function center3(template, positions, linkIndex) {
+  return triangleCenter3(template, positions, linkIndex, template.centerTriangle);
 }
 
 function distance3(a, b) {
@@ -956,8 +960,8 @@ async function inspectGeometry() {
       if (!source) throw new Error(`diagnostic source Link missing: ${key}`);
 
       const ownCenter = center3(template, positions, linkIndex);
-      const startApex = readVertex3(template, positions, linkIndex, template.startApex);
-      const endApex = readVertex3(template, positions, linkIndex, template.endApex);
+      const startPoint = triangleCenter3(template, positions, linkIndex, template.startTriangle);
+      const endPoint = triangleCenter3(template, positions, linkIndex, template.endTriangle);
       const startCenter = center3(template, positions, topology.startIndices[linkIndex]);
       const endCenter = center3(template, positions, topology.endIndices[linkIndex]);
 
@@ -970,8 +974,8 @@ async function inspectGeometry() {
       strains.sort((left, right) => left - right);
       const p95 = percentile95(strains);
       const maximum = strains.at(-1) ?? 0;
-      const startError = distance3(startApex, startCenter);
-      const endError = distance3(endApex, endCenter);
+      const startError = distance3(startPoint, startCenter);
+      const endError = distance3(endPoint, endCenter);
 
       rowsHtml.push(`
         <tr>
@@ -979,8 +983,8 @@ async function inspectGeometry() {
           <td>${equationForNetworkLink(source)}</td>
           <td class="${diagnosticClass(startError)}">${fmt(startError)}</td>
           <td class="${diagnosticClass(endError)}">${fmt(endError)}</td>
-          <td>${fmt(distance3(ownCenter, startApex))}</td>
-          <td>${fmt(distance3(ownCenter, endApex))}</td>
+          <td>${fmt(distance3(ownCenter, startPoint))}</td>
+          <td>${fmt(distance3(ownCenter, endPoint))}</td>
           <td class="${diagnosticClass(p95)}">${fmt(p95)}</td>
           <td class="${diagnosticClass(maximum)}">${fmt(maximum)}</td>
         </tr>
