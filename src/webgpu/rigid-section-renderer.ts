@@ -15,6 +15,12 @@ import {
 import type {
   WebGpuBufferLike,
 } from "./octahedral-compute.js";
+import {
+  RIGID_SECTION_CENTER_ICOSAHEDRON_FACES,
+  RIGID_SECTION_CENTER_ICOSAHEDRON_VERTICES,
+  RIGID_SECTION_CENTER_ICOSAHEDRON_VERTEX_COUNT,
+  RIGID_SECTION_END_CONE_VERTEX_COUNT,
+} from "./rigid-section-interaction.js";
 
 const GPU_BUFFER_USAGE = Object.freeze({
   COPY_DST: 0x0008,
@@ -27,15 +33,19 @@ const GPU_SHADER_STAGE = Object.freeze({
 });
 
 export const RIGID_SECTION_WEBGPU_RENDER_UNIFORM_BYTES = 112;
-export const RIGID_SECTION_WEBGPU_CENTER_VERTICES_PER_LINK = 6;
-export const RIGID_SECTION_WEBGPU_ARROW_VERTICES_PER_LINK = 6;
+export const RIGID_SECTION_WEBGPU_CENTER_VERTICES_PER_LINK =
+  RIGID_SECTION_CENTER_ICOSAHEDRON_VERTEX_COUNT;
+export const RIGID_SECTION_WEBGPU_ARROW_VERTICES_PER_LINK =
+  RIGID_SECTION_END_CONE_VERTEX_COUNT;
 
 export type RigidSectionWebGpuRenderFrame3D = OctahedralWebGpuRenderFrame3D;
 
 export interface RigidSectionWebGpuRendererOptions3D {
   readonly colorFormat: string;
   readonly depthFormat?: string;
+  /** @deprecated CENTER size is fixed in world space at 2 octahedral edges. */
   readonly centerMarkerPixels?: number;
+  /** @deprecated END cone size is fixed in world space from octahedral edge length. */
   readonly arrowLengthPixels?: number;
 }
 
@@ -54,8 +64,8 @@ export interface RigidSectionWebGpuRenderStats3D {
 export interface RigidSectionWebGpuRenderEstimate3D {
   readonly linkCount: number;
   readonly surfaceVerticesPerLink: number;
-  readonly centerVerticesPerLink: 6;
-  readonly arrowVerticesPerLink: 6;
+  readonly centerVerticesPerLink: 60;
+  readonly arrowVerticesPerLink: 18;
   readonly surfaceVertexInvocations: number;
   readonly centerVertexInvocations: number;
   readonly arrowVertexInvocations: number;
@@ -145,8 +155,8 @@ export function estimateRigidSectionWebGpuRender3D(
   return Object.freeze({
     linkCount,
     surfaceVerticesPerLink,
-    centerVerticesPerLink: RIGID_SECTION_WEBGPU_CENTER_VERTICES_PER_LINK as 6,
-    arrowVerticesPerLink: RIGID_SECTION_WEBGPU_ARROW_VERTICES_PER_LINK as 6,
+    centerVerticesPerLink: RIGID_SECTION_WEBGPU_CENTER_VERTICES_PER_LINK as 60,
+    arrowVerticesPerLink: RIGID_SECTION_WEBGPU_ARROW_VERTICES_PER_LINK as 18,
     surfaceVertexInvocations: safeProduct(
       linkCount,
       surfaceVerticesPerLink,
@@ -169,6 +179,44 @@ export function estimateRigidSectionWebGpuRender3D(
 }
 
 export const RIGID_SECTION_WEBGPU_RENDER_WGSL = /* wgsl */ `
+const CENTER_ICO_VERTICES: array<vec3<f32>, 12> = array<vec3<f32>, 12>(
+  vec3<f32>(-0.5257311121, 0.8506508084, 0.000000000),
+  vec3<f32>(0.5257311121, 0.8506508084, 0.000000000),
+  vec3<f32>(-0.5257311121, -0.8506508084, 0.000000000),
+  vec3<f32>(0.5257311121, -0.8506508084, 0.000000000),
+  vec3<f32>(0.000000000, -0.5257311121, 0.8506508084),
+  vec3<f32>(0.000000000, 0.5257311121, 0.8506508084),
+  vec3<f32>(0.000000000, -0.5257311121, -0.8506508084),
+  vec3<f32>(0.000000000, 0.5257311121, -0.8506508084),
+  vec3<f32>(0.8506508084, 0.000000000, -0.5257311121),
+  vec3<f32>(0.8506508084, 0.000000000, 0.5257311121),
+  vec3<f32>(-0.8506508084, 0.000000000, -0.5257311121),
+  vec3<f32>(-0.8506508084, 0.000000000, 0.5257311121)
+);
+const CENTER_ICO_FACES: array<vec3<u32>, 20> = array<vec3<u32>, 20>(
+  vec3<u32>(0u, 11u, 5u),
+  vec3<u32>(0u, 5u, 1u),
+  vec3<u32>(0u, 1u, 7u),
+  vec3<u32>(0u, 7u, 10u),
+  vec3<u32>(0u, 10u, 11u),
+  vec3<u32>(1u, 5u, 9u),
+  vec3<u32>(5u, 11u, 4u),
+  vec3<u32>(11u, 10u, 2u),
+  vec3<u32>(10u, 7u, 6u),
+  vec3<u32>(7u, 1u, 8u),
+  vec3<u32>(3u, 9u, 4u),
+  vec3<u32>(3u, 4u, 2u),
+  vec3<u32>(3u, 2u, 6u),
+  vec3<u32>(3u, 6u, 8u),
+  vec3<u32>(3u, 8u, 9u),
+  vec3<u32>(4u, 9u, 5u),
+  vec3<u32>(2u, 4u, 11u),
+  vec3<u32>(6u, 2u, 10u),
+  vec3<u32>(8u, 6u, 7u),
+  vec3<u32>(9u, 8u, 1u)
+);
+const TAU: f32 = 6.283185307179586;
+
 struct SceneUniforms {
   view_projection: mat4x4<f32>,
   counts: vec4<u32>,
@@ -228,43 +276,12 @@ fn section_center(link: u32, section: u32) -> vec3<f32> {
   return centers[body_index(link, section)].xyz;
 }
 
-fn projected_pixel_distance(a_world: vec3<f32>, b_world: vec3<f32>) -> f32 {
-  let a_clip = scene.view_projection * vec4<f32>(a_world, 1.0);
-  let b_clip = scene.view_projection * vec4<f32>(b_world, 1.0);
-  let a_w = select(1e-6, a_clip.w, abs(a_clip.w) > 1e-6);
-  let b_w = select(1e-6, b_clip.w, abs(b_clip.w) > 1e-6);
-  let a_ndc = a_clip.xy / a_w;
-  let b_ndc = b_clip.xy / b_w;
-  let delta_pixels = vec2<f32>(
-    (a_ndc.x - b_ndc.x) * scene.viewport.x * 0.5,
-    (a_ndc.y - b_ndc.y) * scene.viewport.y * 0.5,
-  );
-  return length(delta_pixels);
-}
-
-fn end_section_projected_diameter_pixels(link: u32) -> f32 {
-  let end_section = scene.counts.y - 1u;
-  let base = end_section * 3u;
-  let a = material_vertex(link, base);
-  let b = material_vertex(link, base + 1u);
-  let c = material_vertex(link, base + 2u);
-  return max(
-    projected_pixel_distance(a, b),
-    max(
-      projected_pixel_distance(b, c),
-      projected_pixel_distance(c, a),
-    ),
-  );
-}
-
-fn quad_offset(vertex: u32) -> vec2<f32> {
-  let local = vertex % 6u;
-  if (local == 0u) { return vec2<f32>(-1.0, -1.0); }
-  if (local == 1u) { return vec2<f32>( 1.0, -1.0); }
-  if (local == 2u) { return vec2<f32>( 1.0,  1.0); }
-  if (local == 3u) { return vec2<f32>(-1.0, -1.0); }
-  if (local == 4u) { return vec2<f32>( 1.0,  1.0); }
-  return vec2<f32>(-1.0, 1.0);
+fn safe_normalize3(value: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
+  let n = length(value);
+  if (n <= 1e-8) {
+    return fallback;
+  }
+  return value / n;
 }
 
 @vertex
@@ -287,22 +304,22 @@ fn center_vertex(
   @builtin(vertex_index) vertex_index: u32,
   @builtin(instance_index) instance_index: u32,
 ) -> VertexOut {
-  let world = section_center(instance_index, scene.counts.z);
-  let raw_clip = scene.view_projection * vec4<f32>(world, 1.0);
-  let pixel_ndc = vec2<f32>(
-    2.0 / max(scene.viewport.x, 1.0),
-    2.0 / max(scene.viewport.y, 1.0),
-  );
-  let offset = quad_offset(vertex_index)
-    * scene.viewport.z
-    * pixel_ndc;
+  let face_index = vertex_index / 3u;
+  let corner = vertex_index % 3u;
+  let face = CENTER_ICO_FACES[face_index];
+  var vertex_id = face.x;
+  if (corner == 1u) {
+    vertex_id = face.y;
+  } else if (corner == 2u) {
+    vertex_id = face.z;
+  }
+
+  let center = section_center(instance_index, scene.counts.z);
+  let radius = 2.0 * scene.geometry.w;
+  let world = center + CENTER_ICO_VERTICES[vertex_id] * radius;
 
   var out: VertexOut;
-  out.position = vec4<f32>(
-    raw_clip.xy + offset * raw_clip.w,
-    raw_clip.z,
-    raw_clip.w,
-  );
+  out.position = scene.view_projection * vec4<f32>(world, 1.0);
   out.color = vec3<f32>(0.0, 1.0, 0.0);
   return out;
 }
@@ -313,55 +330,50 @@ fn arrow_vertex(
   @builtin(instance_index) instance_index: u32,
 ) -> VertexOut {
   let end_section = scene.counts.y - 1u;
-  let previous_section = select(0u, end_section - 1u, end_section > 0u);
-  let tip_world = section_center(instance_index, end_section);
-  let base_world = section_center(instance_index, previous_section);
-  let tip_clip = scene.view_projection * vec4<f32>(tip_world, 1.0);
-  let base_clip = scene.view_projection * vec4<f32>(base_world, 1.0);
-
-  let tip_w = select(1e-6, tip_clip.w, abs(tip_clip.w) > 1e-6);
-  let base_w = select(1e-6, base_clip.w, abs(base_clip.w) > 1e-6);
-  let tip_ndc = tip_clip.xy / tip_w;
-  let base_ndc = base_clip.xy / base_w;
-
-  var direction_pixels = vec2<f32>(
-    (tip_ndc.x - base_ndc.x) * scene.viewport.x * 0.5,
-    (tip_ndc.y - base_ndc.y) * scene.viewport.y * 0.5,
+  let lower_section = select(0u, end_section - 1u, end_section > 0u);
+  let tip = section_center(instance_index, end_section);
+  let lower_center = section_center(instance_index, lower_section);
+  let axis = safe_normalize3(
+    tip - lower_center,
+    vec3<f32>(0.0, 0.0, 1.0),
   );
-  if (dot(direction_pixels, direction_pixels) <= 1e-12) {
-    direction_pixels = vec2<f32>(0.0, 1.0);
-  } else {
-    direction_pixels = normalize(direction_pixels);
-  }
 
-  let perpendicular = vec2<f32>(-direction_pixels.y, direction_pixels.x);
-  let diameter_pixels = end_section_projected_diameter_pixels(instance_index);
-  let arrow_length = max(scene.viewport.w, diameter_pixels * 3.0);
-  let half_width = arrow_length * 0.55;
-  let shoulder = -direction_pixels * arrow_length * 0.72;
-  let tail = -direction_pixels * arrow_length * 1.15;
-
-  var pixel_offset = vec2<f32>(0.0);
-  let local = vertex_index % 6u;
-  if (local == 1u) {
-    pixel_offset = shoulder + perpendicular * half_width;
-  } else if (local == 2u || local == 4u) {
-    pixel_offset = tail;
-  } else if (local == 5u) {
-    pixel_offset = shoulder - perpendicular * half_width;
-  }
-
-  let offset_ndc = vec2<f32>(
-    pixel_offset.x * 2.0 / max(scene.viewport.x, 1.0),
-    pixel_offset.y * 2.0 / max(scene.viewport.y, 1.0),
+  let reference = select(
+    vec3<f32>(0.0, 1.0, 0.0),
+    vec3<f32>(1.0, 0.0, 0.0),
+    abs(axis.y) > 0.9,
   );
+  let tangent = safe_normalize3(
+    cross(axis, reference),
+    vec3<f32>(1.0, 0.0, 0.0),
+  );
+  let bitangent = cross(axis, tangent);
+
+  let edge = scene.geometry.w;
+  let height = 3.0 * edge;
+  let base_radius = 1.5 * edge;
+  let base_center = tip - axis * height;
+
+  let side = vertex_index / 3u;
+  let corner = vertex_index % 3u;
+  let angle0 = TAU * f32(side) / 6.0;
+  let angle1 = TAU * f32(side + 1u) / 6.0;
+  let base0 = base_center
+    + tangent * (cos(angle0) * base_radius)
+    + bitangent * (sin(angle0) * base_radius);
+  let base1 = base_center
+    + tangent * (cos(angle1) * base_radius)
+    + bitangent * (sin(angle1) * base_radius);
+
+  var world = tip;
+  if (corner == 1u) {
+    world = base0;
+  } else if (corner == 2u) {
+    world = base1;
+  }
 
   var out: VertexOut;
-  out.position = vec4<f32>(
-    (tip_ndc + offset_ndc) * tip_clip.w,
-    tip_clip.z,
-    tip_clip.w,
-  );
+  out.position = scene.view_projection * vec4<f32>(world, 1.0);
   out.color = vec3<f32>(0.0, 0.95, 1.0);
   return out;
 }
@@ -424,13 +436,14 @@ function buildUniformData(
 
   f32[20] = width;
   f32[21] = height;
-  f32[22] = centerMarkerPixels;
-  f32[23] = arrowLengthPixels;
+  // Marker dimensions are world-space geometry; legacy pixel options are ignored.
+  f32[22] = 0;
+  f32[23] = 0;
 
   f32[24] = compute.template.localTriangleVertices[0]!;
   f32[25] = compute.template.moduleHeight;
   f32[26] = compute.template.diameter;
-  f32[27] = 0;
+  f32[27] = compute.template.edgeRestLength;
 
   return buffer;
 }
