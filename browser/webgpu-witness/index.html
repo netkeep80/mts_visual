@@ -64,6 +64,22 @@
 
   <section class="card section">
     <div class="toolbar">
+      <h2 style="margin-right:auto">v0.5 rigid-section CPU ↔ GPU differential</h2>
+      <span class="muted">P3 compute only · renderer below is still v0.4</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Fixture</th><th>Status</th><th>Steps</th><th>Tolerance</th>
+          <th>max Δcenter</th><th>max Δquaternion</th><th>max Δv</th><th>max Δω</th>
+        </tr>
+      </thead>
+      <tbody id="rigid-diff-body"></tbody>
+    </table>
+  </section>
+
+  <section class="card section">
+    <div class="toolbar">
       <h2 style="margin-right:auto">Real zero-copy live render</h2>
       <label>Scene
         <select id="scene">
