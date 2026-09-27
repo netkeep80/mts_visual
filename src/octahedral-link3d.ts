@@ -12,6 +12,10 @@ export const OCTAHEDRAL_TRIANGLE_RADIUS = 1 / Math.sqrt(3);
 export const OCTAHEDRAL_DIAMETER = 2 / Math.sqrt(3);
 export const OCTAHEDRAL_MODULE_HEIGHT = Math.sqrt(2 / 3);
 
+export const OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA = 20;
+export const OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO =
+  Math.SQRT2 * (OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA / 2 + 1);
+
 export type OctahedralLink3DErrorCode =
   | "invalid-aspect-ratio"
   | "invalid-stiffness"
