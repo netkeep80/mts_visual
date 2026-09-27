@@ -110,7 +110,9 @@ class FakeDevice implements WebGpuDeviceLike {
       readonly entryPoint: string;
     };
   }): Promise<{ readonly label?: string; readonly entryPoint: string }> {
-    return { label: descriptor.label, entryPoint: descriptor.compute.entryPoint };
+    return descriptor.label === undefined
+      ? { entryPoint: descriptor.compute.entryPoint }
+      : { label: descriptor.label, entryPoint: descriptor.compute.entryPoint };
   }
 
   createBindGroup(descriptor: {
