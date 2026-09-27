@@ -7,6 +7,7 @@ import {
   type WebGpuBufferLike,
   type WebGpuDeviceLike,
 } from "../src/webgpu/index.js";
+import { getOctahedralSeedGrid3D } from "../src/octahedral-layout3d.js";
 import {
   buildOctahedralLinkTopology3D,
   getOctahedralLinkTemplate3D,
@@ -248,6 +249,19 @@ same(
 );
 assert(!/atomic</.test(OCTAHEDRAL_WEBGPU_WGSL), "WGSL uses no atomic force buffer");
 assert(!/pairwise/i.test(OCTAHEDRAL_WEBGPU_WGSL), "WGSL contains no semantic all-pairs path");
+assert(OCTAHEDRAL_WEBGPU_WGSL.includes("fn seed_center"), "WGSL exposes deterministic 3D seed-center helper");
+assert(OCTAHEDRAL_WEBGPU_WGSL.includes("fn seed_axis"), "WGSL exposes topology-directed mast orientation helper");
+assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let x_index = link % side"), "WGSL seed layout spans grid X");
+assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let y_index = (link / side) % side"), "WGSL seed layout spans grid Y");
+assert(OCTAHEDRAL_WEBGPU_WGSL.includes("let z_index = link / plane"), "WGSL seed layout spans grid Z");
+assert(
+  !OCTAHEDRAL_WEBGPU_WGSL.includes("var center_x ="),
+  "WGSL no longer contains the former one-dimensional center seed",
+);
+
+const gpuGrid = getOctahedralSeedGrid3D(template, 333);
+same(gpuGrid.side, 7, "CPU contract supplies seven-wide 333-Link grid to GPU globals");
+same(gpuGrid.depth, 7, "CPU contract supplies seven-deep 333-Link grid to GPU globals");
 
 const fake = new FakeDevice();
 const controller = await createOctahedralWebGpuCompute3D(fake, fanInNetwork, {
@@ -262,6 +276,9 @@ assert(!initialWriteLabels.includes("octahedral-velocities"), "GPU initializatio
 assert(!initialWriteLabels.includes("octahedral-forces"), "GPU initialization does not upload CPU force state");
 assert(initialWriteLabels.includes("octahedral-topology"), "topology is uploaded once");
 assert(initialWriteLabels.includes("octahedral-template-words"), "cached template words are uploaded once");
+const globalsWrite = fake.queue.writes.find((write) => write.label === "octahedral-globals");
+assert(globalsWrite !== undefined, "GPU initialization uploads one globals block");
+same(globalsWrite.bytes, 80, "GPU globals include explicit grid side/depth plus physics controls");
 
 const snapshot = controller.snapshot();
 same(snapshot.status, "available", "fresh GPU controller reports available status");

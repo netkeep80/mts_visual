@@ -1,4 +1,5 @@
 import type { VisualLinkNetwork } from "./index.js";
+import { writeOrientedOctahedralRestTemplate3D } from "./octahedral-layout3d.js";
 import {
   accumulateOctahedralSpringForces3D,
   buildOctahedralLinkTopology3D,
@@ -52,33 +53,6 @@ function packedFloatOffset(template: OctahedralLinkTemplate3D, link: number, ver
 
 function linkFloatOffset(template: OctahedralLinkTemplate3D, link: number): number {
   return link * template.vertexCount * 3;
-}
-
-function deterministicCenter(
-  template: OctahedralLinkTemplate3D,
-  linkIndex: number,
-  linkCount: number,
-): readonly [number, number, number] {
-  if (linkCount <= 1) return [0, 0, 0];
-  const spacing = Math.max(template.diameter * 2.5, template.restLength * 0.75);
-  return [(linkIndex - (linkCount - 1) / 2) * spacing, 0, 0];
-}
-
-function writeRestTemplate(
-  template: OctahedralLinkTemplate3D,
-  positions: Float32Array,
-  linkIndex: number,
-  linkCount: number,
-): void {
-  const [cx, cy, cz] = deterministicCenter(template, linkIndex, linkCount);
-  const base = linkFloatOffset(template, linkIndex);
-  for (let vertex = 0; vertex < template.vertexCount; vertex += 1) {
-    const local = vertex * 3;
-    const offset = base + local;
-    positions[offset] = template.restPositions[local]! + cx;
-    positions[offset + 1] = template.restPositions[local + 1]! + cy;
-    positions[offset + 2] = template.restPositions[local + 2]! + cz;
-  }
 }
 
 function centerVelocityInto(
@@ -153,7 +127,12 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
     this.forces = new Float32Array(length);
 
     for (let link = 0; link < this.currentTopology.linkCount; link += 1) {
-      writeRestTemplate(this.template, this.currentPositions, link, this.currentTopology.linkCount);
+      writeOrientedOctahedralRestTemplate3D(
+        this.template,
+        this.currentTopology,
+        this.currentPositions,
+        link,
+      );
     }
     projectOctahedralHinges3D(this.currentTopology, this.template, this.currentPositions);
     syncApexVelocities(this.currentTopology, this.template, this.currentVelocities);
@@ -267,7 +246,12 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
         nextPositions.set(this.currentPositions.subarray(oldOffset, oldOffset + span), nextOffset);
         nextVelocities.set(this.currentVelocities.subarray(oldOffset, oldOffset + span), nextOffset);
       } else {
-        writeRestTemplate(this.template, nextPositions, nextIndex, nextTopology.linkCount);
+        writeOrientedOctahedralRestTemplate3D(
+          this.template,
+          nextTopology,
+          nextPositions,
+          nextIndex,
+        );
       }
     }
 
