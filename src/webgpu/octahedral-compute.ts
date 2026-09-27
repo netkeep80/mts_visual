@@ -152,6 +152,50 @@ export interface OctahedralWebGpuDispatch2D {
   readonly coveredInvocations: number;
 }
 
+export interface OctahedralCenterDragVertex3D {
+  readonly linkIndex: number;
+  readonly vertexIndex: number;
+}
+
+export function collectOctahedralCenterDragVertices3D(
+  topology: OctahedralLinkTopology3D,
+  template: OctahedralLinkTemplate3D,
+  selectedLink: number,
+): readonly OctahedralCenterDragVertex3D[] {
+  if (
+    !Number.isSafeInteger(selectedLink)
+    || selectedLink < 0
+    || selectedLink >= topology.linkCount
+  ) {
+    throw new Error(`invalid center-drag linkIndex: ${String(selectedLink)}`);
+  }
+
+  const vertices = new Map<number, OctahedralCenterDragVertex3D>();
+  const includeTriangle = (
+    linkIndex: number,
+    triangle: readonly [number, number, number],
+  ): void => {
+    for (const vertexIndex of triangle) {
+      const globalVertex = linkIndex * template.vertexCount + vertexIndex;
+      if (!vertices.has(globalVertex)) {
+        vertices.set(globalVertex, Object.freeze({ linkIndex, vertexIndex }));
+      }
+    }
+  };
+
+  includeTriangle(selectedLink, template.centerTriangle);
+  for (let source = 0; source < topology.linkCount; source += 1) {
+    if (topology.startIndices[source] === selectedLink) {
+      includeTriangle(source, template.startTriangle);
+    }
+    if (topology.endIndices[source] === selectedLink) {
+      includeTriangle(source, template.endTriangle);
+    }
+  }
+
+  return Object.freeze([...vertices.values()]);
+}
+
 export interface OctahedralWebGpuComputeOptions {
   readonly aspectRatio: number;
   readonly stiffness: number;
