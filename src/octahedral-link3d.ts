@@ -14,7 +14,7 @@ export const OCTAHEDRAL_MODULE_HEIGHT = Math.sqrt(2 / 3);
 
 export const OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA = 20;
 export const OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO =
-  Math.SQRT2 * (OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA / 2 + 1);
+  Math.SQRT2 * (OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA / 2);
 
 export type OctahedralLink3DErrorCode =
   | "invalid-aspect-ratio"
@@ -54,9 +54,9 @@ export interface OctahedralLinkTemplate3D {
   readonly edgeB: Uint32Array;
   readonly surfaceTriangles: Uint32Array;
   readonly gradientT: Float32Array;
+  readonly startTriangle: readonly [number, number, number];
   readonly centerTriangle: readonly [number, number, number];
-  readonly startApex: number;
-  readonly endApex: number;
+  readonly endTriangle: readonly [number, number, number];
   readonly edgeBatches: readonly Uint32Array[];
 }
 
@@ -108,7 +108,7 @@ export function resolveOctahedralAspectRatio(aspectRatio: number): OctahedralAsp
     throw new OctahedralLink3DError("invalid-aspect-ratio", String(aspectRatio));
   }
 
-  const rawPairCount = aspectRatio / SQRT_TWO - 1;
+  const rawPairCount = aspectRatio / SQRT_TWO;
   if (!Number.isFinite(rawPairCount) || Math.abs(rawPairCount) > Number.MAX_SAFE_INTEGER) {
     throw new OctahedralLink3DError("invalid-aspect-ratio", String(aspectRatio));
   }
@@ -175,11 +175,8 @@ function buildConflictFreeEdgeBatches(edgeA: Uint32Array, edgeB: Uint32Array): r
 function buildOctahedralTemplate(pairCount: number): OctahedralLinkTemplate3D {
   const octahedronCount = pairCount * 2;
   const levelCount = octahedronCount + 1;
-  const ringVertexCount = levelCount * 3;
-  const startApex = ringVertexCount;
-  const endApex = ringVertexCount + 1;
-  const vertexCount = ringVertexCount + 2;
-  const restLength = (octahedronCount + 2) * OCTAHEDRAL_MODULE_HEIGHT;
+  const vertexCount = levelCount * 3;
+  const restLength = octahedronCount * OCTAHEDRAL_MODULE_HEIGHT;
   const halfLength = restLength / 2;
 
   const restPositions = new Float32Array(vertexCount * 3);
@@ -187,8 +184,8 @@ function buildOctahedralTemplate(pairCount: number): OctahedralLinkTemplate3D {
 
   for (let level = 0; level < levelCount; level += 1) {
     const rotation = level % 2 === 0 ? 0 : Math.PI / 3;
-    const z = -halfLength + (level + 1) * OCTAHEDRAL_MODULE_HEIGHT;
-    const t = (level + 1) / (octahedronCount + 2);
+    const z = -halfLength + level * OCTAHEDRAL_MODULE_HEIGHT;
+    const t = level / octahedronCount;
     for (let corner = 0; corner < 3; corner += 1) {
       const vertex = levelVertex(level, corner);
       const offset = vertex * 3;
@@ -200,16 +197,12 @@ function buildOctahedralTemplate(pairCount: number): OctahedralLinkTemplate3D {
     }
   }
 
-  restPositions[startApex * 3 + 2] = -halfLength;
-  restPositions[endApex * 3 + 2] = halfLength;
-  gradientT[startApex] = 0;
-  gradientT[endApex] = 1;
-
   const edgeAList: number[] = [];
   const edgeBList: number[] = [];
   const edgeKeys = new Set<string>();
 
-  // Every transverse level has one triangular ring.
+  // Every transverse level has one triangular ring. START/END are the
+  // geometric centroids of the first/last rings; there are no apex particles.
   for (let level = 0; level < levelCount; level += 1) {
     for (let corner = 0; corner < 3; corner += 1) {
       pushUniqueEdge(
@@ -222,9 +215,7 @@ function buildOctahedralTemplate(pairCount: number): OctahedralLinkTemplate3D {
     }
   }
 
-  // Each regular octahedron contributes six diagonals between its two
-  // triangular levels. The alternating offset follows the proven mast-calculator
-  // octahedral stacking convention.
+  // Each regular octahedron contributes six diagonals between adjacent rings.
   for (let module = 0; module < octahedronCount; module += 1) {
     const adjacentCornerOffset = module % 2 === 0 ? 2 : 1;
     for (let corner = 0; corner < 3; corner += 1) {
@@ -245,26 +236,16 @@ function buildOctahedralTemplate(pairCount: number): OctahedralLinkTemplate3D {
     }
   }
 
-  // START/END tetrahedra share the first/last triangular rings.
-  for (let corner = 0; corner < 3; corner += 1) {
-    pushUniqueEdge(edgeAList, edgeBList, edgeKeys, startApex, levelVertex(0, corner));
-    pushUniqueEdge(
-      edgeAList,
-      edgeBList,
-      edgeKeys,
-      endApex,
-      levelVertex(octahedronCount, corner),
-    );
-  }
-
   const edgeA = new Uint32Array(edgeAList);
   const edgeB = new Uint32Array(edgeBList);
 
-  // Only external triangles are rendered. Shared transverse faces are internal.
-  const triangles: number[] = [];
-  for (let corner = 0; corner < 3; corner += 1) {
-    triangles.push(startApex, levelVertex(0, (corner + 1) % 3), levelVertex(0, corner));
-  }
+  // External surface = two terminal triangular faces plus six side triangles
+  // per octahedron. Shared transverse faces inside the mast are not rendered.
+  const triangles: number[] = [
+    levelVertex(0, 0),
+    levelVertex(0, 2),
+    levelVertex(0, 1),
+  ];
 
   for (let module = 0; module < octahedronCount; module += 1) {
     const adjacentCornerOffset = module % 2 === 0 ? 2 : 1;
@@ -278,19 +259,27 @@ function buildOctahedralTemplate(pairCount: number): OctahedralLinkTemplate3D {
     }
   }
 
-  for (let corner = 0; corner < 3; corner += 1) {
-    triangles.push(
-      endApex,
-      levelVertex(octahedronCount, corner),
-      levelVertex(octahedronCount, (corner + 1) % 3),
-    );
-  }
+  triangles.push(
+    levelVertex(octahedronCount, 0),
+    levelVertex(octahedronCount, 1),
+    levelVertex(octahedronCount, 2),
+  );
 
   const centerLevel = pairCount;
+  const startTriangle = Object.freeze([
+    levelVertex(0, 0),
+    levelVertex(0, 1),
+    levelVertex(0, 2),
+  ]) as readonly [number, number, number];
   const centerTriangle = Object.freeze([
     levelVertex(centerLevel, 0),
     levelVertex(centerLevel, 1),
     levelVertex(centerLevel, 2),
+  ]) as readonly [number, number, number];
+  const endTriangle = Object.freeze([
+    levelVertex(octahedronCount, 0),
+    levelVertex(octahedronCount, 1),
+    levelVertex(octahedronCount, 2),
   ]) as readonly [number, number, number];
 
   const surfaceTriangles = new Uint32Array(triangles);
@@ -299,7 +288,7 @@ function buildOctahedralTemplate(pairCount: number): OctahedralLinkTemplate3D {
   return Object.freeze({
     pairCount,
     octahedronCount,
-    aspectRatio: SQRT_TWO * (pairCount + 1),
+    aspectRatio: SQRT_TWO * pairCount,
     restLength,
     diameter: OCTAHEDRAL_DIAMETER,
     edgeRestLength: OCTAHEDRAL_EDGE_REST_LENGTH as 1,
@@ -311,9 +300,9 @@ function buildOctahedralTemplate(pairCount: number): OctahedralLinkTemplate3D {
     edgeB,
     surfaceTriangles,
     gradientT,
+    startTriangle,
     centerTriangle,
-    startApex,
-    endApex,
+    endTriangle,
     edgeBatches,
   });
 }
@@ -487,6 +476,44 @@ export function computeOctahedralSpringForces3D(
   return { forces, evaluations };
 }
 
+function triangleCentroidInto(
+  template: OctahedralLinkTemplate3D,
+  positions: Float32Array,
+  linkIndex: number,
+  triangle: readonly [number, number, number],
+  out: Float32Array,
+): void {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const vertex of triangle) {
+    const offset = packedFloatOffset(template, linkIndex, vertex);
+    x += positions[offset]!;
+    y += positions[offset + 1]!;
+    z += positions[offset + 2]!;
+  }
+  out[0] = x / 3;
+  out[1] = y / 3;
+  out[2] = z / 3;
+}
+
+function translateTriangle(
+  template: OctahedralLinkTemplate3D,
+  values: Float32Array,
+  linkIndex: number,
+  triangle: readonly [number, number, number],
+  dx: number,
+  dy: number,
+  dz: number,
+): void {
+  for (const vertex of triangle) {
+    const offset = packedFloatOffset(template, linkIndex, vertex);
+    values[offset] = values[offset]! + dx;
+    values[offset + 1] = values[offset + 1]! + dy;
+    values[offset + 2] = values[offset + 2]! + dz;
+  }
+}
+
 export function projectOctahedralHinges3D(
   topology: OctahedralLinkTopology3D,
   template: OctahedralLinkTemplate3D,
@@ -497,22 +524,59 @@ export function projectOctahedralHinges3D(
     throw new OctahedralLink3DError("invalid-buffer", `positions: ${positions.length} != ${required}`);
   }
   requireFiniteRange(positions, 0, required, "positions");
-  const center = new Float32Array(3);
+  const endpoint = new Float32Array(3);
+  const target = new Float32Array(3);
 
   for (let link = 0; link < topology.linkCount; link += 1) {
-    const startTarget = topology.startIndices[link]!;
-    writeCenterInto(template, positions, startTarget, center, 0);
-    let offset = packedFloatOffset(template, link, template.startApex);
-    positions[offset] = center[0]!;
-    positions[offset + 1] = center[1]!;
-    positions[offset + 2] = center[2]!;
+    for (const role of ["start", "end"] as const) {
+      const triangle = role === "start" ? template.startTriangle : template.endTriangle;
+      const targetLink = role === "start" ? topology.startIndices[link]! : topology.endIndices[link]!;
+      triangleCentroidInto(template, positions, link, triangle, endpoint);
+      writeCenterInto(template, positions, targetLink, target, 0);
+      translateTriangle(
+        template,
+        positions,
+        link,
+        triangle,
+        target[0]! - endpoint[0]!,
+        target[1]! - endpoint[1]!,
+        target[2]! - endpoint[2]!,
+      );
+    }
+  }
 
-    const endTarget = topology.endIndices[link]!;
-    writeCenterInto(template, positions, endTarget, center, 0);
-    offset = packedFloatOffset(template, link, template.endApex);
-    positions[offset] = center[0]!;
-    positions[offset + 1] = center[1]!;
-    positions[offset + 2] = center[2]!;
+  return topology.linkCount * 2;
+}
+
+export function projectOctahedralHingeVelocities3D(
+  topology: OctahedralLinkTopology3D,
+  template: OctahedralLinkTemplate3D,
+  velocities: Float32Array,
+): number {
+  const required = topology.linkCount * template.vertexCount * 3;
+  if (velocities.length !== required) {
+    throw new OctahedralLink3DError("invalid-buffer", `velocities: ${velocities.length} != ${required}`);
+  }
+  requireFiniteRange(velocities, 0, required, "velocities");
+  const endpoint = new Float32Array(3);
+  const target = new Float32Array(3);
+
+  for (let link = 0; link < topology.linkCount; link += 1) {
+    for (const role of ["start", "end"] as const) {
+      const triangle = role === "start" ? template.startTriangle : template.endTriangle;
+      const targetLink = role === "start" ? topology.startIndices[link]! : topology.endIndices[link]!;
+      triangleCentroidInto(template, velocities, link, triangle, endpoint);
+      writeCenterInto(template, velocities, targetLink, target, 0);
+      translateTriangle(
+        template,
+        velocities,
+        link,
+        triangle,
+        target[0]! - endpoint[0]!,
+        target[1]! - endpoint[1]!,
+        target[2]! - endpoint[2]!,
+      );
+    }
   }
 
   return topology.linkCount * 2;
@@ -531,15 +595,27 @@ export function transferOctahedralHingeForces3D(
 
   for (let link = 0; link < topology.linkCount; link += 1) {
     for (const role of ["start", "end"] as const) {
-      const apex = role === "start" ? template.startApex : template.endApex;
+      const triangle = role === "start" ? template.startTriangle : template.endTriangle;
       const target = role === "start" ? topology.startIndices[link]! : topology.endIndices[link]!;
-      const offset = packedFloatOffset(template, link, apex);
-      const fx = forces[offset]!;
-      const fy = forces[offset + 1]!;
-      const fz = forces[offset + 2]!;
-      forces[offset] = 0;
-      forces[offset + 1] = 0;
-      forces[offset + 2] = 0;
+      let fx = 0;
+      let fy = 0;
+      let fz = 0;
+      for (const vertex of triangle) {
+        const offset = packedFloatOffset(template, link, vertex);
+        fx += forces[offset]!;
+        fy += forces[offset + 1]!;
+        fz += forces[offset + 2]!;
+      }
+
+      // Transfer only endpoint translation. Subtracting the mean force leaves
+      // the zero-net residual on the terminal ring, preserving its torque and
+      // deformation instead of turning the whole face into a kinematic apex.
+      for (const vertex of triangle) {
+        const offset = packedFloatOffset(template, link, vertex);
+        forces[offset] = forces[offset]! - fx / 3;
+        forces[offset + 1] = forces[offset + 1]! - fy / 3;
+        forces[offset + 2] = forces[offset + 2]! - fz / 3;
+      }
       addCenterForceUnchecked(template, forces, target, fx, fy, fz);
     }
   }
