@@ -113,3 +113,4 @@ export * from "./octahedral-live3d.js";
 export * from "./octahedral-performance3d.js";
 export * from "./rigid-section3d.js";
 export * from "./monolithic-link-spring3d.js";
+export * from "./monolithic-link-shape3d.js";
