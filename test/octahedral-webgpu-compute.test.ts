@@ -264,6 +264,8 @@ assert(initialWriteLabels.includes("octahedral-topology"), "topology is uploaded
 assert(initialWriteLabels.includes("octahedral-template-words"), "cached template words are uploaded once");
 
 const snapshot = controller.snapshot();
+same(snapshot.status, "available", "fresh GPU controller reports available status");
+same(snapshot.deviceLostReason, null, "fresh GPU controller has no device-loss reason");
 same(snapshot.linkCount, 4, "GPU controller snapshot Link count");
 same(snapshot.vertexCount, 11, "GPU controller uses minimum cached template");
 same(snapshot.positionBytes, 4 * 11 * 3 * 4, "positions remain tightly packed XYZ Float32");
@@ -304,6 +306,7 @@ same(fake.queue.writes.length, 1, "simulation-speed update writes only small con
 same(fake.queue.writes[0]!.label, "octahedral-globals", "simulation-speed update targets globals buffer");
 
 controller.destroy();
+same(controller.snapshot().status, "destroyed", "destroyed controller reports destroyed status");
 assert(fake.buffers.filter((buffer) => buffer.label.startsWith("octahedral-")).every((buffer) => buffer.destroyed), "destroy releases every owned WebGPU buffer");
 controller.destroy();
 
@@ -313,3 +316,37 @@ try {
 } catch (error) {
   assert(error instanceof Error && /destroyed/.test(error.message), "destroyed controller fails closed");
 }
+
+class LostFakeDevice extends FakeDevice {
+  readonly lost: Promise<{ readonly reason: string; readonly message: string }>;
+  private resolveLost!: (info: { readonly reason: string; readonly message: string }) => void;
+
+  constructor() {
+    super();
+    this.lost = new Promise((resolve) => {
+      this.resolveLost = resolve;
+    });
+  }
+
+  lose(message: string): void {
+    this.resolveLost({ reason: "unknown", message });
+  }
+}
+
+const lostDevice = new LostFakeDevice();
+const lostController = await createOctahedralWebGpuCompute3D(lostDevice, selfNetwork, {
+  aspectRatio: ratio,
+  stiffness: 1,
+  simulationSpeed: 1,
+});
+lostDevice.lose("synthetic device loss");
+await Promise.resolve();
+same(lostController.snapshot().status, "device-lost", "device loss becomes explicit controller state");
+same(lostController.snapshot().deviceLostReason, "synthetic device loss", "device-loss reason remains observable");
+try {
+  lostController.step();
+  throw new Error("lost-device controller step should fail");
+} catch (error) {
+  assert(error instanceof Error && /device lost/.test(error.message), "lost device fails closed");
+}
+lostController.destroy();
