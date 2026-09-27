@@ -130,6 +130,62 @@ const rotated = evaluateRigidSectionPotential3D(
 assert(rotated.energy > 0, "relative rotation stores potential energy");
 assert(Math.abs(rotated.upperTorque[0]) > 0.05, "relative rotation creates restoring torque");
 
+const anisotropic = {
+  longitudinalStiffness: 8,
+  transverseStiffness: 2,
+  nonlinearity: 0,
+} as const;
+const axialTranslated = evaluateRigidSectionPotential3D(
+  template,
+  lowerCenter,
+  identity,
+  [0, 0, template.moduleHeight + 0.1],
+  restOrientation,
+  anisotropic,
+);
+const transverseTranslated = evaluateRigidSectionPotential3D(
+  template,
+  lowerCenter,
+  identity,
+  [0.1, 0, template.moduleHeight],
+  restOrientation,
+  anisotropic,
+);
+assert(
+  Math.abs(axialTranslated.upperForce[2]) > Math.abs(transverseTranslated.upperForce[0]) * 3.5,
+  "longitudinal and transverse stiffness are independently effective",
+);
+
+const nonlinearTranslated = evaluateRigidSectionPotential3D(
+  template,
+  lowerCenter,
+  identity,
+  [0.4, 0, template.moduleHeight],
+  restOrientation,
+  {
+    longitudinalStiffness: 2,
+    transverseStiffness: 2,
+    nonlinearity: 8,
+  },
+);
+const linearTranslated = evaluateRigidSectionPotential3D(
+  template,
+  lowerCenter,
+  identity,
+  [0.4, 0, template.moduleHeight],
+  restOrientation,
+  2,
+);
+assert(
+  Math.abs(nonlinearTranslated.upperForce[0])
+    > Math.abs(linearTranslated.upperForce[0]),
+  "positive nonlinearity hardens large transverse deformation",
+);
+assert(
+  nonlinearTranslated.energy > linearTranslated.energy,
+  "positive nonlinearity stores additional conservative potential energy",
+);
+
 const gradientEpsilon = 1e-4;
 const energyAtTranslatedX = (x: number): number => evaluateRigidSectionPotential3D(
   template,
@@ -216,6 +272,40 @@ for (const axis of [0, 1, 2] as const) {
   );
 }
 
+const anisotropicGradientElasticity = {
+  longitudinalStiffness: 7,
+  transverseStiffness: 1.5,
+  nonlinearity: 4,
+} as const;
+const anisotropicLowerEnergyAt = (angle: number): number =>
+  evaluateRigidSectionPotential3D(
+    template,
+    lowerCenter,
+    qx(angle),
+    [0.12, -0.07, template.moduleHeight + 0.09],
+    multiplyRigidSectionQuaternions3D(qAxis(1, 0.11), restOrientation),
+    anisotropicGradientElasticity,
+  ).energy;
+const anisotropicAngle = 0.08;
+const anisotropicAtGradient = evaluateRigidSectionPotential3D(
+  template,
+  lowerCenter,
+  qx(anisotropicAngle),
+  [0.12, -0.07, template.moduleHeight + 0.09],
+  multiplyRigidSectionQuaternions3D(qAxis(1, 0.11), restOrientation),
+  anisotropicGradientElasticity,
+);
+const anisotropicNumericLower = (
+  anisotropicLowerEnergyAt(anisotropicAngle + gradientEpsilon)
+  - anisotropicLowerEnergyAt(anisotropicAngle - gradientEpsilon)
+) / (2 * gradientEpsilon);
+approx(
+  anisotropicAtGradient.lowerTorque[0],
+  -anisotropicNumericLower,
+  "anisotropic nonlinear lower torque remains the negative potential-energy gradient",
+  5e-3,
+);
+
 const root: VisualLinkNetwork = {
   links: [{ key: "R", startKey: "R", endKey: "R" }],
 };
@@ -224,12 +314,39 @@ const r = createRigidSectionPhysics3D(root, {
   stiffness: 2,
   simulationSpeed: 1,
 });
+same(r.nodeMass, 1, "default mass belongs to one octahedral node");
+same(r.sectionMass, 3, "rigid triangular section contains exactly three node masses");
+approx(r.inverseSectionMass, 1 / 3, "default inverse section mass");
+same(r.longitudinalStiffness, 2, "legacy stiffness seeds longitudinal stiffness");
+same(r.transverseStiffness, 2, "legacy stiffness seeds transverse stiffness");
+same(r.nonlinearity, 0, "legacy potential remains exactly linear");
 same(r.bodyCount, 21, "R stores one rigid body per cross-section and no apex particles");
 assert(rigidSectionHingeError3D(r) < 1e-6, "double-self R starts with exact point hinges");
 r.assertFiniteState();
 
 const rootInitialEnergy = rigidSectionPotentialEnergy3D(r);
 assert(Number.isFinite(rootInitialEnergy) && rootInitialEnergy >= 0, "R initial potential is finite");
+
+const heavy = createRigidSectionPhysics3D(root, {
+  aspectRatio: aspect20,
+  longitudinalStiffness: 2,
+  transverseStiffness: 3,
+  nonlinearity: 1.5,
+  nodeMass: 4,
+  linearDampingRate: 0.25,
+  angularDampingRate: 0.75,
+  simulationSpeed: 1,
+});
+same(heavy.nodeMass, 4, "nodeMass is an explicit per-node physical parameter");
+same(heavy.sectionMass, 12, "section mass is exactly three node masses");
+approx(heavy.inverseSectionMass, 1 / 12, "section inverse mass scales with nodeMass");
+approx(heavy.localInertia[0], 2, "section Ixx scales linearly with nodeMass");
+approx(heavy.inverseLocalInertia[0], 0.5, "inverse inertia scales inversely with nodeMass");
+same(heavy.longitudinalStiffness, 2, "longitudinal stiffness stored independently");
+same(heavy.transverseStiffness, 3, "transverse stiffness stored independently");
+same(heavy.nonlinearity, 1.5, "nonlinearity stored independently");
+same(heavy.linearDampingRate, 0.25, "linear damping is tunable");
+same(heavy.angularDampingRate, 0.75, "angular damping is tunable");
 
 
 const selfSeedAudit = createRigidSectionPhysics3D(root, {
