@@ -154,9 +154,9 @@ assert(
   "compression is represented by global bowing rather than shortening every local module",
 );
 
-const bentStart: MonolithicLinkVec3 = [-4, 0, 0];
-const bentCenter: MonolithicLinkVec3 = [0, 2.5, 0.5];
-const bentEnd: MonolithicLinkVec3 = [4.5, 0.2, 1.0];
+const bentStart: MonolithicLinkVec3 = [-h, 0, 0];
+const bentCenter: MonolithicLinkVec3 = [0, 2.0, 0.5];
+const bentEnd: MonolithicLinkVec3 = [h, 0.2, 1.0];
 const bent = deriveMonolithicLinkShape3D(
   template,
   bentStart,
