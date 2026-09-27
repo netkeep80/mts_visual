@@ -84,6 +84,13 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
   readonly buffers: FakeBuffer[] = [];
   readonly bindGroups: { readonly label: string; readonly entries: readonly object[] }[] = [];
   readonly draws: DrawRecord[] = [];
+  readonly pipelineDescriptors: {
+    readonly label: string;
+    readonly depthStencil?: {
+      readonly depthWriteEnabled?: boolean;
+      readonly depthCompare?: string;
+    };
+  }[] = [];
 
   createBuffer(descriptor: {
     readonly label?: string;
@@ -129,8 +136,17 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
       readonly targets: readonly { readonly format: string }[];
     };
     readonly primitive?: object;
-    readonly depthStencil?: object;
+    readonly depthStencil?: {
+      readonly depthWriteEnabled?: boolean;
+      readonly depthCompare?: string;
+    };
   }): Promise<{ readonly label?: string }> {
+    this.pipelineDescriptors.push({
+      label: descriptor.label ?? "",
+      ...(descriptor.depthStencil === undefined
+        ? {}
+        : { depthStencil: descriptor.depthStencil }),
+    });
     return descriptor.label === undefined ? {} : { label: descriptor.label };
   }
 
@@ -288,6 +304,49 @@ const renderer = await createRigidSectionWebGpuZeroCopyRenderer3D(
 
 same(renderer.centerBuffer, compute.centerBuffer, "renderer shares exact compute centerBuffer");
 same(renderer.orientationBuffer, compute.orientationBuffer, "renderer shares exact compute orientationBuffer");
+
+const surfacePipelineDescriptor = device.pipelineDescriptors.find(
+  (descriptor) => descriptor.label === "rigid-section-webgpu-surface-pipeline",
+);
+const centerPipelineDescriptor = device.pipelineDescriptors.find(
+  (descriptor) => descriptor.label === "rigid-section-webgpu-center-pipeline",
+);
+const arrowPipelineDescriptor = device.pipelineDescriptors.find(
+  (descriptor) => descriptor.label === "rigid-section-webgpu-arrow-pipeline",
+);
+assert(surfacePipelineDescriptor !== undefined, "surface pipeline descriptor captured");
+assert(centerPipelineDescriptor !== undefined, "CENTER pipeline descriptor captured");
+assert(arrowPipelineDescriptor !== undefined, "END pipeline descriptor captured");
+same(
+  surfacePipelineDescriptor.depthStencil?.depthWriteEnabled,
+  true,
+  "material surface remains depth-writing",
+);
+same(
+  surfacePipelineDescriptor.depthStencil?.depthCompare,
+  "less-equal",
+  "material surface remains normally depth-tested",
+);
+same(
+  centerPipelineDescriptor.depthStencil?.depthWriteEnabled,
+  false,
+  "CENTER handle is an overlay and cannot disappear inside the Link surface",
+);
+same(
+  centerPipelineDescriptor.depthStencil?.depthCompare,
+  "always",
+  "CENTER handle remains visible through material depth",
+);
+same(
+  arrowPipelineDescriptor.depthStencil?.depthWriteEnabled,
+  false,
+  "END marker is also a non-destructive overlay",
+);
+same(
+  arrowPipelineDescriptor.depthStencil?.depthCompare,
+  "always",
+  "END marker remains visible through material depth",
+);
 
 const bindGroup = device.bindGroups.find(
   (group) => group.label === "rigid-section-webgpu-zero-copy-render-bind-group",
