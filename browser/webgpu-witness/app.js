@@ -606,36 +606,22 @@ function projectWorldToClient(state, world) {
 
 function centerDragVertexSet(state, linkIndex, positions, center) {
   const { template, topology } = state.compute;
-  const byGlobalVertex = new Map();
-
-  const includeTriangle = (sourceLink, triangle) => {
-    for (const vertexIndex of triangle) {
-      const globalVertex = sourceLink * template.vertexCount + vertexIndex;
-      if (byGlobalVertex.has(globalVertex)) continue;
-      const point = readVertex3(template, positions, sourceLink, vertexIndex);
-      byGlobalVertex.set(globalVertex, {
-        linkIndex: sourceLink,
-        vertexIndex,
-        offset: [
-          point[0] - center[0],
-          point[1] - center[1],
-          point[2] - center[2],
-        ],
-      });
-    }
-  };
-
-  includeTriangle(linkIndex, template.centerTriangle);
-  for (let source = 0; source < topology.linkCount; source += 1) {
-    if (topology.startIndices[source] === linkIndex) {
-      includeTriangle(source, template.startTriangle);
-    }
-    if (topology.endIndices[source] === linkIndex) {
-      includeTriangle(source, template.endTriangle);
-    }
-  }
-
-  return [...byGlobalVertex.values()];
+  return webgpu.collectOctahedralCenterDragVertices3D(
+    topology,
+    template,
+    linkIndex,
+  ).map(({ linkIndex: sourceLink, vertexIndex }) => {
+    const point = readVertex3(template, positions, sourceLink, vertexIndex);
+    return {
+      linkIndex: sourceLink,
+      vertexIndex,
+      offset: [
+        point[0] - center[0],
+        point[1] - center[1],
+        point[2] - center[2],
+      ],
+    };
+  });
 }
 
 function applyCenterDrag(state) {
