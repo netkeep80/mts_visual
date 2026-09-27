@@ -341,7 +341,7 @@ struct Globals {
 fn linear_id(gid: vec3<u32>) -> u32 {
   // Host dispatches one X row when the workload fits. Once it spills into Y,
   // X is clamped to the WebGPU baseline slab width (65,535 workgroups).
-  // This keeps 2D linearization deterministic without @builtin(num_workgroups).
+  // This keeps 2D linearization deterministic without reading dispatch dimensions from a builtin.
   return gid.x + gid.y * ${DEFAULT_MAX_WORKGROUPS_PER_DIMENSION}u * ${WORKGROUP_SIZE}u;
 }
 
