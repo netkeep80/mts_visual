@@ -417,6 +417,18 @@ assert(
   "END arrow derives direction from last transverse triangle",
 );
 assert(
+  OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("fn end_ring_projected_diameter_pixels"),
+  "END arrow measures Link diameter after projection",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("link_diameter_pixels * 3.0"),
+  "END arrow is at least three projected Link diameters long",
+);
+assert(
+  OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("max(scene.viewport_sizes.w, link_diameter_pixels * 3.0)"),
+  "END arrow keeps configured pixel size only as a lower bound",
+);
+assert(
   OCTAHEDRAL_WEBGPU_RENDER_WGSL.includes("let local = vertex_index % 6u;"),
   "END marker is rendered as a six-vertex kite",
 );
