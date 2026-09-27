@@ -166,6 +166,7 @@ function buildTemplate(pairCount: number): RigidSectionTemplate3D {
     halfRestLength: restLength / 2,
     diameter: OCTAHEDRAL_DIAMETER,
     edgeRestLength: OCTAHEDRAL_EDGE_REST_LENGTH,
+    moduleHeight: OCTAHEDRAL_MODULE_HEIGHT,
     localTriangleVertices,
     canonicalUpperVertices,
     canonicalRelativeOrientation: Object.freeze([
