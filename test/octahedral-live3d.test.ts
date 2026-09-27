@@ -107,6 +107,7 @@ same(maxPositionDelta(paused.positions, pausedBefore), 0, "simulationSpeed=0 pau
 same(pausedStats.springEdgeEvaluations, paused.template.edgeCount, "paused tick still evaluates local springs");
 same(pausedStats.hingeTransfers, 2, "paused tick keeps hinge force transfer");
 same(pausedStats.hingeProjections, 2, "paused tick keeps positional hinge projection");
+same(pausedStats.integratedVertices, 0, "paused tick reports zero actually integrated vertices");
 
 const zeroStiffness = createOctahedralLivePhysics3D(selfNetwork, {
   aspectRatio: ratio,
