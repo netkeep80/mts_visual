@@ -182,12 +182,12 @@ const CENTER_ICO_VERTICES_WGSL =
   RIGID_SECTION_CENTER_ICOSAHEDRON_VERTICES
     .map(([x, y, z]) =>
       `vec3<f32>(${x.toPrecision(10)}, ${y.toPrecision(10)}, ${z.toPrecision(10)})`)
-    .join(",\\n  ");
+    .join(",\n  ");
 
 const CENTER_ICO_FACES_WGSL =
   RIGID_SECTION_CENTER_ICOSAHEDRON_FACES
     .map(([a, b, c]) => `vec3<u32>(${a}u, ${b}u, ${c}u)`)
-    .join(",\\n  ");
+    .join(",\n  ");
 
 export const RIGID_SECTION_WEBGPU_RENDER_WGSL = /* wgsl */ `
 const CENTER_ICO_VERTICES: array<vec3<f32>, 12> = array<vec3<f32>, 12>(
