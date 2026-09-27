@@ -1,6 +1,7 @@
 import {
   OCTAHEDRAL_WEBGPU_WGSL,
   buildOctahedralReverseIncidence3D,
+  collectOctahedralCenterDragVertices3D,
   computeOctahedralWebGpuDispatch2D,
   createOctahedralWebGpuCompute3D,
   packOctahedralWebGpuTemplate3D,
@@ -191,12 +192,55 @@ same(
 const selfNetwork: VisualLinkNetwork = {
   links: [{ key: "R", startKey: "R", endKey: "R" }],
 };
-const selfReverse = buildOctahedralReverseIncidence3D(buildOctahedralLinkTopology3D(selfNetwork));
+const selfTopology = buildOctahedralLinkTopology3D(selfNetwork);
+const selfReverse = buildOctahedralReverseIncidence3D(selfTopology);
 same(JSON.stringify([...selfReverse.incomingOffsets]), JSON.stringify([0, 2]), "double-self CSR has two incoming refs");
 same(JSON.stringify([...selfReverse.incomingRefs]), JSON.stringify([0, 1]), "double-self CSR retains START and END roles");
 
 const ratio = Math.SQRT2;
 const template = getOctahedralLinkTemplate3D(ratio);
+
+const selfDragVertices = collectOctahedralCenterDragVertices3D(
+  selfTopology,
+  template,
+  0,
+);
+same(
+  selfDragVertices.length,
+  9,
+  "double-self center drag includes center plus START/END terminal triangles",
+);
+same(
+  new Set(selfDragVertices.map(({ vertexIndex }) => vertexIndex)).size,
+  9,
+  "double-self center drag de-duplicates physical vertices",
+);
+
+const fanInADragVertices = collectOctahedralCenterDragVertices3D(
+  fanInTopology,
+  template,
+  0,
+);
+same(
+  fanInADragVertices.length,
+  15,
+  "fan-in center drag includes selected center and four incoming START triangles",
+);
+same(
+  fanInADragVertices.filter(({ vertexIndex }) => template.centerTriangle.includes(vertexIndex)).length,
+  3,
+  "fan-in drag includes exactly the selected center triangle once",
+);
+
+try {
+  collectOctahedralCenterDragVertices3D(fanInTopology, template, 99);
+  throw new Error("invalid center-drag link should reject");
+} catch (error) {
+  assert(
+    error instanceof Error && /invalid center-drag linkIndex/.test(error.message),
+    "invalid center-drag selection fails closed",
+  );
+}
 const packed = packOctahedralWebGpuTemplate3D(template);
 same(packed.restBase, 0, "packed template rest positions start at zero");
 same(packed.edgeABase, template.restPositions.length, "packed edgeA follows rest bits");
