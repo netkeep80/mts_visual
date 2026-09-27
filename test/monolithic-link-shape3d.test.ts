@@ -269,6 +269,60 @@ for (let edge = 0; edge < canonicalStraight.edgeCount; edge += 1) {
   );
 }
 
+const startSelfStraight = deriveMonolithicLinkShape3D(
+  template,
+  [0, 0, 0],
+  [0, 0, 0],
+  [h, 0, 0],
+  1,
+);
+for (
+  let section = halfSegments;
+  section <= template.octahedronCount;
+  section += 1
+) {
+  const point = read3(startSelfStraight.sectionCenters, section);
+  approx(
+    point[0],
+    (section - halfSegments) * template.moduleHeight,
+    `START-self free Q${section} x`,
+    3e-5,
+  );
+  approx(point[1], 0, `START-self free Q${section} y`, 3e-5);
+  approx(point[2], 0, `START-self free Q${section} z`, 3e-5);
+}
+approx(
+  startSelfStraight.secondHalfArcLength,
+  h,
+  "START-self ordinary half is a straight rest-length segment",
+  2e-4,
+);
+
+const endSelfStraight = deriveMonolithicLinkShape3D(
+  template,
+  [-h, 0, 0],
+  [0, 0, 0],
+  [0, 0, 0],
+  2,
+);
+for (let section = 0; section <= halfSegments; section += 1) {
+  const point = read3(endSelfStraight.sectionCenters, section);
+  approx(
+    point[0],
+    -h + section * template.moduleHeight,
+    `END-self free Q${section} x`,
+    3e-5,
+  );
+  approx(point[1], 0, `END-self free Q${section} y`, 3e-5);
+  approx(point[2], 0, `END-self free Q${section} z`, 3e-5);
+}
+approx(
+  endSelfStraight.firstHalfArcLength,
+  h,
+  "END-self ordinary half is a straight rest-length segment",
+  2e-4,
+);
+
 const compressedStart: MonolithicLinkVec3 = [0, 0, 0];
 const compressedCenter: MonolithicLinkVec3 = [h * 0.64, 0, 0];
 const compressedEnd: MonolithicLinkVec3 = [h * 1.28, 0, 0];

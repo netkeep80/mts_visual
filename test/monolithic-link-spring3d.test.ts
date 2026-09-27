@@ -171,6 +171,99 @@ approx(length3(self.startForce), 0, "double-self START contribution has determin
 approx(length3(self.centerForce), 0, "double-self CENTER contribution remains finite and zero");
 approx(length3(self.endForce), 0, "double-self END contribution has deterministic zero subgradient");
 
+const startSelfRest = evaluateMonolithicLinkSpring3D(
+  [0, 0, 0],
+  [0, 0, 0],
+  [half, 0, 0],
+  template16.restLength,
+  {
+    stretchStiffness: 1,
+    straighteningStiffness: 1,
+    nonlinearity: 0,
+  },
+  { startSelf: true, endSelf: false },
+);
+approx(
+  startSelfRest.straighteningEnergy,
+  0,
+  "START-self has no three-point straightening energy",
+);
+approx(
+  length3(add3(startSelfRest.startForce, startSelfRest.centerForce)),
+  0,
+  "START-self free arm is force-free at its half rest length",
+);
+approx(
+  length3(startSelfRest.endForce),
+  0,
+  "START-self ordinary endpoint is force-free at half rest length",
+);
+
+const startSelfCompressed = evaluateMonolithicLinkSpring3D(
+  [0, 0, 0],
+  [0, 0, 0],
+  [half / 2, 0, 0],
+  template16.restLength,
+  {
+    stretchStiffness: 1,
+    straighteningStiffness: 7,
+    nonlinearity: 0,
+  },
+  { startSelf: true, endSelf: false },
+);
+const startSelfCompressedNoBend = evaluateMonolithicLinkSpring3D(
+  [0, 0, 0],
+  [0, 0, 0],
+  [half / 2, 0, 0],
+  template16.restLength,
+  {
+    stretchStiffness: 1,
+    straighteningStiffness: 0,
+    nonlinearity: 0,
+  },
+  { startSelf: true, endSelf: false },
+);
+approx(
+  forceDelta(
+    add3(startSelfCompressed.startForce, startSelfCompressed.centerForce),
+    add3(
+      startSelfCompressedNoBend.startForce,
+      startSelfCompressedNoBend.centerForce,
+    ),
+  ),
+  0,
+  "START-self free-arm force is independent of straightening stiffness",
+  1e-12,
+);
+
+const endSelfRest = evaluateMonolithicLinkSpring3D(
+  [-half, 0, 0],
+  [0, 0, 0],
+  [0, 0, 0],
+  template16.restLength,
+  {
+    stretchStiffness: 1,
+    straighteningStiffness: 1,
+    nonlinearity: 0,
+  },
+  { startSelf: false, endSelf: true },
+);
+approx(
+  endSelfRest.straighteningEnergy,
+  0,
+  "END-self has no three-point straightening energy",
+);
+approx(
+  length3(add3(endSelfRest.centerForce, endSelfRest.endForce)),
+  0,
+  "END-self free arm is force-free at its half rest length",
+);
+approx(
+  length3(endSelfRest.startForce),
+  0,
+  "END-self ordinary endpoint is force-free at half rest length",
+);
+
 // The central architectural witness: one perturbation changes all three
 // interaction-point forces in one evaluation. There is no section-by-section
 // propagation path in the monolithic potential.

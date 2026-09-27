@@ -633,11 +633,23 @@ export function deriveMonolithicLinkShape3D(
     secondChord,
     firstDirection,
   );
-  let sharedDirection = normalize3(
-    add3(firstDirection, secondDirection),
-    normalize3(subtract3(end, start), firstDirection),
-  );
-  if (!(length3(sharedDirection) > EPSILON)) sharedDirection = firstDirection;
+  let sharedDirection: MonolithicLinkVec3;
+  if (firstLength <= EPSILON && secondLength > EPSILON) {
+    // START-self has no incoming arm direction. The surviving ordinary half
+    // must leave CENTER along its own chord instead of averaging with an
+    // arbitrary deterministic self direction.
+    sharedDirection = secondDirection;
+  } else if (secondLength <= EPSILON && firstLength > EPSILON) {
+    sharedDirection = firstDirection;
+  } else {
+    sharedDirection = normalize3(
+      add3(firstDirection, secondDirection),
+      normalize3(subtract3(end, start), firstDirection),
+    );
+    if (!(length3(sharedDirection) > EPSILON)) {
+      sharedDirection = firstDirection;
+    }
+  }
 
   const macroNormal = resolveMonolithicLinkRollGauge3D(
     start,

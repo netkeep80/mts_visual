@@ -561,10 +561,21 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let first_direction = safe_normalize(first_chord, seed);
   let second_direction = safe_normalize(second_chord, first_direction);
   let overall = safe_normalize(e - s, first_direction);
-  let shared_direction = safe_normalize(
+
+  let first_self_value = select(0.0, 1.0, first_length <= 1e-9);
+  let second_self_value = select(0.0, 1.0, second_length <= 1e-9);
+  let first_self = first_self_value > 0.5;
+  let second_self = second_self_value > 0.5;
+
+  var shared_direction = safe_normalize(
     first_direction + second_direction,
     overall,
   );
+  if (first_self && !second_self) {
+    shared_direction = second_direction;
+  } else if (second_self && !first_self) {
+    shared_direction = first_direction;
+  }
 
   let bend = update_roll_gauge(
     link,
@@ -572,11 +583,6 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     second_chord,
     overall,
   );
-
-  let first_self_value = select(0.0, 1.0, first_length <= 1e-9);
-  let second_self_value = select(0.0, 1.0, second_length <= 1e-9);
-  let first_self = first_self_value > 0.5;
-  let second_self = second_self_value > 0.5;
 
   var first_amplitude = 0.0;
   var second_amplitude = 0.0;
