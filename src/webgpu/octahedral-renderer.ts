@@ -19,7 +19,7 @@ const GPU_SHADER_STAGE = Object.freeze({
 
 export const OCTAHEDRAL_WEBGPU_RENDER_UNIFORM_BYTES = 128;
 export const OCTAHEDRAL_WEBGPU_CENTER_VERTICES_PER_LINK = 6;
-export const OCTAHEDRAL_WEBGPU_ARROW_VERTICES_PER_LINK = 3;
+export const OCTAHEDRAL_WEBGPU_ARROW_VERTICES_PER_LINK = 6;
 
 interface WebGpuRenderQueueLike {
   writeBuffer(
@@ -138,7 +138,7 @@ export interface OctahedralWebGpuRenderEstimate3D {
   readonly linkCount: number;
   readonly surfaceVerticesPerLink: number;
   readonly centerVerticesPerLink: 6;
-  readonly arrowVerticesPerLink: 3;
+  readonly arrowVerticesPerLink: 6;
   readonly surfaceVertexInvocations: number;
   readonly centerVertexInvocations: number;
   readonly arrowVertexInvocations: number;
@@ -344,14 +344,21 @@ fn arrow_vertex(
 
   let perpendicular = vec2<f32>(-direction_pixels.y, direction_pixels.x);
   let arrow_length = scene.viewport_sizes.w;
-  let half_width = arrow_length * 0.4;
+  let half_width = arrow_length * 0.55;
+  let shoulder = -direction_pixels * arrow_length * 0.72;
+  let tail = -direction_pixels * arrow_length * 1.15;
 
+  // Two triangles form a high-contrast kite with its sharp tip exactly at
+  // END apex.  This remains readable even when the END half of the Link is
+  // already blue.
   var pixel_offset = vec2<f32>(0.0);
-  let local = vertex_index % 3u;
+  let local = vertex_index % 6u;
   if (local == 1u) {
-    pixel_offset = -direction_pixels * arrow_length + perpendicular * half_width;
-  } else if (local == 2u) {
-    pixel_offset = -direction_pixels * arrow_length - perpendicular * half_width;
+    pixel_offset = shoulder + perpendicular * half_width;
+  } else if (local == 2u || local == 4u) {
+    pixel_offset = tail;
+  } else if (local == 5u) {
+    pixel_offset = shoulder - perpendicular * half_width;
   }
 
   let offset_ndc = vec2<f32>(
@@ -365,7 +372,7 @@ fn arrow_vertex(
     tip_clip.z,
     tip_clip.w,
   );
-  out.color = vec3<f32>(0.0, 0.0, 1.0);
+  out.color = vec3<f32>(0.0, 0.95, 1.0);
   return out;
 }
 
@@ -663,7 +670,7 @@ export async function createOctahedralWebGpuZeroCopyRenderer3D(
     "centerMarkerPixels",
   );
   const arrowLengthPixels = requirePositiveFinite(
-    options.arrowLengthPixels ?? 12,
+    options.arrowLengthPixels ?? 18,
     "arrowLengthPixels",
   );
 
