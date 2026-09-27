@@ -168,6 +168,18 @@ function physicsSignature(physics = selectedPhysics()) {
   ].join(":");
 }
 
+function monolithicPhysicsSignature(physics = selectedPhysics()) {
+  return [
+    physics.octahedra,
+    physics.nodeMass.toFixed(4),
+    physics.longitudinalStiffness.toFixed(4),
+    physics.transverseStiffness.toFixed(4),
+    physics.nonlinearity.toFixed(4),
+    physics.linearDampingRate.toFixed(4),
+    physics.simulationSpeed.toFixed(4),
+  ].join(":");
+}
+
 function refreshPhysicsControlLabels() {
   const physics = selectedPhysics();
   ui.lengthValue.value =
@@ -291,11 +303,9 @@ let renderPass = false;
 let renderState = null;
 
 function differentialIsCurrent() {
-  const signature = physicsSignature();
-  return differentialAllPass
-    && rigidDifferentialAllPass
-    && differentialPhysicsSignature === signature
-    && rigidDifferentialPhysicsSignature === signature;
+  return monolithicDifferentialAllPass
+    && monolithicDifferentialPhysicsSignature
+      === monolithicPhysicsSignature();
 }
 
 function markDifferentialStale() {
@@ -317,7 +327,7 @@ function markDifferentialStale() {
 function updateOverall() {
   const differentialCurrent = differentialIsCurrent();
   if (differentialCurrent && renderPass) {
-    setStatus(ui.overall, "PASS — compute differential + zero-copy render", "ok");
+    setStatus(ui.overall, "PASS — monolithic differential + zero-copy live render", "ok");
   } else if (device === null) {
     setStatus(ui.overall, "UNAVAILABLE", "warn");
   } else if (differentialCurrent || renderPass) {
@@ -632,7 +642,8 @@ async function runDifferentials() {
   }
 
   monolithicDifferentialAllPass = monolithicAllPass;
-  monolithicDifferentialPhysicsSignature = runSignature;
+  monolithicDifferentialPhysicsSignature =
+    monolithicPhysicsSignature(physics);
   ui.rerun.disabled = false;
   log(
     `differential parameters: ${physics.octahedra} octa, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, dLin=${physics.linearDampingRate.toFixed(2)}, dAng=${physics.angularDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
@@ -784,22 +795,9 @@ function projectWorldToClient(state, world) {
   ];
 }
 
-function rigidBodyCenter3(centers, bodyIndex) {
-  const offset = bodyIndex * 3;
-  return [centers[offset], centers[offset + 1], centers[offset + 2]];
-}
-
-function rigidSemanticCenter3(template, centers, linkIndex) {
-  const bodyIndex = linkIndex * template.sectionCount + template.centerSection;
-  return rigidBodyCenter3(centers, bodyIndex);
-}
-
-function centerDragBodySet(state, linkIndex) {
-  return webgpu.collectRigidSectionCenterDragBodies3D(
-    state.compute.topology,
-    state.compute.template,
-    linkIndex,
-  );
+function packedVec3(values, index) {
+  const offset = index * 3;
+  return [values[offset], values[offset + 1], values[offset + 2]];
 }
 
 function pointerWorldRay(state, event) {
@@ -826,7 +824,7 @@ function pickCenterIcosahedron(state, event, centers) {
     ray.direction,
     centers,
     2
-      * state.compute.template.edgeRestLength
+      * state.shape.template.edgeRestLength
       * selectedMarkerControls().centerMarkerScale,
   );
 }
@@ -853,13 +851,13 @@ function moveCenterDragTarget(state, dx, dy) {
 function applyCenterDrag(state) {
   const drag = state.centerDrag;
   if (!drag) return null;
-  return state.compute.writeCenterOverrides(
-    drag.bodies.map(({ bodyIndex }) => ({
-      bodyIndex,
+  return state.compute.writeCenterOverrides([
+    {
+      linkIndex: drag.linkIndex,
       position: [...drag.target],
       velocity: [0, 0, 0],
-    })),
-  );
+    },
+  ]);
 }
 
 function clamp(value, minimum, maximum) {
@@ -932,7 +930,7 @@ function installCameraControls(state) {
       log(`center drag released: ${releasedDrag.key}`);
       setStatus(
         ui.renderCompute,
-        `AVAILABLE · k=${state.compute.stiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+        `AVAILABLE · mC=${state.compute.centerMass.toFixed(2)} · kS=${state.compute.stretchStiffness.toFixed(2)} · kB=${state.compute.straighteningStiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
         "ok",
       );
     }
@@ -956,17 +954,16 @@ function installCameraControls(state) {
       key: state.compute.topology.keys[selected],
       target: [...center],
       depth,
-      bodies: centerDragBodySet(state, selected),
       uploadedBytes: 0,
     };
     state.semanticCenterCache[selected] = [...center];
     mode = "center";
     log(
-      `center drag selected: ${state.centerDrag.key} · source=${source} · ${state.centerDrag.bodies.length} rigid sections`,
+      `center drag selected: ${state.centerDrag.key} · source=${source} · one semantic CENTER`,
     );
     setStatus(
       ui.renderCompute,
-      `DRAG ${state.centerDrag.key} · sparse rigid-center override`,
+      `DRAG ${state.centerDrag.key} · semantic CENTER override`,
       "warn",
     );
   };
@@ -978,7 +975,7 @@ function installCameraControls(state) {
     try {
       // One-shot readback on pointer-down keeps picking exact while ordinary
       // frames remain zero-copy and the simulated CENTER positions keep moving.
-      const centers = await state.compute.readBackCenters();
+      const gpuState = await state.compute.readBackState();
       if (
         generation !== pickGeneration
         || pointerId !== event.pointerId
@@ -987,7 +984,7 @@ function installCameraControls(state) {
 
       const worldCenters = [];
       for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
-        const center = rigidSemanticCenter3(state.compute.template, centers, link);
+        const center = packedVec3(gpuState.centers, link);
         worldCenters.push(center);
         state.semanticCenterCache[link] = [...center];
       }
@@ -1009,7 +1006,7 @@ function installCameraControls(state) {
         log("center icosahedron pick MISS — continuing as orbit");
         setStatus(
           ui.renderCompute,
-          `AVAILABLE · m=${state.compute.nodeMass.toFixed(2)} · k∥=${state.compute.longitudinalStiffness.toFixed(2)} · k⊥=${state.compute.transverseStiffness.toFixed(2)} · α=${state.compute.nonlinearity.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+          `AVAILABLE · mC=${state.compute.centerMass.toFixed(2)} · kS=${state.compute.stretchStiffness.toFixed(2)} · kB=${state.compute.straighteningStiffness.toFixed(2)} · α=${state.compute.nonlinearity.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
           "ok",
         );
         return;
@@ -1117,6 +1114,7 @@ function stopRender() {
   if (!renderState) return;
   cancelAnimationFrame(renderState.raf);
   try { renderState.renderer.destroy(); } catch {}
+  try { renderState.shape.destroy(); } catch {}
   try { renderState.compute.destroy(); } catch {}
   try { renderState.depthTexture?.destroy(); } catch {}
   try { renderState.cleanupCameraControls?.(); } catch {}
@@ -1138,267 +1136,267 @@ async function startRender() {
   const network = scene.network;
   const linkCount = network.links.length;
   const physics = selectedPhysics();
-  const compute = await webgpu.createRigidSectionWebGpuCompute3D(
-    device,
-    network,
-    {
-      aspectRatio: physics.aspectRatio,
-      longitudinalStiffness: physics.longitudinalStiffness,
-      transverseStiffness: physics.transverseStiffness,
-      nonlinearity: physics.nonlinearity,
-      nodeMass: physics.nodeMass,
-      linearDampingRate: physics.linearDampingRate,
-      angularDampingRate: physics.angularDampingRate,
-      simulationSpeed: physics.simulationSpeed,
-    },
-  );
-
-  if (compute.template.octahedronCount !== physics.octahedra) {
-    compute.destroy();
-    throw new Error(`length control mismatch: requested ${physics.octahedra} octa, got ${compute.template.octahedronCount}`);
-  }
-
-  const context = ui.canvas.getContext("webgpu");
-  if (!context) {
-    compute.destroy();
-    throw new Error("canvas.getContext('webgpu') returned null");
-  }
-
-  const colorFormat = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({
-    device,
-    format: colorFormat,
-    alphaMode: "opaque",
-  });
-
-  const renderer = await webgpu.createRigidSectionWebGpuZeroCopyRenderer3D(
-    device,
-    compute,
-    {
-      colorFormat,
-      depthFormat: "depth24plus",
-    },
-  );
-
-  const rendererSnapshot = renderer.snapshot();
-  const zeroCopy =
-    renderer.centerBuffer === compute.centerBuffer
-    && renderer.orientationBuffer === compute.orientationBuffer
-    && rendererSnapshot.sharedCenterBuffer === true
-    && rendererSnapshot.sharedOrientationBuffer === true
-    && rendererSnapshot.dynamicStateUploadBytesPerFrame === 0
-    && rendererSnapshot.rendererDynamicStateBytes === 0;
-
-  if (!zeroCopy) {
-    renderer.destroy();
-    compute.destroy();
-    throw new Error("zero-copy invariant failed before first render");
-  }
-
-  renderPass = true;
-  setStatus(ui.renderCompute, "AVAILABLE", "ok");
-  const computeSnapshot = compute.snapshot();
-  setStatus(
-    ui.renderTopology,
-    `${scene.label} · ${linkCount} Links · ${computeSnapshot.bodyCount.toLocaleString()} rigid sections · ${compute.template.octahedronCount} octa · m=${physics.nodeMass.toFixed(2)} · k∥=${physics.longitudinalStiffness.toFixed(2)} · k⊥=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
-    "ok",
-  );
-  setStatus(
-    ui.renderZeroCopy,
-    "PASS — shared centerBuffer + orientationBuffer · 0 B dynamic upload",
-    "ok",
-  );
-  updateOverall();
-
-  const initialCpu = core.createRigidSectionPhysics3D(network, {
+  const monolithicOptions = {
     aspectRatio: physics.aspectRatio,
-    longitudinalStiffness: physics.longitudinalStiffness,
-    transverseStiffness: physics.transverseStiffness,
+    stretchStiffness: physics.longitudinalStiffness,
+    straighteningStiffness: physics.transverseStiffness,
     nonlinearity: physics.nonlinearity,
-    nodeMass: physics.nodeMass,
-    linearDampingRate: physics.linearDampingRate,
-    angularDampingRate: physics.angularDampingRate,
+    centerMass: physics.nodeMass,
+    dampingRate: physics.linearDampingRate,
     simulationSpeed: physics.simulationSpeed,
-  });
-  const initialSemanticCenters = Array.from(
-    { length: linkCount },
-    (_, link) => [...initialCpu.semanticCenter(link)],
-  );
-
-  const side = Math.ceil(Math.cbrt(linkCount));
-  const spacing = compute.template.diameter * 2.5;
-  const defaultCameraDistance = Math.max(
-    18,
-    compute.template.restLength * 1.35,
-    side * spacing * 2.6,
-  );
-  const state = {
-    compute,
-    renderer,
-    context,
-    colorFormat,
-    depthTexture: null,
-    raf: 0,
-    frames: 0,
-    steps: 0,
-    paused: false,
-    startedAt: performance.now(),
-    lastFrameAt: performance.now(),
-    lastUiAt: 0,
-    camera: {
-      yaw: 0,
-      pitch: 0,
-      distance: defaultCameraDistance,
-      defaultDistance: defaultCameraDistance,
-      minDistance: Math.max(2, defaultCameraDistance * 0.08),
-      maxDistance: defaultCameraDistance * 20,
-      target: [0, 0, 0],
-    },
-    cleanupCameraControls: null,
-    centerDrag: null,
-    initialSemanticCenters,
-    semanticCenterCache: initialSemanticCenters.map((center) => [...center]),
-    scene,
-    network,
   };
-  resetCamera(state.camera, defaultCameraDistance);
-  state.cleanupCameraControls = installCameraControls(state);
-  renderState = state;
-  ui.pauseRender.textContent = "Pause";
 
-  function ensureDepth() {
-    const resized = resizeCanvas(ui.canvas);
-    if (resized || state.depthTexture === null) {
-      state.depthTexture?.destroy();
-      state.depthTexture = device.createTexture({
-        label: "mts-visual-witness-depth",
-        size: [ui.canvas.width, ui.canvas.height, 1],
-        format: "depth24plus",
-        usage: globalThis.GPUTextureUsage?.RENDER_ATTACHMENT ?? 0x10,
-      });
+  const compute = await webgpu.createMonolithicLinkWebGpuCompute3D(
+    device,
+    network,
+    monolithicOptions,
+  );
+
+  let shape = null;
+  let renderer = null;
+  try {
+    shape = await webgpu.createMonolithicLinkWebGpuShape3D(
+      device,
+      compute,
+      physics.aspectRatio,
+    );
+    shape.update();
+
+    if (shape.template.octahedronCount !== physics.octahedra) {
+      throw new Error(
+        `length control mismatch: requested ${physics.octahedra} octa, got ${shape.template.octahedronCount}`,
+      );
     }
-  }
 
-  function frame(now) {
-    if (renderState !== state) return;
+    const context = ui.canvas.getContext("webgpu");
+    if (!context) {
+      throw new Error("canvas.getContext('webgpu') returned null");
+    }
 
-    try {
-      ensureDepth();
-      if (!state.paused) {
-        state.compute.step();
-        state.steps += 1;
+    const colorFormat = navigator.gpu.getPreferredCanvasFormat();
+    context.configure({
+      device,
+      format: colorFormat,
+      alphaMode: "opaque",
+    });
+
+    renderer = await webgpu.createMonolithicLinkWebGpuZeroCopyRenderer3D(
+      device,
+      compute,
+      shape,
+      {
+        colorFormat,
+        depthFormat: "depth24plus",
+      },
+    );
+
+    const rendererSnapshot = renderer.snapshot();
+    const zeroCopy =
+      renderer.semanticCenterBuffer === compute.centerBuffer
+      && renderer.shapeParameterBuffer === shape.parameterBuffer
+      && rendererSnapshot.sharedSemanticCenterBuffer === true
+      && rendererSnapshot.sharedShapeParameterBuffer === true
+      && rendererSnapshot.dynamicStateUploadBytesPerFrame === 0
+      && rendererSnapshot.rendererDynamicStateBytes === 0;
+
+    if (!zeroCopy) {
+      throw new Error(
+        "monolithic zero-copy invariant failed before first render",
+      );
+    }
+
+    renderPass = true;
+    const computeSnapshot = compute.snapshot();
+    const shapeSnapshot = shape.snapshot();
+    setStatus(
+      ui.renderCompute,
+      `AVAILABLE · 2 physics passes + 1 derived-shape pass`,
+      "ok",
+    );
+    setStatus(
+      ui.renderTopology,
+      `${scene.label} · ${linkCount} Links · ${shapeSnapshot.octahedronCount} octa/Link · semantic state=${(computeSnapshot.centerBytes + computeSnapshot.velocityBytes).toLocaleString()} B · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+      "ok",
+    );
+    setStatus(
+      ui.renderZeroCopy,
+      "PASS — shared semantic CENTER + compact shape buffer · 0 B dynamic CPU upload",
+      "ok",
+    );
+    updateOverall();
+
+    const initialCpu = core.createMonolithicLinkSpringPhysics3D(
+      network,
+      monolithicOptions,
+    );
+    const initialSemanticCenters = Array.from(
+      { length: linkCount },
+      (_, link) => [...initialCpu.semanticCenter(link)],
+    );
+
+    const side = Math.ceil(Math.cbrt(linkCount));
+    const spacing = shape.template.diameter * 2.5;
+    const defaultCameraDistance = Math.max(
+      18,
+      shape.template.restLength * 1.35,
+      side * spacing * 2.6,
+    );
+    const state = {
+      compute,
+      shape,
+      renderer,
+      context,
+      colorFormat,
+      depthTexture: null,
+      raf: 0,
+      frames: 0,
+      steps: 0,
+      shapeUpdates: 0,
+      paused: false,
+      startedAt: performance.now(),
+      lastFrameAt: performance.now(),
+      lastUiAt: 0,
+      camera: {
+        yaw: 0,
+        pitch: 0,
+        distance: defaultCameraDistance,
+        defaultDistance: defaultCameraDistance,
+        minDistance: Math.max(2, defaultCameraDistance * 0.08),
+        maxDistance: defaultCameraDistance * 20,
+        target: [0, 0, 0],
+      },
+      cleanupCameraControls: null,
+      centerDrag: null,
+      initialSemanticCenters,
+      semanticCenterCache: initialSemanticCenters.map((center) => [...center]),
+      scene,
+      network,
+    };
+    resetCamera(state.camera, defaultCameraDistance);
+    state.cleanupCameraControls = installCameraControls(state);
+    renderState = state;
+    ui.pauseRender.textContent = "Pause";
+
+    function ensureDepth() {
+      const resized = resizeCanvas(ui.canvas);
+      if (resized || state.depthTexture === null) {
+        state.depthTexture?.destroy();
+        state.depthTexture = device.createTexture({
+          label: "mts-visual-witness-depth",
+          size: [ui.canvas.width, ui.canvas.height, 1],
+          format: "depth24plus",
+          usage: globalThis.GPUTextureUsage?.RENDER_ATTACHMENT ?? 0x10,
+        });
       }
-      const dragStats = applyCenterDrag(state);
-      if (dragStats && state.centerDrag) {
-        state.centerDrag.uploadedBytes +=
-          dragStats.centerBytes + dragStats.velocityBytes;
-      }
+    }
 
-      const frameDeltaSeconds = Math.min(0.1, Math.max(0, (now - state.lastFrameAt) / 1000));
-      state.lastFrameAt = now;
-      if (ui.autoRotate.checked && !state.centerDrag) {
-        state.camera.yaw += frameDeltaSeconds * 0.16;
-      }
-      const viewProjection = currentViewProjection(state);
+    function frame(now) {
+      if (renderState !== state) return;
 
-      const markers = selectedMarkerControls();
-      const stats = state.renderer.render({
-        targetView: state.context.getCurrentTexture().createView(),
-        depthView: state.depthTexture.createView(),
-        viewProjection,
-        width: ui.canvas.width,
-        height: ui.canvas.height,
-        wireframe: ui.wireframe.checked,
-        showCenterMarkers: markers.showCenterMarkers,
-        showEndCones: markers.showEndCones,
-        centerMarkerScale: markers.centerMarkerScale,
-        endConeScale: markers.endConeScale,
-        clearColor: { r: 0.005, g: 0.008, b: 0.014, a: 1 },
-      });
-      state.frames += 1;
+      try {
+        ensureDepth();
+        if (!state.paused) {
+          const physicsStats = state.compute.step();
+          if (
+            physicsStats.computePasses !== 2
+            || physicsStats.dynamicStateUploadBytes !== 0
+          ) {
+            throw new Error(
+              `monolithic physics invariant failed: passes=${physicsStats.computePasses} upload=${physicsStats.dynamicStateUploadBytes}`,
+            );
+          }
+          state.steps += 1;
+        }
 
-      const expectedDrawCalls =
-        1
-        + (markers.showCenterMarkers ? 1 : 0)
-        + (markers.showEndCones ? 1 : 0);
-      if (
-        stats.dynamicStateUploadBytes !== 0
-        || stats.bufferCopies !== 0
-        || stats.readbacks !== 0
-        || stats.drawCalls !== expectedDrawCalls
-      ) {
-        throw new Error(
-          `zero-copy runtime violation: uploads=${stats.dynamicStateUploadBytes} copies=${stats.bufferCopies} readbacks=${stats.readbacks} draws=${stats.drawCalls}/${expectedDrawCalls}`,
+        const dragStats = applyCenterDrag(state);
+        if (dragStats && state.centerDrag) {
+          state.centerDrag.uploadedBytes +=
+            dragStats.centerBytes + dragStats.velocityBytes;
+        }
+
+        const shapeStats = state.shape.update();
+        if (
+          shapeStats.computePasses !== 1
+          || shapeStats.dynamicStateUploadBytes !== 0
+        ) {
+          throw new Error(
+            `monolithic shape invariant failed: passes=${shapeStats.computePasses} upload=${shapeStats.dynamicStateUploadBytes}`,
+          );
+        }
+        state.shapeUpdates += 1;
+
+        const frameDeltaSeconds = Math.min(
+          0.1,
+          Math.max(0, (now - state.lastFrameAt) / 1000),
         );
+        state.lastFrameAt = now;
+        if (ui.autoRotate.checked && !state.centerDrag) {
+          state.camera.yaw += frameDeltaSeconds * 0.16;
+        }
+        const viewProjection = currentViewProjection(state);
+
+        const markers = selectedMarkerControls();
+        const stats = state.renderer.render({
+          targetView: state.context.getCurrentTexture().createView(),
+          depthView: state.depthTexture.createView(),
+          viewProjection,
+          width: ui.canvas.width,
+          height: ui.canvas.height,
+          wireframe: ui.wireframe.checked,
+          showCenterMarkers: markers.showCenterMarkers,
+          showEndCones: markers.showEndCones,
+          centerMarkerScale: markers.centerMarkerScale,
+          endConeScale: markers.endConeScale,
+          clearColor: { r: 0.005, g: 0.008, b: 0.014, a: 1 },
+        });
+        state.frames += 1;
+
+        const expectedDrawCalls =
+          1
+          + (markers.showCenterMarkers ? 1 : 0)
+          + (markers.showEndCones ? 1 : 0);
+        if (
+          stats.dynamicStateUploadBytes !== 0
+          || stats.bufferCopies !== 0
+          || stats.readbacks !== 0
+          || stats.drawCalls !== expectedDrawCalls
+        ) {
+          throw new Error(
+            `zero-copy runtime violation: uploads=${stats.dynamicStateUploadBytes} copies=${stats.bufferCopies} readbacks=${stats.readbacks} draws=${stats.drawCalls}/${expectedDrawCalls}`,
+          );
+        }
+
+        if (now - state.lastUiAt > 250) {
+          state.lastUiAt = now;
+          ui.renderFrames.textContent =
+            `${state.frames.toLocaleString()} / ${state.steps.toLocaleString()}`;
+        }
+      } catch (error) {
+        renderPass = false;
+        setStatus(ui.renderCompute, "ERROR", "fail");
+        setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
+        log(`monolithic render ERROR — ${error.stack ?? error}`);
+        updateOverall();
+        return;
       }
 
-      if (now - state.lastUiAt > 250) {
-        state.lastUiAt = now;
-        ui.renderFrames.textContent = `${state.frames.toLocaleString()} / ${state.steps.toLocaleString()}`;
-      }
-    } catch (error) {
-      renderPass = false;
-      setStatus(ui.renderCompute, "ERROR", "fail");
-      setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
-      log(`render ERROR — ${error.stack ?? error}`);
-      updateOverall();
-      return;
+      state.raf = requestAnimationFrame(frame);
     }
 
     state.raf = requestAnimationFrame(frame);
+    log(
+      `v0.5 monolithic render started: scene=${scene.label}, ${linkCount} Links, ${shape.template.octahedronCount} octa/Link, centerMass=${physics.nodeMass.toFixed(2)}, stretch=${physics.longitudinalStiffness.toFixed(2)}, straighten=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, damping=${physics.linearDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
+    );
+  } catch (error) {
+    try { renderer?.destroy(); } catch {}
+    try { shape?.destroy(); } catch {}
+    try { compute.destroy(); } catch {}
+    throw error;
   }
-
-  state.raf = requestAnimationFrame(frame);
-  log(
-    `v0.5 rigid zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().bodyCount} rigid sections`,
-  );
 }
 
 function distance3(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-}
-
-function rigidBodyQuat4(orientations, bodyIndex) {
-  const offset = bodyIndex * 4;
-  return [
-    orientations[offset],
-    orientations[offset + 1],
-    orientations[offset + 2],
-    orientations[offset + 3],
-  ];
-}
-
-function rigidBodyVelocity3(values, bodyIndex) {
-  const offset = bodyIndex * 3;
-  return [values[offset], values[offset + 1], values[offset + 2]];
-}
-
-function quaternionNormError(q) {
-  return Math.abs(Math.hypot(q[0], q[1], q[2], q[3]) - 1);
-}
-
-function diagnosticClass(value, warn = 1e-3, fail = 1e-2) {
-  if (value > fail) return "fail";
-  if (value > warn) return "warn";
-  return "ok";
-}
-
-function rigidLinkPotentialEnergy(template, state, linkIndex, elasticity) {
-  let energy = 0;
-  const base = linkIndex * template.sectionCount;
-  for (let local = 0; local < template.octahedronCount; local += 1) {
-    const lower = base + local;
-    const upper = lower + 1;
-    energy += core.evaluateRigidSectionPotential3D(
-      template,
-      rigidBodyCenter3(state.centers, lower),
-      rigidBodyQuat4(state.orientations, lower),
-      rigidBodyCenter3(state.centers, upper),
-      rigidBodyQuat4(state.orientations, upper),
-      elasticity,
-    ).energy;
-  }
-  return energy;
 }
 
 async function inspectGeometry() {
@@ -1413,103 +1411,85 @@ async function inspectGeometry() {
     const gpuState = await render.compute.readBackState();
     if (renderState !== render) return;
 
-    const { template, topology } = render.compute;
-    const networkByKey = new Map(render.network.links.map((link) => [link.key, link]));
+    const topology = render.compute.topology;
+    const restLength = render.shape.template.restLength;
+    const networkByKey = new Map(
+      render.network.links.map((link) => [link.key, link]),
+    );
     const rowsHtml = [];
-    let globalHingeError = 0;
-    let globalQuaternionError = 0;
-    let globalMaxLinearSpeed = 0;
-    let globalMaxAngularSpeed = 0;
+    let globalMaxBend = 0;
+    let globalMaxSpeed = 0;
     let totalPotentialEnergy = 0;
 
     for (let linkIndex = 0; linkIndex < topology.linkCount; linkIndex += 1) {
       const key = topology.keys[linkIndex];
       const source = networkByKey.get(key);
-      if (!source) throw new Error(`diagnostic source Link missing: ${key}`);
-
-      const base = linkIndex * template.sectionCount;
-      const middleBody = base + template.centerSection;
-      const startBody = base;
-      const endBody = base + template.sectionCount - 1;
-      const startTargetBody =
-        topology.startIndices[linkIndex] * template.sectionCount
-        + template.centerSection;
-      const endTargetBody =
-        topology.endIndices[linkIndex] * template.sectionCount
-        + template.centerSection;
-
-      const ownCenter = rigidBodyCenter3(gpuState.centers, middleBody);
-      const startError = distance3(
-        rigidBodyCenter3(gpuState.centers, startBody),
-        rigidBodyCenter3(gpuState.centers, startTargetBody),
-      );
-      const endError = distance3(
-        rigidBodyCenter3(gpuState.centers, endBody),
-        rigidBodyCenter3(gpuState.centers, endTargetBody),
-      );
-      const centerDisplacement = distance3(
-        ownCenter,
-        render.initialSemanticCenters[linkIndex],
-      );
-      const energy = rigidLinkPotentialEnergy(
-        template,
-        gpuState,
-        linkIndex,
-        {
-          longitudinalStiffness: render.compute.longitudinalStiffness,
-          transverseStiffness: render.compute.transverseStiffness,
-          nonlinearity: render.compute.nonlinearity,
-        },
-      );
-
-      let maxLinearSpeed = 0;
-      let maxAngularSpeed = 0;
-      let maxQuaternionError = 0;
-      for (let local = 0; local < template.sectionCount; local += 1) {
-        const body = base + local;
-        const velocity = rigidBodyVelocity3(gpuState.linearVelocities, body);
-        const angular = rigidBodyVelocity3(gpuState.angularVelocities, body);
-        maxLinearSpeed = Math.max(maxLinearSpeed, Math.hypot(...velocity));
-        maxAngularSpeed = Math.max(maxAngularSpeed, Math.hypot(...angular));
-        maxQuaternionError = Math.max(
-          maxQuaternionError,
-          quaternionNormError(rigidBodyQuat4(gpuState.orientations, body)),
-        );
+      if (!source) {
+        throw new Error(`diagnostic source Link missing: ${key}`);
       }
 
-      globalHingeError = Math.max(globalHingeError, startError, endError);
-      globalQuaternionError = Math.max(globalQuaternionError, maxQuaternionError);
-      globalMaxLinearSpeed = Math.max(globalMaxLinearSpeed, maxLinearSpeed);
-      globalMaxAngularSpeed = Math.max(globalMaxAngularSpeed, maxAngularSpeed);
+      const startIndex = topology.startIndices[linkIndex];
+      const endIndex = topology.endIndices[linkIndex];
+      const start = packedVec3(gpuState.centers, startIndex);
+      const center = packedVec3(gpuState.centers, linkIndex);
+      const end = packedVec3(gpuState.centers, endIndex);
+      const velocity = packedVec3(gpuState.velocities, linkIndex);
+
+      const startLength = distance3(start, center);
+      const endLength = distance3(center, end);
+      const bendVector = [
+        start[0] - 2 * center[0] + end[0],
+        start[1] - 2 * center[1] + end[1],
+        start[2] - 2 * center[2] + end[2],
+      ];
+      const bend = Math.hypot(...bendVector);
+      const centerDisplacement = distance3(
+        center,
+        render.initialSemanticCenters[linkIndex],
+      );
+      const speed = Math.hypot(...velocity);
+      const energy = core.evaluateMonolithicLinkSpring3D(
+        start,
+        center,
+        end,
+        restLength,
+        {
+          stretchStiffness: render.compute.stretchStiffness,
+          straighteningStiffness:
+            render.compute.straighteningStiffness,
+          nonlinearity: render.compute.nonlinearity,
+        },
+      ).energy;
+
+      globalMaxBend = Math.max(globalMaxBend, bend);
+      globalMaxSpeed = Math.max(globalMaxSpeed, speed);
       totalPotentialEnergy += energy;
 
       rowsHtml.push(`
         <tr>
           <td class="value">${key}</td>
           <td>${equationForNetworkLink(source)}</td>
-          <td class="${diagnosticClass(startError)}">${fmt(startError)}</td>
-          <td class="${diagnosticClass(endError)}">${fmt(endError)}</td>
+          <td>${fmt(startLength)}</td>
+          <td>${fmt(endLength)}</td>
+          <td>${fmt(bend)}</td>
           <td>${fmt(centerDisplacement)}</td>
           <td>${fmt(energy)}</td>
-          <td>${fmt(maxLinearSpeed)}</td>
-          <td>${fmt(maxAngularSpeed)}</td>
-          <td class="${diagnosticClass(maxQuaternionError, 1e-5, 1e-3)}">${fmt(maxQuaternionError)}</td>
+          <td>${fmt(speed)}</td>
+          <td>${fmt(restLength)}</td>
         </tr>
       `);
     }
 
     ui.geometryBody.innerHTML = rowsHtml.join("");
     const readbackBytes =
-      gpuState.centers.byteLength
-      + gpuState.orientations.byteLength
-      + gpuState.linearVelocities.byteLength
-      + gpuState.angularVelocities.byteLength;
+      gpuState.centers.byteLength + gpuState.velocities.byteLength;
     log(
-      `rigid geometry inspection: scene=${render.scene.label}, ${topology.linkCount} Links, readback=${readbackBytes} B, maxHinge=${fmt(globalHingeError)}, maxQNormErr=${fmt(globalQuaternionError)}, potential=${fmt(totalPotentialEnergy)}, maxV=${fmt(globalMaxLinearSpeed)}, maxOmega=${fmt(globalMaxAngularSpeed)}`,
+      `monolithic geometry inspection: scene=${render.scene.label}, ${topology.linkCount} Links, readback=${readbackBytes} B, maxBend=${fmt(globalMaxBend)}, potential=${fmt(totalPotentialEnergy)}, maxCenterV=${fmt(globalMaxSpeed)}, restLength=${fmt(restLength)}`,
     );
   } catch (error) {
-    ui.geometryBody.innerHTML = `<tr><td colspan="9" class="fail">Inspection ERROR — ${String(error)}</td></tr>`;
-    log(`geometry inspection ERROR — ${error.stack ?? error}`);
+    ui.geometryBody.innerHTML =
+      `<tr><td colspan="9" class="fail">Inspection ERROR — ${String(error)}</td></tr>`;
+    log(`monolithic geometry inspection ERROR — ${error.stack ?? error}`);
   } finally {
     if (renderState === render) render.paused = wasPaused;
     ui.inspectGeometry.disabled = false;
@@ -1519,6 +1499,9 @@ async function inspectGeometry() {
 ui.rerun.addEventListener("click", () => {
   runDifferentials().catch((error) => {
     differentialAllPass = false;
+    rigidDifferentialAllPass = false;
+    monolithicDifferentialAllPass = false;
+    monolithicDifferentialPhysicsSignature = null;
     log(`differential runner ERROR — ${error.stack ?? error}`);
     updateOverall();
   });
@@ -1604,22 +1587,28 @@ function applyLivePhysicsControls() {
 
   const physics = selectedPhysics();
   const compute = renderState.compute;
-  compute.setNodeMass(physics.nodeMass);
-  compute.setLongitudinalStiffness(physics.longitudinalStiffness);
-  compute.setTransverseStiffness(physics.transverseStiffness);
+  compute.setCenterMass(physics.nodeMass);
+  compute.setStretchStiffness(physics.longitudinalStiffness);
+  compute.setStraighteningStiffness(physics.transverseStiffness);
   compute.setNonlinearity(physics.nonlinearity);
-  compute.setLinearDampingRate(physics.linearDampingRate);
-  compute.setAngularDampingRate(physics.angularDampingRate);
+  compute.setDampingRate(physics.linearDampingRate);
   compute.setSimulationSpeed(physics.simulationSpeed);
 
   const snapshot = compute.snapshot();
   const checks = [
-    ["nodeMass", snapshot.nodeMass, physics.nodeMass],
-    ["longitudinalStiffness", snapshot.longitudinalStiffness, physics.longitudinalStiffness],
-    ["transverseStiffness", snapshot.transverseStiffness, physics.transverseStiffness],
+    ["centerMass", snapshot.centerMass, physics.nodeMass],
+    [
+      "stretchStiffness",
+      snapshot.stretchStiffness,
+      physics.longitudinalStiffness,
+    ],
+    [
+      "straighteningStiffness",
+      snapshot.straighteningStiffness,
+      physics.transverseStiffness,
+    ],
     ["nonlinearity", snapshot.nonlinearity, physics.nonlinearity],
-    ["linearDampingRate", snapshot.linearDampingRate, physics.linearDampingRate],
-    ["angularDampingRate", snapshot.angularDampingRate, physics.angularDampingRate],
+    ["dampingRate", snapshot.dampingRate, physics.linearDampingRate],
     ["simulationSpeed", snapshot.simulationSpeed, physics.simulationSpeed],
   ];
   for (const [label, actual, expected] of checks) {
@@ -1632,7 +1621,7 @@ function applyLivePhysicsControls() {
 
   setStatus(
     ui.renderCompute,
-    `AVAILABLE · m=${physics.nodeMass.toFixed(2)} · k∥=${physics.longitudinalStiffness.toFixed(2)} · k⊥=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    `AVAILABLE · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
     "ok",
   );
 }
@@ -1643,11 +1632,27 @@ for (const control of [
   ui.transverseStiffness,
   ui.nonlinearity,
   ui.linearDamping,
-  ui.angularDamping,
   ui.simulationSpeed,
 ]) {
   control.addEventListener("input", applyLivePhysicsControls);
 }
+
+ui.angularDamping.addEventListener("input", () => {
+  refreshPhysicsControlLabels();
+  rigidDifferentialAllPass = false;
+  rigidDifferentialPhysicsSignature = null;
+  for (const row of rigidRows.values()) {
+    const status = row.querySelector(".status");
+    if (status.textContent === "PASS") {
+      status.textContent = "STALE";
+      status.className = "status warn";
+    }
+  }
+  log(
+    "legacy rigid angular damping changed — monolithic live physics is unaffected",
+  );
+  updateOverall();
+});
 
 ui.pauseRender.addEventListener("click", () => {
   if (!renderState) return;
