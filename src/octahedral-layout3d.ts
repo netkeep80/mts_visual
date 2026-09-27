@@ -131,7 +131,7 @@ function basisForAxis(
   return Object.freeze({ x, y, z: axis });
 }
 
-export function writeOrientedOctahedralRestTemplate3D(
+export function writeFittedOctahedralTemplate3D(
   template: OctahedralLinkTemplate3D,
   topology: OctahedralLinkTopology3D,
   positions: Float32Array,
