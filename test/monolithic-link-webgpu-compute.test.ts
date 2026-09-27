@@ -233,9 +233,15 @@ assert(
 );
 assert(
   MONOLITHIC_LINK_WEBGPU_WGSL.includes(
+    "start_index != link && end_index != link",
+  ),
+  "WGSL applies whole-Link straightening only when both arms are non-self",
+);
+assert(
+  MONOLITHIC_LINK_WEBGPU_WGSL.includes(
     "let q = s - 2.0 * c + e;",
   ),
-  "WGSL contains one whole-Link straightening term",
+  "WGSL retains the ordinary whole-Link straightening term",
 );
 assert(
   MONOLITHIC_LINK_WEBGPU_WGSL.includes(
