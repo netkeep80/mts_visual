@@ -33,6 +33,7 @@ export interface MonolithicLinkWebGpuShapeSnapshot3D {
   readonly octahedronCount: number;
   readonly sectionCount: number;
   readonly parameterBytes: number;
+  readonly gaugeBytes: number;
   readonly topologyBytes: number;
   readonly dynamicStateBytes: number;
 }
@@ -41,6 +42,7 @@ export interface MonolithicLinkWebGpuShape3D {
   readonly compute: MonolithicLinkWebGpuCompute3D;
   readonly template: MonolithicLinkSpringTemplate3D;
   readonly parameterBuffer: WebGpuBufferLike;
+  readonly gaugeBuffer: WebGpuBufferLike;
   update(): MonolithicLinkWebGpuShapeStepStats3D;
   snapshot(): MonolithicLinkWebGpuShapeSnapshot3D;
   destroy(): void;
@@ -55,7 +57,8 @@ struct ShapeGlobals {
 @group(0) @binding(0) var<storage, read> semantic_centers: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read> topology_data: array<u32>;
 @group(0) @binding(2) var<storage, read_write> shape_parameters: array<vec4<f32>>;
-@group(0) @binding(3) var<uniform> globals: ShapeGlobals;
+@group(0) @binding(3) var<storage, read_write> roll_gauge: array<vec4<f32>>;
+@group(0) @binding(4) var<uniform> globals: ShapeGlobals;
 
 fn safe_normalize(value: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
   let n = length(value);
@@ -75,6 +78,87 @@ fn deterministic_axis(link: u32) -> vec3<f32> {
     ),
     vec3<f32>(0.0, 0.0, 1.0),
   );
+}
+
+fn deterministic_perpendicular(
+  direction: vec3<f32>,
+  link: u32,
+) -> vec3<f32> {
+  let seed = deterministic_axis(link);
+  var helper = vec3<f32>(0.0, 1.0, 0.0);
+  if (abs(seed.y) >= 0.9) {
+    helper = vec3<f32>(1.0, 0.0, 0.0);
+  }
+  let frame_x = safe_normalize(
+    cross(helper, seed),
+    vec3<f32>(1.0, 0.0, 0.0),
+  );
+  let frame_y = safe_normalize(
+    cross(seed, frame_x),
+    vec3<f32>(0.0, 1.0, 0.0),
+  );
+
+  var candidate = frame_x;
+  var alignment = abs(dot(candidate, direction));
+  let y_alignment = abs(dot(frame_y, direction));
+  if (y_alignment < alignment) {
+    candidate = frame_y;
+    alignment = y_alignment;
+  }
+  let z_alignment = abs(dot(seed, direction));
+  if (z_alignment < alignment) {
+    candidate = seed;
+  }
+  return safe_normalize(
+    candidate - direction * dot(candidate, direction),
+    frame_x,
+  );
+}
+
+fn update_roll_gauge(
+  link: u32,
+  first: vec3<f32>,
+  second: vec3<f32>,
+  overall_axis: vec3<f32>,
+) -> vec3<f32> {
+  let fallback = deterministic_perpendicular(overall_axis, link);
+  let stored = roll_gauge[link];
+
+  var previous = fallback;
+  if (stored.w > 0.5) {
+    previous = safe_normalize(
+      stored.xyz - overall_axis * dot(stored.xyz, overall_axis),
+      fallback,
+    );
+  }
+
+  let crossed = cross(first, second);
+  let crossed_length = length(crossed);
+  let denominator = length(first) * length(second);
+  let bend_sine = select(
+    0.0,
+    clamp(crossed_length / denominator, 0.0, 1.0),
+    denominator > 1e-9,
+  );
+
+  var normal = previous;
+  if (crossed_length > 1e-9) {
+    var geometric = crossed / crossed_length;
+    if (dot(geometric, previous) < 0.0) {
+      geometric = -geometric;
+    }
+
+    let raw_weight = (bend_sine - 0.015) / (0.08 - 0.015);
+    let t = clamp(raw_weight, 0.0, 1.0);
+    let weight = t * t * (3.0 - 2.0 * t);
+    normal = safe_normalize(
+      previous * (1.0 - weight) + geometric * weight,
+      previous,
+    );
+  }
+
+  roll_gauge[link] = vec4<f32>(normal, 1.0);
+  return normal;
 }
 
 fn hermite_derivative(
@@ -223,6 +307,13 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     overall,
   );
 
+  _ = update_roll_gauge(
+    link,
+    first_chord,
+    second_chord,
+    overall,
+  );
+
   let first_self = select(0.0, 1.0, first_length <= 1e-9);
   let second_self = select(0.0, 1.0, second_length <= 1e-9);
 
@@ -308,6 +399,7 @@ function globalsData(
 class MonolithicLinkWebGpuShapeController
 implements MonolithicLinkWebGpuShape3D {
   readonly parameterBuffer: WebGpuBufferLike;
+  readonly gaugeBuffer: WebGpuBufferLike;
   readonly template: MonolithicLinkSpringTemplate3D;
 
   private readonly topologyBuffer: WebGpuBufferLike;
@@ -324,6 +416,7 @@ implements MonolithicLinkWebGpuShape3D {
     template: MonolithicLinkSpringTemplate3D,
     args: {
       parameterBuffer: WebGpuBufferLike;
+      gaugeBuffer: WebGpuBufferLike;
       topologyBuffer: WebGpuBufferLike;
       globalsBuffer: WebGpuBufferLike;
       bindGroup: object;
@@ -333,6 +426,7 @@ implements MonolithicLinkWebGpuShape3D {
   ) {
     this.template = template;
     this.parameterBuffer = args.parameterBuffer;
+    this.gaugeBuffer = args.gaugeBuffer;
     this.topologyBuffer = args.topologyBuffer;
     this.globalsBuffer = args.globalsBuffer;
     this.bindGroup = args.bindGroup;
@@ -389,8 +483,9 @@ implements MonolithicLinkWebGpuShape3D {
       octahedronCount: this.template.octahedronCount,
       sectionCount: this.template.octahedronCount + 1,
       parameterBytes: linkCount * 16,
+      gaugeBytes: linkCount * 16,
       topologyBytes: this.topologyBuffer.size,
-      dynamicStateBytes: linkCount * 16,
+      dynamicStateBytes: linkCount * 32,
     });
   }
 
@@ -398,6 +493,7 @@ implements MonolithicLinkWebGpuShape3D {
     if (this.destroyed) return;
     this.destroyed = true;
     this.parameterBuffer.destroy();
+    this.gaugeBuffer.destroy();
     this.topologyBuffer.destroy();
     this.globalsBuffer.destroy();
   }
@@ -419,6 +515,12 @@ export async function createMonolithicLinkWebGpuShape3D(
   const parameterBuffer = createBuffer(
     device,
     "monolithic-link-shape-parameters",
+    compute.topology.linkCount * 16,
+    GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC,
+  );
+  const gaugeBuffer = createBuffer(
+    device,
+    "monolithic-link-roll-gauge",
     compute.topology.linkCount * 16,
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC,
   );
@@ -483,6 +585,11 @@ export async function createMonolithicLinkWebGpuShape3D(
       {
         binding: 3,
         visibility: GPU_SHADER_STAGE_COMPUTE,
+        buffer: { type: "storage" },
+      },
+      {
+        binding: 4,
+        visibility: GPU_SHADER_STAGE_COMPUTE,
         buffer: { type: "uniform" },
       },
     ],
@@ -506,7 +613,8 @@ export async function createMonolithicLinkWebGpuShape3D(
       { binding: 0, resource: { buffer: compute.centerBuffer } },
       { binding: 1, resource: { buffer: topologyBuffer } },
       { binding: 2, resource: { buffer: parameterBuffer } },
-      { binding: 3, resource: { buffer: globalsBuffer } },
+      { binding: 3, resource: { buffer: gaugeBuffer } },
+      { binding: 4, resource: { buffer: globalsBuffer } },
     ],
   });
 
@@ -516,6 +624,7 @@ export async function createMonolithicLinkWebGpuShape3D(
     template,
     {
       parameterBuffer,
+      gaugeBuffer,
       topologyBuffer,
       globalsBuffer,
       bindGroup,
