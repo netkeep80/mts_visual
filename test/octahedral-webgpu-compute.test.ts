@@ -47,18 +47,18 @@ class FakeBuffer implements WebGpuBufferLike {
 }
 
 class FakeQueue {
-  readonly writes: { label: string; bytes: number }[] = [];
+  readonly writes: { label: string; bytes: number; offset: number }[] = [];
   submissions = 0;
 
   writeBuffer(
     buffer: WebGpuBufferLike,
-    _bufferOffset: number,
+    bufferOffset: number,
     data: ArrayBuffer | ArrayBufferView,
     _dataOffset?: number,
     size?: number,
   ): void {
     const byteLength = size ?? data.byteLength;
-    this.writes.push({ label: buffer.label ?? "", bytes: byteLength });
+    this.writes.push({ label: buffer.label ?? "", bytes: byteLength, offset: bufferOffset });
   }
 
   submit(_commandBuffers: readonly object[]): void {
@@ -358,6 +358,49 @@ same(snapshot.linkCount, 4, "GPU controller snapshot Link count");
 same(snapshot.vertexCount, 9, "GPU controller uses minimum capless cached template");
 same(snapshot.positionBytes, 4 * 9 * 3 * 4, "positions remain tightly packed XYZ Float32");
 same(snapshot.gpuDynamicXyzBytes, 3 * snapshot.positionBytes, "three dynamic XYZ fields retain 12-byte vertex packing");
+
+fake.queue.resetWrites();
+const centerVertices = controller.template.centerTriangle;
+const overrideStats = controller.writeVertexOverrides(
+  centerVertices.map((vertexIndex, index) => ({
+    linkIndex: 2,
+    vertexIndex,
+    position: [10 + index, 20 + index, 30 + index],
+    velocity: [0, 0, 0],
+  })),
+);
+same(overrideStats.vertexCount, 3, "center drag overrides exactly one physical triangle");
+same(overrideStats.bufferWrites, 2, "contiguous triangle override batches into position+velocity writes");
+same(overrideStats.positionBytes, 36, "center drag writes exactly three XYZ positions");
+same(overrideStats.velocityBytes, 36, "center drag writes exactly three XYZ velocities");
+same(fake.queue.writes.length, 2, "center override produces only two sparse queue writes");
+same(fake.queue.writes[0]!.label, "octahedral-positions", "center override first writes positions");
+same(fake.queue.writes[1]!.label, "octahedral-velocities", "center override then writes velocities");
+const expectedCenterOffset =
+  (2 * controller.template.vertexCount + centerVertices[0]) * 3 * 4;
+same(fake.queue.writes[0]!.offset, expectedCenterOffset, "center override uses exact packed position offset");
+same(fake.queue.writes[1]!.offset, expectedCenterOffset, "center velocity override uses exact packed offset");
+
+try {
+  controller.writeVertexOverrides([
+    {
+      linkIndex: 0,
+      vertexIndex: centerVertices[0],
+      position: [0, 0, 0],
+    },
+    {
+      linkIndex: 0,
+      vertexIndex: centerVertices[0],
+      position: [1, 0, 0],
+    },
+  ]);
+  throw new Error("duplicate override should reject");
+} catch (error) {
+  assert(
+    error instanceof Error && /duplicate vertex override/.test(error.message),
+    "duplicate sparse override fails closed",
+  );
+}
 
 fake.queue.resetWrites();
 fake.resetDispatches();
