@@ -8,6 +8,7 @@ import "./octahedral-live3d.test.js";
 import "./live-physics3d.test.js";
 import "./three-scene.test.js";
 import "./three-renderer.test.js";
+import "./three-octahedral-batch.test.js";
 import "./three-live-topology.test.js";
 import "./three-controls.test.js";
 import "./presentation.test.js";
