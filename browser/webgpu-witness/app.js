@@ -420,7 +420,7 @@ async function runDifferentials() {
         fixture.network,
         {
           aspectRatio: physics.aspectRatio,
-          stiffness: physics.stiffness,
+          stiffness: physics.longitudinalStiffness,
           simulationSpeed: physics.simulationSpeed,
         },
         {
@@ -487,7 +487,12 @@ async function runDifferentials() {
         fixture.network,
         {
           aspectRatio: rigidAspectRatio,
-          stiffness: physics.stiffness,
+          longitudinalStiffness: physics.longitudinalStiffness,
+          transverseStiffness: physics.transverseStiffness,
+          nonlinearity: physics.nonlinearity,
+          nodeMass: physics.nodeMass,
+          linearDampingRate: physics.linearDampingRate,
+          angularDampingRate: physics.angularDampingRate,
           simulationSpeed: physics.simulationSpeed,
         },
         DIFFERENTIAL_STEPS,
@@ -524,7 +529,9 @@ async function runDifferentials() {
   rigidDifferentialAllPass = rigidAllPass;
   rigidDifferentialPhysicsSignature = runSignature;
   ui.rerun.disabled = false;
-  log(`differential parameters: ${physics.octahedra} octa, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`);
+  log(
+    `differential parameters: ${physics.octahedra} octa, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, dLin=${physics.linearDampingRate.toFixed(2)}, dAng=${physics.angularDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
+  );
   log(`rigid differential aspect=${rigidAspectRatio.toFixed(4)} (capless rigid triangular sections)`);
   updateOverall();
 }
@@ -1016,7 +1023,12 @@ async function startRender() {
     network,
     {
       aspectRatio: physics.aspectRatio,
-      stiffness: physics.stiffness,
+      longitudinalStiffness: physics.longitudinalStiffness,
+      transverseStiffness: physics.transverseStiffness,
+      nonlinearity: physics.nonlinearity,
+      nodeMass: physics.nodeMass,
+      linearDampingRate: physics.linearDampingRate,
+      angularDampingRate: physics.angularDampingRate,
       simulationSpeed: physics.simulationSpeed,
     },
   );
@@ -1070,7 +1082,7 @@ async function startRender() {
   const computeSnapshot = compute.snapshot();
   setStatus(
     ui.renderTopology,
-    `${scene.label} · ${linkCount} Links · ${computeSnapshot.bodyCount.toLocaleString()} rigid sections · ${compute.template.octahedronCount} octa · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    `${scene.label} · ${linkCount} Links · ${computeSnapshot.bodyCount.toLocaleString()} rigid sections · ${compute.template.octahedronCount} octa · m=${physics.nodeMass.toFixed(2)} · k∥=${physics.longitudinalStiffness.toFixed(2)} · k⊥=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
     "ok",
   );
   setStatus(
@@ -1082,7 +1094,12 @@ async function startRender() {
 
   const initialCpu = core.createRigidSectionPhysics3D(network, {
     aspectRatio: physics.aspectRatio,
-    stiffness: physics.stiffness,
+    longitudinalStiffness: physics.longitudinalStiffness,
+    transverseStiffness: physics.transverseStiffness,
+    nonlinearity: physics.nonlinearity,
+    nodeMass: physics.nodeMass,
+    linearDampingRate: physics.linearDampingRate,
+    angularDampingRate: physics.angularDampingRate,
     simulationSpeed: physics.simulationSpeed,
   });
   const initialSemanticCenters = Array.from(
@@ -1206,7 +1223,7 @@ async function startRender() {
 
   state.raf = requestAnimationFrame(frame);
   log(
-    `v0.5 rigid zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, stiffness=${physics.stiffness.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().bodyCount} rigid sections`,
+    `v0.5 rigid zero-copy render started: scene=${scene.label}, ${linkCount} Links, ${compute.template.octahedronCount} octa/Link, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x, ${compute.snapshot().bodyCount} rigid sections`,
   );
 }
 
@@ -1239,7 +1256,7 @@ function diagnosticClass(value, warn = 1e-3, fail = 1e-2) {
   return "ok";
 }
 
-function rigidLinkPotentialEnergy(template, state, linkIndex, stiffness) {
+function rigidLinkPotentialEnergy(template, state, linkIndex, elasticity) {
   let energy = 0;
   const base = linkIndex * template.sectionCount;
   for (let local = 0; local < template.octahedronCount; local += 1) {
@@ -1251,7 +1268,7 @@ function rigidLinkPotentialEnergy(template, state, linkIndex, stiffness) {
       rigidBodyQuat4(state.orientations, lower),
       rigidBodyCenter3(state.centers, upper),
       rigidBodyQuat4(state.orientations, upper),
-      stiffness,
+      elasticity,
     ).energy;
   }
   return energy;
@@ -1311,7 +1328,11 @@ async function inspectGeometry() {
         template,
         gpuState,
         linkIndex,
-        render.compute.stiffness,
+        {
+          longitudinalStiffness: render.compute.longitudinalStiffness,
+          transverseStiffness: render.compute.transverseStiffness,
+          nonlinearity: render.compute.nonlinearity,
+        },
       );
 
       let maxLinearSpeed = 0;
@@ -1414,14 +1435,11 @@ ui.wireframe.addEventListener("change", () => {
   log(`wireframe ${ui.wireframe.checked ? "enabled" : "disabled"} — physics state preserved`);
 });
 
-ui.lengthOcta.addEventListener("input", () => {
+ui.lengthOcta.addEventListener("change", () => {
   refreshPhysicsControlLabels();
   markDifferentialStale();
   renderPass = false;
   updateOverall();
-});
-
-ui.lengthOcta.addEventListener("change", () => {
   startRender().catch((error) => {
     renderPass = false;
     setStatus(ui.renderCompute, "ERROR", "fail");
@@ -1431,36 +1449,81 @@ ui.lengthOcta.addEventListener("change", () => {
   });
 });
 
-ui.stiffness.addEventListener("input", () => {
+function applyLivePhysicsControls() {
   refreshPhysicsControlLabels();
   markDifferentialStale();
   if (!renderState) return;
-  const physics = selectedPhysics();
-  renderState.compute.setStiffness(physics.stiffness);
-  const snapshot = renderState.compute.snapshot();
-  if (Math.abs(snapshot.stiffness - physics.stiffness) > 1e-12) {
-    throw new Error(`stiffness control mismatch: requested ${physics.stiffness}, got ${snapshot.stiffness}`);
-  }
-  setStatus(ui.renderCompute, `AVAILABLE · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`, "ok");
-});
 
-ui.simulationSpeed.addEventListener("input", () => {
-  refreshPhysicsControlLabels();
-  markDifferentialStale();
-  if (!renderState) return;
   const physics = selectedPhysics();
-  renderState.compute.setSimulationSpeed(physics.simulationSpeed);
-  const snapshot = renderState.compute.snapshot();
-  if (Math.abs(snapshot.simulationSpeed - physics.simulationSpeed) > 1e-12) {
-    throw new Error(`simulation-speed control mismatch: requested ${physics.simulationSpeed}, got ${snapshot.simulationSpeed}`);
+  const compute = renderState.compute;
+  compute.setNodeMass(physics.nodeMass);
+  compute.setLongitudinalStiffness(physics.longitudinalStiffness);
+  compute.setTransverseStiffness(physics.transverseStiffness);
+  compute.setNonlinearity(physics.nonlinearity);
+  compute.setLinearDampingRate(physics.linearDampingRate);
+  compute.setAngularDampingRate(physics.angularDampingRate);
+  compute.setSimulationSpeed(physics.simulationSpeed);
+
+  const snapshot = compute.snapshot();
+  const checks = [
+    ["nodeMass", snapshot.nodeMass, physics.nodeMass],
+    ["longitudinalStiffness", snapshot.longitudinalStiffness, physics.longitudinalStiffness],
+    ["transverseStiffness", snapshot.transverseStiffness, physics.transverseStiffness],
+    ["nonlinearity", snapshot.nonlinearity, physics.nonlinearity],
+    ["linearDampingRate", snapshot.linearDampingRate, physics.linearDampingRate],
+    ["angularDampingRate", snapshot.angularDampingRate, physics.angularDampingRate],
+    ["simulationSpeed", snapshot.simulationSpeed, physics.simulationSpeed],
+  ];
+  for (const [label, actual, expected] of checks) {
+    if (Math.abs(actual - expected) > 1e-12) {
+      throw new Error(
+        `${label} control mismatch: requested ${expected}, got ${actual}`,
+      );
+    }
   }
-  setStatus(ui.renderCompute, `AVAILABLE · k=${physics.stiffness.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`, "ok");
-});
+
+  setStatus(
+    ui.renderCompute,
+    `AVAILABLE · m=${physics.nodeMass.toFixed(2)} · k∥=${physics.longitudinalStiffness.toFixed(2)} · k⊥=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    "ok",
+  );
+}
+
+for (const control of [
+  ui.nodeMass,
+  ui.longitudinalStiffness,
+  ui.transverseStiffness,
+  ui.nonlinearity,
+  ui.linearDamping,
+  ui.angularDamping,
+  ui.simulationSpeed,
+]) {
+  control.addEventListener("input", applyLivePhysicsControls);
+}
 
 ui.pauseRender.addEventListener("click", () => {
   if (!renderState) return;
   renderState.paused = !renderState.paused;
   ui.pauseRender.textContent = renderState.paused ? "Resume" : "Pause";
+});
+
+ui.fullscreenRender.addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement === ui.viewportShell) {
+      await document.exitFullscreen();
+    } else {
+      await ui.viewportShell.requestFullscreen();
+    }
+  } catch (error) {
+    log(`fullscreen ERROR — ${error.stack ?? error}`);
+  }
+});
+
+document.addEventListener("fullscreenchange", () => {
+  ui.fullscreenRender.textContent =
+    document.fullscreenElement === ui.viewportShell
+      ? "Exit fullscreen"
+      : "Fullscreen";
 });
 
 try {
