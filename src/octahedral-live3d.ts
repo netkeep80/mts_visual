@@ -127,7 +127,7 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
     this.forces = new Float32Array(length);
 
     for (let link = 0; link < this.currentTopology.linkCount; link += 1) {
-      writeOrientedOctahedralRestTemplate3D(
+      writeFittedOctahedralTemplate3D(
         this.template,
         this.currentTopology,
         this.currentPositions,
@@ -246,7 +246,7 @@ class OctahedralLiveController implements OctahedralLivePhysics3D {
         nextPositions.set(this.currentPositions.subarray(oldOffset, oldOffset + span), nextOffset);
         nextVelocities.set(this.currentVelocities.subarray(oldOffset, oldOffset + span), nextOffset);
       } else {
-        writeOrientedOctahedralRestTemplate3D(
+        writeFittedOctahedralTemplate3D(
           this.template,
           nextTopology,
           nextPositions,
