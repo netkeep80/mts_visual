@@ -1,5 +1,6 @@
 export * from "./renderer.js";
 export * from "./controls.js";
+export * from "./octahedral-batch.js";
 
 import {
   buildVisualGeometry3D,
