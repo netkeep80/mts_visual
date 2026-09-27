@@ -34,6 +34,7 @@ export interface MonolithicLinkWebGpuShapeSnapshot3D {
   readonly sectionCount: number;
   readonly parameterBytes: number;
   readonly gaugeBytes: number;
+  readonly sectionFrameBytes: number;
   readonly topologyBytes: number;
   readonly dynamicStateBytes: number;
 }
@@ -43,6 +44,7 @@ export interface MonolithicLinkWebGpuShape3D {
   readonly template: MonolithicLinkSpringTemplate3D;
   readonly parameterBuffer: WebGpuBufferLike;
   readonly gaugeBuffer: WebGpuBufferLike;
+  readonly sectionFrameBuffer: WebGpuBufferLike;
   update(): MonolithicLinkWebGpuShapeStepStats3D;
   snapshot(): MonolithicLinkWebGpuShapeSnapshot3D;
   destroy(): void;
@@ -54,11 +56,18 @@ struct ShapeGlobals {
   geometry: vec4<f32>,
 };
 
+struct AxisFrame {
+  x: vec3<f32>,
+  y: vec3<f32>,
+  z: vec3<f32>,
+};
+
 @group(0) @binding(0) var<storage, read> semantic_centers: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read> topology_data: array<u32>;
 @group(0) @binding(2) var<storage, read_write> shape_parameters: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> roll_gauge: array<vec4<f32>>;
-@group(0) @binding(4) var<uniform> globals: ShapeGlobals;
+@group(0) @binding(4) var<storage, read_write> section_frames: array<vec4<f32>>;
+@group(0) @binding(5) var<uniform> globals: ShapeGlobals;
 
 fn safe_normalize(value: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
   let n = length(value);
@@ -80,38 +89,42 @@ fn deterministic_axis(link: u32) -> vec3<f32> {
   );
 }
 
+fn deterministic_frame(link: u32) -> AxisFrame {
+  let z = deterministic_axis(link);
+  var helper = vec3<f32>(0.0, 1.0, 0.0);
+  if (abs(z.y) >= 0.9) {
+    helper = vec3<f32>(1.0, 0.0, 0.0);
+  }
+  let x = safe_normalize(
+    cross(helper, z),
+    vec3<f32>(1.0, 0.0, 0.0),
+  );
+  let y = safe_normalize(
+    cross(z, x),
+    vec3<f32>(0.0, 1.0, 0.0),
+  );
+  return AxisFrame(x, y, z);
+}
+
 fn deterministic_perpendicular(
   direction: vec3<f32>,
   link: u32,
 ) -> vec3<f32> {
-  let seed = deterministic_axis(link);
-  var helper = vec3<f32>(0.0, 1.0, 0.0);
-  if (abs(seed.y) >= 0.9) {
-    helper = vec3<f32>(1.0, 0.0, 0.0);
-  }
-  let frame_x = safe_normalize(
-    cross(helper, seed),
-    vec3<f32>(1.0, 0.0, 0.0),
-  );
-  let frame_y = safe_normalize(
-    cross(seed, frame_x),
-    vec3<f32>(0.0, 1.0, 0.0),
-  );
-
-  var candidate = frame_x;
+  let frame = deterministic_frame(link);
+  var candidate = frame.x;
   var alignment = abs(dot(candidate, direction));
-  let y_alignment = abs(dot(frame_y, direction));
+  let y_alignment = abs(dot(frame.y, direction));
   if (y_alignment < alignment) {
-    candidate = frame_y;
+    candidate = frame.y;
     alignment = y_alignment;
   }
-  let z_alignment = abs(dot(seed, direction));
+  let z_alignment = abs(dot(frame.z, direction));
   if (z_alignment < alignment) {
-    candidate = seed;
+    candidate = frame.z;
   }
   return safe_normalize(
     candidate - direction * dot(candidate, direction),
-    frame_x,
+    frame.x,
   );
 }
 
@@ -161,6 +174,26 @@ fn update_roll_gauge(
   return normal;
 }
 
+fn hermite_point(
+  start: vec3<f32>,
+  finish: vec3<f32>,
+  start_tangent: vec3<f32>,
+  end_tangent: vec3<f32>,
+  t: f32,
+) -> vec3<f32> {
+  let t2 = t * t;
+  let t3 = t2 * t;
+  let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+  let h10 = t3 - 2.0 * t2 + t;
+  let h01 = -2.0 * t3 + 3.0 * t2;
+  let h11 = t3 - t2;
+  return
+    start * h00
+    + start_tangent * h10
+    + finish * h01
+    + end_tangent * h11;
+}
+
 fn hermite_derivative(
   start: vec3<f32>,
   finish: vec3<f32>,
@@ -178,6 +211,13 @@ fn hermite_derivative(
     + start_tangent * h10
     + finish * h01
     + end_tangent * h11;
+}
+
+fn buckling_basis(t: f32) -> f32 {
+  let one_minus = 1.0 - t;
+  return 64.0
+    * t * t * t
+    * one_minus * one_minus * one_minus;
 }
 
 fn buckling_basis_derivative(t: f32) -> f32 {
@@ -279,6 +319,225 @@ fn solve_amplitude(
   return (low + high) * 0.5;
 }
 
+fn ordinary_point(
+  start: vec3<f32>,
+  finish: vec3<f32>,
+  start_direction: vec3<f32>,
+  end_direction: vec3<f32>,
+  bend_direction: vec3<f32>,
+  amplitude: f32,
+  t: f32,
+) -> vec3<f32> {
+  let chord_length = length(finish - start);
+  let tangent_scale = max(chord_length, globals.geometry.y * 0.25);
+  return hermite_point(
+    start,
+    finish,
+    start_direction * tangent_scale,
+    end_direction * tangent_scale,
+    t,
+  ) + bend_direction * (amplitude * buckling_basis(t));
+}
+
+fn ordinary_tangent(
+  start: vec3<f32>,
+  finish: vec3<f32>,
+  start_direction: vec3<f32>,
+  end_direction: vec3<f32>,
+  bend_direction: vec3<f32>,
+  amplitude: f32,
+  t: f32,
+) -> vec3<f32> {
+  let chord_length = length(finish - start);
+  let tangent_scale = max(chord_length, globals.geometry.y * 0.25);
+  return hermite_derivative(
+    start,
+    finish,
+    start_direction * tangent_scale,
+    end_direction * tangent_scale,
+    t,
+  ) + bend_direction * (amplitude * buckling_basis_derivative(t));
+}
+
+fn self_loop_base_point(t: f32) -> vec3<f32> {
+  let theta = 6.283185307179586 * t;
+  let sine = sin(theta);
+  let one_minus_cos = 1.0 - cos(theta);
+  return vec3<f32>(
+    0.60 * one_minus_cos * one_minus_cos,
+    0.35 * sine * one_minus_cos,
+    sine,
+  );
+}
+
+fn self_loop_base_derivative(t: f32) -> vec3<f32> {
+  let theta = 6.283185307179586 * t;
+  let sine = sin(theta);
+  let cosine = cos(theta);
+  let one_minus_cos = 1.0 - cosine;
+  return vec3<f32>(
+    1.20 * one_minus_cos * sine * 6.283185307179586,
+    0.35 * (cosine * one_minus_cos + sine * sine) * 6.283185307179586,
+    cosine * 6.283185307179586,
+  );
+}
+
+fn self_point(
+  anchor: vec3<f32>,
+  link: u32,
+  t: f32,
+  lobe_sign: f32,
+) -> vec3<f32> {
+  let frame = deterministic_frame(link);
+  let base = self_loop_base_point(t);
+  let scale = globals.geometry.y / 7.511568580362938;
+  return anchor
+    + frame.z * (scale * base.z)
+    + frame.x * (lobe_sign * scale * base.x)
+    + frame.y * (lobe_sign * scale * base.y);
+}
+
+fn self_tangent(
+  link: u32,
+  t: f32,
+  lobe_sign: f32,
+) -> vec3<f32> {
+  let frame = deterministic_frame(link);
+  let base = self_loop_base_derivative(t);
+  let scale = globals.geometry.y / 7.511568580362938;
+  return
+    frame.z * (scale * base.z)
+    + frame.x * (lobe_sign * scale * base.x)
+    + frame.y * (lobe_sign * scale * base.y);
+}
+
+fn curve_point(
+  self_curve: bool,
+  anchor: vec3<f32>,
+  finish: vec3<f32>,
+  start_direction: vec3<f32>,
+  end_direction: vec3<f32>,
+  bend_direction: vec3<f32>,
+  amplitude: f32,
+  link: u32,
+  t: f32,
+  lobe_sign: f32,
+) -> vec3<f32> {
+  if (self_curve) {
+    return self_point(anchor, link, t, lobe_sign);
+  }
+  return ordinary_point(
+    anchor,
+    finish,
+    start_direction,
+    end_direction,
+    bend_direction,
+    amplitude,
+    t,
+  );
+}
+
+fn curve_tangent(
+  self_curve: bool,
+  anchor: vec3<f32>,
+  finish: vec3<f32>,
+  start_direction: vec3<f32>,
+  end_direction: vec3<f32>,
+  bend_direction: vec3<f32>,
+  amplitude: f32,
+  link: u32,
+  t: f32,
+  lobe_sign: f32,
+) -> vec3<f32> {
+  if (self_curve) {
+    return self_tangent(link, t, lobe_sign);
+  }
+  return ordinary_tangent(
+    anchor,
+    finish,
+    start_direction,
+    end_direction,
+    bend_direction,
+    amplitude,
+    t,
+  );
+}
+
+fn curve_polyline_length(
+  self_curve: bool,
+  anchor: vec3<f32>,
+  finish: vec3<f32>,
+  start_direction: vec3<f32>,
+  end_direction: vec3<f32>,
+  bend_direction: vec3<f32>,
+  amplitude: f32,
+  link: u32,
+  lobe_sign: f32,
+  samples: u32,
+) -> f32 {
+  var previous = curve_point(
+    self_curve,
+    anchor,
+    finish,
+    start_direction,
+    end_direction,
+    bend_direction,
+    amplitude,
+    link,
+    0.0,
+    lobe_sign,
+  );
+  var total = 0.0;
+  for (var sample = 1u; sample <= samples; sample = sample + 1u) {
+    let t = f32(sample) / f32(samples);
+    let current = curve_point(
+      self_curve,
+      anchor,
+      finish,
+      start_direction,
+      end_direction,
+      bend_direction,
+      amplitude,
+      link,
+      t,
+      lobe_sign,
+    );
+    total = total + length(current - previous);
+    previous = current;
+  }
+  return total;
+}
+
+fn transport_x(
+  value: vec3<f32>,
+  from_tangent: vec3<f32>,
+  to_tangent: vec3<f32>,
+  seed: u32,
+) -> vec3<f32> {
+  let from = safe_normalize(from_tangent, deterministic_axis(seed));
+  let to = safe_normalize(to_tangent, from);
+  let axis_raw = cross(from, to);
+  let sine = length(axis_raw);
+  let cosine = clamp(dot(from, to), -1.0, 1.0);
+  var transported = value;
+
+  if (sine > 1e-7) {
+    let axis = axis_raw / sine;
+    transported =
+      value * cosine
+      + cross(axis, value) * sine
+      + axis * dot(axis, value) * (1.0 - cosine);
+  } else if (cosine < 0.0) {
+    let axis = deterministic_perpendicular(from, seed);
+    transported = -value + axis * (2.0 * dot(axis, value));
+  }
+
+  return safe_normalize(
+    transported - to * dot(transported, to),
+    deterministic_perpendicular(to, seed),
+  );
+}
+
 @compute @workgroup_size(64)
 fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let link = gid.x + gid.y * 65535u * 64u;
@@ -307,19 +566,21 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     overall,
   );
 
-  _ = update_roll_gauge(
+  let bend = update_roll_gauge(
     link,
     first_chord,
     second_chord,
     overall,
   );
 
-  let first_self = select(0.0, 1.0, first_length <= 1e-9);
-  let second_self = select(0.0, 1.0, second_length <= 1e-9);
+  let first_self_value = select(0.0, 1.0, first_length <= 1e-9);
+  let second_self_value = select(0.0, 1.0, second_length <= 1e-9);
+  let first_self = first_self_value > 0.5;
+  let second_self = second_self_value > 0.5;
 
   var first_amplitude = 0.0;
   var second_amplitude = 0.0;
-  if (first_self == 0.0) {
+  if (!first_self) {
     first_amplitude = solve_amplitude(
       s,
       c,
@@ -327,7 +588,7 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       shared_direction,
     );
   }
-  if (second_self == 0.0) {
+  if (!second_self) {
     second_amplitude = solve_amplitude(
       c,
       e,
@@ -339,9 +600,252 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   shape_parameters[link] = vec4<f32>(
     first_amplitude,
     second_amplitude,
-    first_self,
-    second_self,
+    first_self_value,
+    second_self_value,
   );
+
+  let half_segments = globals.counts.y;
+  let section_count = globals.counts.z;
+  let frame_base = link * section_count;
+  let arc_samples = max(256u, half_segments * 8u);
+
+  let first_total = curve_polyline_length(
+    first_self,
+    s,
+    c,
+    first_direction,
+    shared_direction,
+    bend,
+    first_amplitude,
+    link,
+    -1.0,
+    arc_samples,
+  );
+
+  var previous_tangent = safe_normalize(
+    curve_tangent(
+      first_self,
+      s,
+      c,
+      first_direction,
+      shared_direction,
+      bend,
+      first_amplitude,
+      link,
+      0.0,
+      -1.0,
+    ),
+    first_direction,
+  );
+  var transported_x = cross(bend, previous_tangent);
+  if (length(transported_x) <= 1e-8) {
+    transported_x = deterministic_perpendicular(previous_tangent, link);
+  } else {
+    transported_x = normalize(transported_x);
+  }
+  section_frames[frame_base] = vec4<f32>(transported_x, 0.0);
+
+  var previous_point = curve_point(
+    first_self,
+    s,
+    c,
+    first_direction,
+    shared_direction,
+    bend,
+    first_amplitude,
+    link,
+    0.0,
+    -1.0,
+  );
+  var previous_sample_t = 0.0;
+  var cumulative = 0.0;
+  var next_section = 1u;
+
+  for (var sample = 1u; sample <= arc_samples; sample = sample + 1u) {
+    let sample_t = f32(sample) / f32(arc_samples);
+    let current_point = curve_point(
+      first_self,
+      s,
+      c,
+      first_direction,
+      shared_direction,
+      bend,
+      first_amplitude,
+      link,
+      sample_t,
+      -1.0,
+    );
+    let segment_length = length(current_point - previous_point);
+    let next_cumulative = cumulative + segment_length;
+
+    loop {
+      if (next_section > half_segments) {
+        break;
+      }
+      let target = first_total * f32(next_section) / f32(half_segments);
+      if (target > next_cumulative && sample < arc_samples) {
+        break;
+      }
+      var fraction = 1.0;
+      if (segment_length > 1e-9) {
+        fraction = clamp(
+          (target - cumulative) / segment_length,
+          0.0,
+          1.0,
+        );
+      }
+      let resolved_t = previous_sample_t
+        + (sample_t - previous_sample_t) * fraction;
+      let tangent = safe_normalize(
+        curve_tangent(
+          first_self,
+          s,
+          c,
+          first_direction,
+          shared_direction,
+          bend,
+          first_amplitude,
+          link,
+          resolved_t,
+          -1.0,
+        ),
+        previous_tangent,
+      );
+      transported_x = transport_x(
+        transported_x,
+        previous_tangent,
+        tangent,
+        link + next_section,
+      );
+      section_frames[frame_base + next_section] =
+        vec4<f32>(transported_x, resolved_t);
+      previous_tangent = tangent;
+      next_section = next_section + 1u;
+    }
+
+    previous_point = current_point;
+    previous_sample_t = sample_t;
+    cumulative = next_cumulative;
+  }
+
+  let second_start_tangent = safe_normalize(
+    curve_tangent(
+      second_self,
+      c,
+      e,
+      shared_direction,
+      second_direction,
+      bend,
+      second_amplitude,
+      link,
+      0.0,
+      1.0,
+    ),
+    previous_tangent,
+  );
+  transported_x = transport_x(
+    transported_x,
+    previous_tangent,
+    second_start_tangent,
+    link + half_segments,
+  );
+  previous_tangent = second_start_tangent;
+
+  let second_total = curve_polyline_length(
+    second_self,
+    c,
+    e,
+    shared_direction,
+    second_direction,
+    bend,
+    second_amplitude,
+    link,
+    1.0,
+    arc_samples,
+  );
+  previous_point = curve_point(
+    second_self,
+    c,
+    e,
+    shared_direction,
+    second_direction,
+    bend,
+    second_amplitude,
+    link,
+    0.0,
+    1.0,
+  );
+  previous_sample_t = 0.0;
+  cumulative = 0.0;
+  var next_local = 1u;
+
+  for (var sample = 1u; sample <= arc_samples; sample = sample + 1u) {
+    let sample_t = f32(sample) / f32(arc_samples);
+    let current_point = curve_point(
+      second_self,
+      c,
+      e,
+      shared_direction,
+      second_direction,
+      bend,
+      second_amplitude,
+      link,
+      sample_t,
+      1.0,
+    );
+    let segment_length = length(current_point - previous_point);
+    let next_cumulative = cumulative + segment_length;
+
+    loop {
+      if (next_local > half_segments) {
+        break;
+      }
+      let target = second_total * f32(next_local) / f32(half_segments);
+      if (target > next_cumulative && sample < arc_samples) {
+        break;
+      }
+      var fraction = 1.0;
+      if (segment_length > 1e-9) {
+        fraction = clamp(
+          (target - cumulative) / segment_length,
+          0.0,
+          1.0,
+        );
+      }
+      let resolved_t = previous_sample_t
+        + (sample_t - previous_sample_t) * fraction;
+      let tangent = safe_normalize(
+        curve_tangent(
+          second_self,
+          c,
+          e,
+          shared_direction,
+          second_direction,
+          bend,
+          second_amplitude,
+          link,
+          resolved_t,
+          1.0,
+        ),
+        previous_tangent,
+      );
+      let section = half_segments + next_local;
+      transported_x = transport_x(
+        transported_x,
+        previous_tangent,
+        tangent,
+        link + section,
+      );
+      section_frames[frame_base + section] =
+        vec4<f32>(transported_x, resolved_t);
+      previous_tangent = tangent;
+      next_local = next_local + 1u;
+    }
+
+    previous_point = current_point;
+    previous_sample_t = sample_t;
+    cumulative = next_cumulative;
+  }
 }
 `;
 
@@ -386,8 +890,8 @@ function globalsData(
   const u32 = new Uint32Array(buffer);
   const f32 = new Float32Array(buffer);
   u32[0] = linkCount;
-  u32[1] = 0;
-  u32[2] = 0;
+  u32[1] = template.octahedronCount / 2;
+  u32[2] = template.octahedronCount + 1;
   u32[3] = 0;
   f32[4] = template.restLength;
   f32[5] = template.halfRestLength;
@@ -400,6 +904,7 @@ class MonolithicLinkWebGpuShapeController
 implements MonolithicLinkWebGpuShape3D {
   readonly parameterBuffer: WebGpuBufferLike;
   readonly gaugeBuffer: WebGpuBufferLike;
+  readonly sectionFrameBuffer: WebGpuBufferLike;
   readonly template: MonolithicLinkSpringTemplate3D;
 
   private readonly topologyBuffer: WebGpuBufferLike;
@@ -417,6 +922,7 @@ implements MonolithicLinkWebGpuShape3D {
     args: {
       parameterBuffer: WebGpuBufferLike;
       gaugeBuffer: WebGpuBufferLike;
+      sectionFrameBuffer: WebGpuBufferLike;
       topologyBuffer: WebGpuBufferLike;
       globalsBuffer: WebGpuBufferLike;
       bindGroup: object;
@@ -427,6 +933,7 @@ implements MonolithicLinkWebGpuShape3D {
     this.template = template;
     this.parameterBuffer = args.parameterBuffer;
     this.gaugeBuffer = args.gaugeBuffer;
+    this.sectionFrameBuffer = args.sectionFrameBuffer;
     this.topologyBuffer = args.topologyBuffer;
     this.globalsBuffer = args.globalsBuffer;
     this.bindGroup = args.bindGroup;
@@ -484,8 +991,12 @@ implements MonolithicLinkWebGpuShape3D {
       sectionCount: this.template.octahedronCount + 1,
       parameterBytes: linkCount * 16,
       gaugeBytes: linkCount * 16,
+      sectionFrameBytes:
+        linkCount * (this.template.octahedronCount + 1) * 16,
       topologyBytes: this.topologyBuffer.size,
-      dynamicStateBytes: linkCount * 32,
+      dynamicStateBytes:
+        linkCount * 32
+        + linkCount * (this.template.octahedronCount + 1) * 16,
     });
   }
 
@@ -494,6 +1005,7 @@ implements MonolithicLinkWebGpuShape3D {
     this.destroyed = true;
     this.parameterBuffer.destroy();
     this.gaugeBuffer.destroy();
+    this.sectionFrameBuffer.destroy();
     this.topologyBuffer.destroy();
     this.globalsBuffer.destroy();
   }
@@ -522,6 +1034,12 @@ export async function createMonolithicLinkWebGpuShape3D(
     device,
     "monolithic-link-roll-gauge",
     compute.topology.linkCount * 16,
+    GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC,
+  );
+  const sectionFrameBuffer = createBuffer(
+    device,
+    "monolithic-link-section-frames",
+    compute.topology.linkCount * (template.octahedronCount + 1) * 16,
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC,
   );
   const topologyBuffer = createBuffer(
@@ -590,6 +1108,11 @@ export async function createMonolithicLinkWebGpuShape3D(
       {
         binding: 4,
         visibility: GPU_SHADER_STAGE_COMPUTE,
+        buffer: { type: "storage" },
+      },
+      {
+        binding: 5,
+        visibility: GPU_SHADER_STAGE_COMPUTE,
         buffer: { type: "uniform" },
       },
     ],
@@ -614,7 +1137,8 @@ export async function createMonolithicLinkWebGpuShape3D(
       { binding: 1, resource: { buffer: topologyBuffer } },
       { binding: 2, resource: { buffer: parameterBuffer } },
       { binding: 3, resource: { buffer: gaugeBuffer } },
-      { binding: 4, resource: { buffer: globalsBuffer } },
+      { binding: 4, resource: { buffer: sectionFrameBuffer } },
+      { binding: 5, resource: { buffer: globalsBuffer } },
     ],
   });
 
@@ -625,6 +1149,7 @@ export async function createMonolithicLinkWebGpuShape3D(
     {
       parameterBuffer,
       gaugeBuffer,
+      sectionFrameBuffer,
       topologyBuffer,
       globalsBuffer,
       bindGroup,
