@@ -173,7 +173,8 @@ for (const entryPoint of [
   "clear_force_torque_main",
   "relation_batch_main",
   "integrate_main",
-  "hinge_jacobi_main",
+  "hinge_star_main",
+  "hinge_apply_main",
 ]) {
   assert(
     RIGID_SECTION_WEBGPU_WGSL.includes(`fn ${entryPoint}`),
@@ -199,6 +200,10 @@ assert(
 assert(
   RIGID_SECTION_WEBGPU_WGSL.includes("let next_q = q_normalize"),
   "GPU integration normalizes every rigid-section quaternion",
+);
+assert(
+  RIGID_SECTION_WEBGPU_WGSL.includes("let gyroscopic = cross(omega_local, angular_momentum_local);"),
+  "GPU angular integration includes Euler gyroscopic coupling",
 );
 assert(
   !/\blayout\s*:/.test(RIGID_SECTION_WEBGPU_WGSL),
@@ -251,20 +256,26 @@ const stats = controller.step();
 same(fake.queue.writes.length, 0, "ordinary rigid-section GPU step has zero queue.writeBuffer calls");
 same(stats.dynamicStateUploadBytes, 0, "ordinary rigid-section GPU step reports zero dynamic upload");
 same(stats.relationBatchDispatches, 2, "exactly two parity relation batches per step");
-same(stats.hingeDispatches, 12, "exactly twelve Jacobi hinge passes per step");
-same(stats.computePasses, 16, "tick has clear + two relation + integrate + twelve hinge passes");
+same(stats.hingeDispatches, 2, "exact star-average hinge solve uses gather + apply");
+same(stats.computePasses, 6, "tick has clear + two relation + integrate + hinge gather/apply");
 
 const sequence = fake.dispatches.map((dispatch) => dispatch.entryPoint);
 same(sequence[0], "clear_force_torque_main", "tick starts by clearing force/torque");
 same(sequence[1], "relation_batch_main", "first parity relation batch");
 same(sequence[2], "relation_batch_main", "second parity relation batch");
 same(sequence[3], "integrate_main", "integration follows complete relation accumulation");
+same(sequence[4], "hinge_star_main", "hinge gather computes one conservative average per target star");
+same(sequence[5], "hinge_apply_main", "hinge apply writes exact shared center/velocity states");
 same(
-  sequence.filter((entry) => entry === "hinge_jacobi_main").length,
-  12,
-  "all twelve hinge iterations are explicit GPU passes",
+  sequence.filter((entry) => entry === "hinge_star_main").length,
+  1,
+  "one hinge-star gather pass per tick",
 );
-same(sequence.at(-1), "hinge_jacobi_main", "tick ends on final main-buffer hinge pass");
+same(
+  sequence.filter((entry) => entry === "hinge_apply_main").length,
+  1,
+  "one hinge-star apply pass per tick",
+);
 
 fake.queue.resetWrites();
 controller.setStiffness(3);
