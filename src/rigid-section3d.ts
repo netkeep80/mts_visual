@@ -105,9 +105,23 @@ export function buildRigidSectionReverseIncidence3D(
   return Object.freeze({ incomingOffsets, incomingRefs });
 }
 
+export interface RigidSectionElasticity3D {
+  readonly longitudinalStiffness: number;
+  readonly transverseStiffness: number;
+  readonly nonlinearity?: number;
+}
+
 export interface RigidSectionPhysicsOptions3D {
   readonly aspectRatio: number;
-  readonly stiffness: number;
+  /** Legacy isotropic alias. When present it supplies both stiffnesses unless overridden. */
+  readonly stiffness?: number;
+  readonly longitudinalStiffness?: number;
+  readonly transverseStiffness?: number;
+  readonly nonlinearity?: number;
+  /** Mass of one geometric octahedral node. One rigid triangular section has 3 * nodeMass. */
+  readonly nodeMass?: number;
+  readonly linearDampingRate?: number;
+  readonly angularDampingRate?: number;
   readonly simulationSpeed?: number;
 }
 
@@ -123,6 +137,75 @@ function requireStiffness(value: number): number {
     throw new Error(`invalid rigid-section stiffness: ${value}`);
   }
   return value;
+}
+
+function requireNonNegative(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`invalid rigid-section ${label}: ${value}`);
+  }
+  return value;
+}
+
+function requirePositive(value: number, label: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`invalid rigid-section ${label}: ${value}`);
+  }
+  return value;
+}
+
+interface ResolvedRigidSectionPhysics3D {
+  readonly longitudinalStiffness: number;
+  readonly transverseStiffness: number;
+  readonly nonlinearity: number;
+  readonly nodeMass: number;
+  readonly linearDampingRate: number;
+  readonly angularDampingRate: number;
+  readonly simulationSpeed: number;
+}
+
+function resolveRigidSectionPhysicsOptions(
+  options: RigidSectionPhysicsOptions3D,
+): ResolvedRigidSectionPhysics3D {
+  const isotropic = options.stiffness;
+  const longitudinalStiffness = requireStiffness(
+    options.longitudinalStiffness ?? isotropic ?? 1,
+  );
+  const transverseStiffness = requireStiffness(
+    options.transverseStiffness ?? isotropic ?? 1,
+  );
+  return Object.freeze({
+    longitudinalStiffness,
+    transverseStiffness,
+    nonlinearity: requireNonNegative(options.nonlinearity ?? 0, "nonlinearity"),
+    nodeMass: requirePositive(options.nodeMass ?? RIGID_SECTION_NODE_MASS, "nodeMass"),
+    linearDampingRate: requireNonNegative(
+      options.linearDampingRate ?? RIGID_SECTION_LINEAR_DAMPING_RATE,
+      "linearDampingRate",
+    ),
+    angularDampingRate: requireNonNegative(
+      options.angularDampingRate ?? RIGID_SECTION_ANGULAR_DAMPING_RATE,
+      "angularDampingRate",
+    ),
+    simulationSpeed: requireSimulationSpeed(options.simulationSpeed ?? 1),
+  });
+}
+
+function resolveElasticity(
+  value: number | RigidSectionElasticity3D,
+): Required<RigidSectionElasticity3D> {
+  if (typeof value === "number") {
+    const stiffness = requireStiffness(value);
+    return Object.freeze({
+      longitudinalStiffness: stiffness,
+      transverseStiffness: stiffness,
+      nonlinearity: 0,
+    });
+  }
+  return Object.freeze({
+    longitudinalStiffness: requireStiffness(value.longitudinalStiffness),
+    transverseStiffness: requireStiffness(value.transverseStiffness),
+    nonlinearity: requireNonNegative(value.nonlinearity ?? 0, "nonlinearity"),
+  });
 }
 
 function requireSimulationSpeed(value: number): number {
@@ -394,9 +477,20 @@ export function evaluateRigidSectionPotential3D(
   lowerOrientation: Quat,
   upperCenter: Vec3,
   upperOrientation: Quat,
-  stiffness: number,
+  elasticity: number | RigidSectionElasticity3D,
 ): RigidSectionPotentialResult3D {
-  const k = requireStiffness(stiffness);
+  const {
+    longitudinalStiffness,
+    transverseStiffness,
+    nonlinearity,
+  } = resolveElasticity(elasticity);
+  const characteristicLengthSquared =
+    template.edgeRestLength * template.edgeRestLength;
+  const longitudinalAxis = rotateRigidSectionVector3D(
+    lowerOrientation,
+    [0, 0, 1],
+  );
+
   let lowerForce: Vec3 = [0, 0, 0];
   let lowerTorque: Vec3 = [0, 0, 0];
   let upperForce: Vec3 = [0, 0, 0];
@@ -419,8 +513,24 @@ export function evaluateRigidSectionPotential3D(
     const actual = pointFromBody(upperCenter, upperOrientation, localUpper);
     const target = pointFromBody(lowerCenter, lowerOrientation, canonicalTarget);
     const delta = subtract3(actual, target);
-    const forceOnUpper = scale3(delta, -k);
-    const forceOnLower = scale3(forceOnUpper, -1);
+    const longitudinal = dot3(delta, longitudinalAxis);
+    const longitudinalDelta = scale3(longitudinalAxis, longitudinal);
+    const transverseDelta = subtract3(delta, longitudinalDelta);
+    const longitudinalSquared = longitudinal * longitudinal;
+    const transverseSquared = dot3(transverseDelta, transverseDelta);
+
+    const longitudinalScale =
+      longitudinalStiffness
+      * (1 + nonlinearity * longitudinalSquared / characteristicLengthSquared);
+    const transverseScale =
+      transverseStiffness
+      * (1 + nonlinearity * transverseSquared / characteristicLengthSquared);
+    const potentialGradient = add3(
+      scale3(longitudinalDelta, longitudinalScale),
+      scale3(transverseDelta, transverseScale),
+    );
+    const forceOnUpper = scale3(potentialGradient, -1);
+    const forceOnLower = potentialGradient;
 
     upperForce = add3(upperForce, forceOnUpper);
     lowerForce = add3(lowerForce, forceOnLower);
@@ -428,11 +538,39 @@ export function evaluateRigidSectionPotential3D(
       upperTorque,
       cross3(subtract3(actual, upperCenter), forceOnUpper),
     );
+
+    // The longitudinal/transverse split rotates with the lower rigid section.
+    // Its orientation derivative contributes an additional conservative torque
+    // beyond the ordinary point-force moment at canonicalTarget.
+    const axisGradientScalar =
+      longitudinal * (longitudinalScale - transverseScale);
+    const axisTorque = scale3(
+      cross3(longitudinalAxis, delta),
+      -axisGradientScalar,
+    );
     lowerTorque = add3(
       lowerTorque,
-      cross3(subtract3(target, lowerCenter), forceOnLower),
+      add3(
+        cross3(subtract3(target, lowerCenter), forceOnLower),
+        axisTorque,
+      ),
     );
-    energy += 0.5 * k * dot3(delta, delta);
+
+    energy +=
+      0.5 * longitudinalStiffness * longitudinalSquared
+      + 0.25
+        * longitudinalStiffness
+        * nonlinearity
+        * longitudinalSquared
+        * longitudinalSquared
+        / characteristicLengthSquared
+      + 0.5 * transverseStiffness * transverseSquared
+      + 0.25
+        * transverseStiffness
+        * nonlinearity
+        * transverseSquared
+        * transverseSquared
+        / characteristicLengthSquared;
   }
 
   return Object.freeze({
@@ -700,14 +838,41 @@ export class RigidSectionPhysics3D {
   readonly reverseIncidence: RigidSectionReverseIncidence3D;
   private readonly hingeScratchCenters: Float32Array;
   private readonly hingeScratchVelocities: Float32Array;
-  stiffness: number;
+  longitudinalStiffness: number;
+  transverseStiffness: number;
+  nonlinearity: number;
+  nodeMass: number;
+  sectionMass: number;
+  inverseSectionMass: number;
+  localInertia: Vec3;
+  inverseLocalInertia: Vec3;
+  linearDampingRate: number;
+  angularDampingRate: number;
   simulationSpeed: number;
 
   constructor(network: VisualLinkNetwork, options: RigidSectionPhysicsOptions3D) {
     this.topology = buildOctahedralLinkTopology3D(network);
     this.template = getRigidSectionTemplate3D(options.aspectRatio);
-    this.stiffness = requireStiffness(options.stiffness);
-    this.simulationSpeed = requireSimulationSpeed(options.simulationSpeed ?? 1);
+    const physics = resolveRigidSectionPhysicsOptions(options);
+    this.longitudinalStiffness = physics.longitudinalStiffness;
+    this.transverseStiffness = physics.transverseStiffness;
+    this.nonlinearity = physics.nonlinearity;
+    this.nodeMass = physics.nodeMass;
+    this.sectionMass = 3 * physics.nodeMass;
+    this.inverseSectionMass = 1 / this.sectionMass;
+    this.localInertia = [
+      this.template.localInertia[0] * physics.nodeMass,
+      this.template.localInertia[1] * physics.nodeMass,
+      this.template.localInertia[2] * physics.nodeMass,
+    ];
+    this.inverseLocalInertia = [
+      this.template.inverseLocalInertia[0] / physics.nodeMass,
+      this.template.inverseLocalInertia[1] / physics.nodeMass,
+      this.template.inverseLocalInertia[2] / physics.nodeMass,
+    ];
+    this.linearDampingRate = physics.linearDampingRate;
+    this.angularDampingRate = physics.angularDampingRate;
+    this.simulationSpeed = physics.simulationSpeed;
 
     const bodyCount = this.topology.linkCount * this.template.sectionCount;
     this.centers = new Float32Array(bodyCount * 3);
@@ -732,6 +897,34 @@ export class RigidSectionPhysics3D {
       );
     }
     this.projectHinges();
+  }
+
+  /** Legacy isotropic stiffness alias. Setting it updates both directions. */
+  get stiffness(): number {
+    return this.longitudinalStiffness;
+  }
+
+  set stiffness(value: number) {
+    const stiffness = requireStiffness(value);
+    this.longitudinalStiffness = stiffness;
+    this.transverseStiffness = stiffness;
+  }
+
+  setNodeMass(value: number): void {
+    const nodeMass = requirePositive(value, "nodeMass");
+    this.nodeMass = nodeMass;
+    this.sectionMass = 3 * nodeMass;
+    this.inverseSectionMass = 1 / this.sectionMass;
+    this.localInertia = [
+      this.template.localInertia[0] * nodeMass,
+      this.template.localInertia[1] * nodeMass,
+      this.template.localInertia[2] * nodeMass,
+    ];
+    this.inverseLocalInertia = [
+      this.template.inverseLocalInertia[0] / nodeMass,
+      this.template.inverseLocalInertia[1] / nodeMass,
+      this.template.inverseLocalInertia[2] / nodeMass,
+    ];
   }
 
   get bodyCount(): number {
@@ -782,7 +975,11 @@ export class RigidSectionPhysics3D {
           readQuat(this.orientations, lower),
           readVec3(this.centers, upper),
           readQuat(this.orientations, upper),
-          this.stiffness,
+          {
+            longitudinalStiffness: this.longitudinalStiffness,
+            transverseStiffness: this.transverseStiffness,
+            nonlinearity: this.nonlinearity,
+          },
         );
         addToVec3(this.forces, lower, result.lowerForce);
         addToVec3(this.forces, upper, result.upperForce);
@@ -808,28 +1005,28 @@ export class RigidSectionPhysics3D {
     const torqueLocal = rotateRigidSectionVector3D(conjugate, torqueWorld);
     const omegaLocal = rotateRigidSectionVector3D(conjugate, omegaWorld);
     const angularMomentumLocal: Vec3 = [
-      omegaLocal[0] * this.template.localInertia[0],
-      omegaLocal[1] * this.template.localInertia[1],
-      omegaLocal[2] * this.template.localInertia[2],
+      omegaLocal[0] * this.localInertia[0],
+      omegaLocal[1] * this.localInertia[1],
+      omegaLocal[2] * this.localInertia[2],
     ];
     const gyroscopic = cross3(omegaLocal, angularMomentumLocal);
     const alphaLocal: Vec3 = [
-      (torqueLocal[0] - gyroscopic[0]) * this.template.inverseLocalInertia[0],
-      (torqueLocal[1] - gyroscopic[1]) * this.template.inverseLocalInertia[1],
-      (torqueLocal[2] - gyroscopic[2]) * this.template.inverseLocalInertia[2],
+      (torqueLocal[0] - gyroscopic[0]) * this.inverseLocalInertia[0],
+      (torqueLocal[1] - gyroscopic[1]) * this.inverseLocalInertia[1],
+      (torqueLocal[2] - gyroscopic[2]) * this.inverseLocalInertia[2],
     ];
     return rotateRigidSectionVector3D(q, alphaLocal);
   }
 
   private integrate(dt: number): void {
-    const linearDamping = Math.exp(-RIGID_SECTION_LINEAR_DAMPING_RATE * dt);
-    const angularDamping = Math.exp(-RIGID_SECTION_ANGULAR_DAMPING_RATE * dt);
+    const linearDamping = Math.exp(-this.linearDampingRate * dt);
+    const angularDamping = Math.exp(-this.angularDampingRate * dt);
 
     for (let body = 0; body < this.bodyCount; body += 1) {
       const velocity = readVec3(this.linearVelocities, body);
       const force = readVec3(this.forces, body);
       const nextVelocity = scale3(
-        add3(velocity, scale3(force, this.template.inverseSectionMass * dt)),
+        add3(velocity, scale3(force, this.inverseSectionMass * dt)),
         linearDamping,
       );
       writeVec3(this.linearVelocities, body, nextVelocity);
@@ -1062,7 +1259,11 @@ export function rigidSectionPotentialEnergy3D(
         readQuat(controller.orientations, lower),
         readVec3(controller.centers, upper),
         readQuat(controller.orientations, upper),
-        controller.stiffness,
+        {
+          longitudinalStiffness: controller.longitudinalStiffness,
+          transverseStiffness: controller.transverseStiffness,
+          nonlinearity: controller.nonlinearity,
+        },
       ).energy;
     }
   }
