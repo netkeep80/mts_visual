@@ -302,11 +302,12 @@ for (const needle of [
   "@group(0) @binding(1) var<storage, read> orientations",
   "fn material_vertex",
   "q_rotate(orientations[body], local_triangle_vertex(corner))",
-  "let radius = 2.0 * scene.geometry.w;",
+  "let radius = 2.0 * scene.geometry.w * scene.viewport.z;",
   "let axis = safe_normalize3(",
   "tip - lower_center",
-  "let height = 3.0 * edge;",
-  "let base_radius = 1.5 * edge;",
+  "let marker_scale = scene.viewport.w;",
+  "let height = 3.0 * edge * marker_scale;",
+  "let base_radius = 1.5 * edge * marker_scale;",
 ]) {
   assert(
     RIGID_SECTION_WEBGPU_RENDER_WGSL.includes(needle),
@@ -430,6 +431,58 @@ const wireStats = renderer.render({
 });
 same(wireStats.drawCalls, 3, "wireframe rigid frame preserves diagnostics draws");
 same(device.draws[0]!.vertexCount, snapshot.wireframeVerticesPerLink, "wireframe draw uses cached line-list topology");
+
+device.resetFrame();
+const noCenterStats = renderer.render({
+  targetView: {},
+  depthView: {},
+  viewProjection: identity,
+  width: 1280,
+  height: 720,
+  showCenterMarkers: false,
+  showEndCones: true,
+  centerMarkerScale: 0.25,
+  endConeScale: 8,
+});
+same(noCenterStats.drawCalls, 2, "hidden CENTER layer skips its instanced draw call");
+same(noCenterStats.centerVertexInvocations, 0, "hidden CENTER layer reports zero CENTER vertex invocations");
+same(noCenterStats.arrowVertexInvocations, 36, "visible END layer still renders both Link instances");
+same(device.draws.length, 2, "device sees surface + END only when CENTER is hidden");
+same(device.draws[1]!.pipeline, "rigid-section-webgpu-arrow-pipeline", "remaining diagnostic draw is END cone");
+
+device.resetFrame();
+const noMarkersStats = renderer.render({
+  targetView: {},
+  depthView: {},
+  viewProjection: identity,
+  width: 1280,
+  height: 720,
+  showCenterMarkers: false,
+  showEndCones: false,
+  centerMarkerScale: 8,
+  endConeScale: 0.25,
+});
+same(noMarkersStats.drawCalls, 1, "hiding both marker layers leaves only material draw");
+same(noMarkersStats.centerVertexInvocations, 0, "hidden CENTER layer performs no marker work");
+same(noMarkersStats.arrowVertexInvocations, 0, "hidden END layer performs no marker work");
+same(device.draws.length, 1, "device sees exactly one draw when both markers are disabled");
+
+try {
+  renderer.render({
+    targetView: {},
+    depthView: {},
+    viewProjection: identity,
+    width: 1280,
+    height: 720,
+    centerMarkerScale: 0,
+  });
+  throw new Error("zero CENTER scale should reject");
+} catch (error) {
+  assert(
+    error instanceof Error && /centerMarkerScale/.test(error.message),
+    "CENTER scale must remain positive",
+  );
+}
 
 const centerBeforeDestroy = compute.centerBuffer as FakeBuffer;
 const orientationBeforeDestroy = compute.orientationBuffer as FakeBuffer;
