@@ -113,6 +113,58 @@ const rotated = evaluateRigidSectionPotential3D(
 assert(rotated.energy > 0, "relative rotation stores potential energy");
 assert(Math.abs(rotated.upperTorque[0]) > 0.05, "relative rotation creates restoring torque");
 
+const gradientEpsilon = 1e-4;
+const energyAtTranslatedX = (x: number): number => evaluateRigidSectionPotential3D(
+  template,
+  lowerCenter,
+  identity,
+  [x, 0, template.moduleHeight],
+  restOrientation,
+  5,
+).energy;
+const numericDx = (
+  energyAtTranslatedX(0.1 + gradientEpsilon)
+  - energyAtTranslatedX(0.1 - gradientEpsilon)
+) / (2 * gradientEpsilon);
+approx(
+  translated.upperForce[0],
+  -numericDx,
+  "translation force is the negative finite-difference energy gradient",
+  2e-3,
+);
+
+const worldRotated = (angle: number): Quat => multiplyRigidSectionQuaternions3D(
+  qx(angle),
+  restOrientation,
+);
+const rotationalEnergy = (angle: number): number => evaluateRigidSectionPotential3D(
+  template,
+  lowerCenter,
+  identity,
+  upperCenter,
+  worldRotated(angle),
+  5,
+).energy;
+const gradientAngle = 0.15;
+const rotationalAtGradient = evaluateRigidSectionPotential3D(
+  template,
+  lowerCenter,
+  identity,
+  upperCenter,
+  worldRotated(gradientAngle),
+  5,
+);
+const numericDTheta = (
+  rotationalEnergy(gradientAngle + gradientEpsilon)
+  - rotationalEnergy(gradientAngle - gradientEpsilon)
+) / (2 * gradientEpsilon);
+approx(
+  rotationalAtGradient.upperTorque[0],
+  -numericDTheta,
+  "world-X restoring torque is the negative rotational energy gradient",
+  3e-3,
+);
+
 const root: VisualLinkNetwork = {
   links: [{ key: "R", startKey: "R", endKey: "R" }],
 };
@@ -178,6 +230,45 @@ same(
 );
 
 const initialCenters = basis.topology.keys.map((_, link) => basis.semanticCenter(link));
+
+for (let settle = 0; settle < 300; settle += 1) basis.step();
+const settledEnergy = rigidSectionPotentialEnergy3D(basis);
+const oIndex = basis.topology.keys.indexOf("O");
+assert(oIndex >= 0, "perturbation witness resolves O");
+const perturbedBody = basis.sectionBodyIndex(oIndex, 4);
+const perturbedOffset = perturbedBody * 3;
+basis.centers[perturbedOffset] = basis.centers[perturbedOffset]! + 0.35;
+basis.centers[perturbedOffset + 1] = basis.centers[perturbedOffset + 1]! - 0.22;
+basis.centers[perturbedOffset + 2] = basis.centers[perturbedOffset + 2]! + 0.18;
+const qOffset = perturbedBody * 4;
+const perturbedOrientation = multiplyRigidSectionQuaternions3D(
+  qx(0.18),
+  [
+    basis.orientations[qOffset]!,
+    basis.orientations[qOffset + 1]!,
+    basis.orientations[qOffset + 2]!,
+    basis.orientations[qOffset + 3]!,
+  ],
+);
+basis.orientations[qOffset] = perturbedOrientation[0];
+basis.orientations[qOffset + 1] = perturbedOrientation[1];
+basis.orientations[qOffset + 2] = perturbedOrientation[2];
+basis.orientations[qOffset + 3] = perturbedOrientation[3];
+basis.linearVelocities.fill(0);
+basis.angularVelocities.fill(0);
+
+const perturbedEnergy = rigidSectionPotentialEnergy3D(basis);
+assert(
+  perturbedEnergy > settledEnergy + 0.05,
+  `deterministic section perturbation raises potential energy: settled=${settledEnergy} perturbed=${perturbedEnergy}`,
+);
+for (let relax = 0; relax < 900; relax += 1) basis.step();
+const relaxedEnergy = rigidSectionPotentialEnergy3D(basis);
+assert(
+  relaxedEnergy < perturbedEnergy * 0.75,
+  `damped rigid-section dynamics removes perturbation energy: perturbed=${perturbedEnergy} relaxed=${relaxedEnergy}`,
+);
+
 for (let step = 0; step < 400; step += 1) basis.step();
 basis.assertFiniteState();
 assert(rigidSectionHingeError3D(basis) < 5e-4, "ROCLU hinges remain bounded after integration");
@@ -209,7 +300,48 @@ for (let body = 0; body < basis.bodyCount; body += 1) {
   );
 }
 
+const largeLinkCount = 10_000;
+const largeNetwork: VisualLinkNetwork = {
+  links: Array.from({ length: largeLinkCount }, (_, index) => {
+    const key = `S${String(index).padStart(5, "0")}`;
+    return { key, startKey: key, endKey: key };
+  }),
+};
+const large = createRigidSectionPhysics3D(largeNetwork, {
+  aspectRatio: Math.SQRT2,
+  stiffness: 1,
+  simulationSpeed: 0,
+});
+same(large.template.octahedronCount, 2, "large witness uses minimum even two-octahedron Link");
+same(large.bodyCount, largeLinkCount * 3, "large witness body storage grows linearly");
+const largeEvaluation = large.evaluateForces();
+same(
+  largeEvaluation.relationPointEvaluations,
+  largeLinkCount * 2 * 3,
+  "large relation evaluation count is exactly O(N)",
+);
+same(
+  largeEvaluation.hingeConstraintEvaluations,
+  largeLinkCount * 2 * 12,
+  "large hinge evaluation count is exactly O(N)",
+);
+same(
+  largeEvaluation.pairwiseSemanticLinkEvaluations,
+  0,
+  "large fixture still performs zero semantic all-pairs evaluations",
+);
+
+same(template.sectionMass, getRigidSectionTemplate3D(2 * Math.SQRT2).sectionMass,
+  "section mass is a canonical profile constant, not a per-Link tunable parameter");
+same(template.localInertia.join(","), getRigidSectionTemplate3D(2 * Math.SQRT2).localInertia.join(","),
+  "section inertia comes from canonical triangle geometry, not a hidden stiffness parameter");
+
 console.log(
-  `[v0.5 P1 rigid sections] PASS R-energy=${rootInitialEnergy.toFixed(6)} `
+  `[v0.5 P2 rigid sections] PASS R-energy=${rootInitialEnergy.toFixed(6)} `
   + `ROCLU-bodies=${basis.bodyCount} relationPoints=${evaluations.relationPointEvaluations}`,
+);
+console.log(
+  `[v0.5 P2 contracts] PASS numericDx=${numericDx.toFixed(6)} numericDTheta=${numericDTheta.toFixed(6)} `
+  + `settled=${settledEnergy.toFixed(6)} perturbed=${perturbedEnergy.toFixed(6)} relaxed=${relaxedEnergy.toFixed(6)} `
+  + `largeRelationPoints=${largeEvaluation.relationPointEvaluations}`,
 );
