@@ -73,7 +73,7 @@
     </div>
     <table>
       <thead>
-        <tr><th>Сценарий</th><th>Статус</th><th>Шаги</th><th>Допуск</th><th>max Δпозиции</th><th>max Δскорости</th></tr>
+        <tr><th>Сценарий</th><th>Статус</th><th>Шаги</th><th>Допуск</th><th>макс. Δпозиции</th><th>макс. Δскорости</th></tr>
       </thead>
       <tbody id="diff-body"></tbody>
     </table>
@@ -82,13 +82,13 @@
   <section class="card section">
     <div class="toolbar">
       <h2 style="margin-right:auto">v0.5 — дифференциальная проверка жёстких секций CPU ↔ GPU</h2>
-      <span class="muted">Дифференциальная проверка P3 · live-рендерер ниже использует то же жёсткое состояние v0.5</span>
+      <span class="muted">Дифференциальная проверка P3 · рендерер реального времени ниже использует то же жёсткое состояние v0.5</span>
     </div>
     <table>
       <thead>
         <tr>
           <th>Сценарий</th><th>Статус</th><th>Шаги</th><th>Допуск</th>
-          <th>max Δцентра</th><th>max Δкватерниона</th><th>max Δv</th><th>max Δω</th>
+          <th>макс. Δцентра</th><th>макс. Δкватерниона</th><th>макс. Δv</th><th>макс. Δω</th>
         </tr>
       </thead>
       <tbody id="rigid-diff-body"></tbody>
@@ -104,7 +104,7 @@
       <thead>
         <tr>
           <th>Сценарий</th><th>Статус</th><th>Шаги</th><th>Допуск</th>
-          <th>max Δцентра</th><th>max Δскорости</th>
+          <th>макс. Δцентра</th><th>макс. Δскорости</th>
         </tr>
       </thead>
       <tbody id="monolithic-diff-body"></tbody>
@@ -255,9 +255,9 @@
         </div>
         <div class="camera-hint">Мышь: наведите на два центральных октаэдра, чтобы показать зелёный каркасный икосаэдр L2 · перетаскивание ЛКМ за маркер = перемещение семантического CENTER · ЛКМ в другом месте = вращение камеры · колесо = масштаб · ПКМ или Shift+ЛКМ = панорамирование</div>
         <div class="grid" style="margin-top:12px">
-          <div><span class="muted">Вычисление</span><div id="render-compute" class="value">pending</div></div>
-          <div><span class="muted">Топология</span><div id="render-topology" class="value">pending</div></div>
-          <div><span class="muted">Zero-copy</span><div id="render-zero-copy" class="value">pending</div></div>
+          <div><span class="muted">Вычисление</span><div id="render-compute" class="value">ожидание</div></div>
+          <div><span class="muted">Топология</span><div id="render-topology" class="value">ожидание</div></div>
+          <div><span class="muted">Zero-copy</span><div id="render-zero-copy" class="value">ожидание</div></div>
           <div><span class="muted">Кадры / шаги</span><div id="render-frames" class="value">0 / 0</div></div>
         </div>
       </div>
