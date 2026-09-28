@@ -81,6 +81,7 @@ interface DrawRecord {
   readonly pipeline: string;
   readonly vertexCount: number;
   readonly instanceCount: number;
+  readonly firstInstance: number;
 }
 
 class FakeRenderDevice implements WebGpuRenderDeviceLike {
@@ -93,6 +94,8 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
   readonly draws: DrawRecord[] = [];
   readonly pipelineDescriptors: {
     readonly label: string;
+    readonly fragmentEntryPoint: string;
+    readonly primitiveTopology: string | null;
     readonly depthStencil?: {
       readonly depthWriteEnabled?: boolean;
       readonly depthCompare?: string;
@@ -145,7 +148,9 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
       readonly entryPoint: string;
       readonly targets: readonly { readonly format: string }[];
     };
-    readonly primitive?: object;
+    readonly primitive?: {
+      readonly topology?: string;
+    };
     readonly depthStencil?: {
       readonly depthWriteEnabled?: boolean;
       readonly depthCompare?: string;
@@ -153,6 +158,8 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
   }): Promise<{ readonly label?: string }> {
     this.pipelineDescriptors.push({
       label: descriptor.label ?? "",
+      fragmentEntryPoint: descriptor.fragment.entryPoint,
+      primitiveTopology: descriptor.primitive?.topology ?? null,
       ...(descriptor.depthStencil === undefined
         ? {}
         : { depthStencil: descriptor.depthStencil }),
@@ -185,11 +192,17 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
             pipeline = value.label ?? "";
           },
           setBindGroup(_index: number, _group: object) {},
-          draw(vertexCount: number, instanceCount = 1) {
+          draw(
+            vertexCount: number,
+            instanceCount = 1,
+            _firstVertex = 0,
+            firstInstance = 0,
+          ) {
             device.draws.push({
               pipeline,
               vertexCount,
               instanceCount,
+              firstInstance,
             });
           },
           end() {},
@@ -362,6 +375,16 @@ for (const needle of [
   "fn self_sample",
   "let center = semantic_centers[instance_index].xyz;",
   "let tip = section_center(instance_index, end_section);",
+  "fn link_gradient(t_value: f32)",
+  "return vec3<f32>(1.0 - u, u, 0.0);",
+  "return vec3<f32>(0.0, 1.0 - u, u);",
+  "fn center_ico_child_vertex",
+  "let child_triangle = line_index / 3u;",
+  "let radius = 2.0 * scene.geometry.x * scene.viewport.z;",
+  "let base_radius = 2.0 * scene.geometry.x * marker_scale;",
+  "let height = 8.0 * scene.geometry.x * marker_scale;",
+  "fn fragment_surface",
+  "if (scene.shape.y < 0.5)",
 ]) {
   assert(
     MONOLITHIC_LINK_WEBGPU_RENDER_WGSL.includes(needle),
@@ -428,8 +451,36 @@ const surfacePipeline = device.pipelineDescriptors.find(
 const centerPipeline = device.pipelineDescriptors.find(
   (entry) => entry.label === "monolithic-link-center-pipeline",
 );
+const arrowPipeline = device.pipelineDescriptors.find(
+  (entry) => entry.label === "monolithic-link-arrow-pipeline",
+);
+const wireframePipeline = device.pipelineDescriptors.find(
+  (entry) => entry.label === "monolithic-link-wireframe-pipeline",
+);
 assert(surfacePipeline !== undefined, "surface pipeline captured");
 assert(centerPipeline !== undefined, "CENTER pipeline captured");
+assert(arrowPipeline !== undefined, "END arrow pipeline captured");
+assert(wireframePipeline !== undefined, "wireframe pipeline captured");
+same(
+  surfacePipeline.fragmentEntryPoint,
+  "fragment_surface",
+  "filled material uses normal-aware fragment shading",
+);
+same(
+  wireframePipeline.fragmentEntryPoint,
+  "fragment_unlit",
+  "wireframe material remains unlit",
+);
+same(
+  centerPipeline.primitiveTopology,
+  "line-list",
+  "CENTER L2 icosahedron is wireframe-only",
+);
+same(
+  arrowPipeline.primitiveTopology,
+  "line-list",
+  "END cone is wireframe-only",
+);
 same(
   surfacePipeline.depthStencil?.depthWriteEnabled,
   true,
@@ -475,16 +526,36 @@ const stats = renderer.render({
   width: 1280,
   height: 720,
   wireframe: false,
+  hoveredCenterLink: 1,
+  smoothNormals: false,
 });
 
-same(stats.drawCalls, 3, "filled frame uses material + CENTER + END");
+same(stats.drawCalls, 3, "filled frame uses material + hovered CENTER + END");
 same(stats.dynamicStateUploadBytes, 0, "frame uploads no dynamic state");
 same(stats.bufferCopies, 0, "frame performs no buffer copies");
 same(stats.readbacks, 0, "frame performs no readbacks");
 same(device.draws.length, 3, "device sees exactly three draws");
-same(device.draws[0]!.instanceCount, 2, "draws are instanced per Link");
-same(device.draws[1]!.vertexCount, 60, "CENTER is solid icosahedron");
-same(device.draws[2]!.vertexCount, 18, "END is six-triangle cone");
+same(device.draws[0]!.instanceCount, 2, "material draw is instanced per Link");
+same(
+  device.draws[1]!.vertexCount,
+  80 * 3 * 2,
+  "CENTER is L2 wireframe icosahedron with 80 subdivided triangles",
+);
+same(
+  device.draws[1]!.instanceCount,
+  1,
+  "only the hovered CENTER handle is drawn",
+);
+same(
+  device.draws[1]!.firstInstance,
+  1,
+  "hovered CENTER draw addresses the selected semantic Link",
+);
+same(
+  device.draws[2]!.vertexCount,
+  12 * 4,
+  "END is a 12-segment wireframe cone",
+);
 same(device.queue.writes.length, 1, "frame writes only renderer uniforms");
 same(
   device.queue.writes[0]!.label,
@@ -507,6 +578,7 @@ const noMarkers = renderer.render({
   wireframe: true,
   showCenterMarkers: false,
   showEndCones: false,
+  hoveredCenterLink: 0,
   centerMarkerScale: 2,
   endConeScale: 3,
 });
@@ -514,6 +586,29 @@ same(noMarkers.drawCalls, 1, "hidden marker layers leave one material draw");
 same(noMarkers.centerVertexInvocations, 0, "hidden CENTER performs no work");
 same(noMarkers.arrowVertexInvocations, 0, "hidden END performs no work");
 same(device.draws.length, 1, "wireframe-only frame is one draw");
+
+device.resetFrame();
+const noHover = renderer.render({
+  targetView: {},
+  depthView: {},
+  viewProjection: identity,
+  width: 1280,
+  height: 720,
+  wireframe: false,
+  showCenterMarkers: true,
+  showEndCones: false,
+  hoveredCenterLink: -1,
+});
+same(
+  noHover.drawCalls,
+  1,
+  "CENTER overlay is absent until the two-octa neighborhood is hovered",
+);
+same(
+  noHover.centerVertexInvocations,
+  0,
+  "non-hovered CENTER performs no overlay work",
+);
 
 const snapshot = renderer.snapshot();
 same(snapshot.sharedSemanticCenterBuffer, true, "snapshot proves semantic centers are shared");
