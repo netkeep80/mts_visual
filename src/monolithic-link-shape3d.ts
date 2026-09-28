@@ -6,6 +6,7 @@ import type {
 
 const EPSILON = 1e-9;
 const TWO_PI = 2 * Math.PI;
+const SELF_HINGE_OPENING = Math.PI;
 const ARC_INTEGRATION_STEPS = 96;
 const ARC_BISECTION_STEPS = 40;
 const ROLL_GAUGE_WEAK_BEND_SINE = 0.015;
@@ -341,8 +342,11 @@ function selfLoopBasePoint(u: number): MonolithicLinkVec3 {
   const theta = TWO_PI * u;
   const sinTheta = Math.sin(theta);
   const oneMinusCos = 1 - Math.cos(theta);
+  // Positional self-incidence is a hinge, not a welded tangent. This term
+  // vanishes at u=0/1 while contributing opposite terminal derivatives.
+  const hingeOpening = SELF_HINGE_OPENING * u * (1 - u);
   return [
-    0.60 * oneMinusCos * oneMinusCos,
+    0.60 * oneMinusCos * oneMinusCos + hingeOpening,
     0.35 * sinTheta * oneMinusCos,
     sinTheta,
   ];
@@ -355,7 +359,8 @@ function selfLoopBaseDerivative(u: number): MonolithicLinkVec3 {
   const oneMinusCos = 1 - cosTheta;
   const dTheta = TWO_PI;
   return [
-    1.20 * oneMinusCos * sinTheta * dTheta,
+    1.20 * oneMinusCos * sinTheta * dTheta
+      + SELF_HINGE_OPENING * (1 - 2 * u),
     0.35 * (cosTheta * oneMinusCos + sinTheta * sinTheta) * dTheta,
     cosTheta * dTheta,
   ];
