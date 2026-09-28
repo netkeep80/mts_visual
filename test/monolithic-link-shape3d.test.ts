@@ -527,9 +527,21 @@ assert(
   selfTurnStd > 0.01,
   "self carrier is deliberately non-circular rather than a constant-curvature ring",
 );
-assert(
-  polylineLength(self.sectionCenters, 0, self.centerSection) > h * 0.98,
-  "self first half retains finite rest-scale material extent",
+approx(
+  polylineLength(self.sectionCenters, 0, self.centerSection),
+  h,
+  "self first half preserves normalized rest arc length",
+  h * 0.02,
+);
+approx(
+  polylineLength(
+    self.sectionCenters,
+    self.centerSection,
+    self.sectionCount - 1,
+  ),
+  h,
+  "self second half preserves normalized rest arc length",
+  h * 0.02,
 );
 
 // Same physics tick / same shape rebuild: changing CENTER changes derived
