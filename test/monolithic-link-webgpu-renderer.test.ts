@@ -387,6 +387,8 @@ for (const needle of [
   "shared_direction = first_direction;",
   "fn ordinary_sample",
   "fn self_sample",
+  "let hinge_opening = PI * t * (1.0 - t);",
+  "+ PI * (1.0 - 2.0 * t),",
   "let center = semantic_centers[instance_index].xyz;",
   "let tip = section_center(instance_index, end_section);",
   "fn link_gradient(t_value: f32)",

@@ -1,4 +1,7 @@
 import {
+  MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH,
+} from "../monolithic-link-shape3d.js";
+import {
   getMonolithicLinkSpringTemplate3D,
   type MonolithicLinkSpringTemplate3D,
 } from "../monolithic-link-spring3d.js";
@@ -363,8 +366,9 @@ fn self_loop_base_point(t: f32) -> vec3<f32> {
   let theta = 6.283185307179586 * t;
   let sine = sin(theta);
   let one_minus_cos = 1.0 - cos(theta);
+  let hinge_opening = 3.141592653589793 * t * (1.0 - t);
   return vec3<f32>(
-    0.60 * one_minus_cos * one_minus_cos,
+    0.60 * one_minus_cos * one_minus_cos + hinge_opening,
     0.35 * sine * one_minus_cos,
     sine,
   );
@@ -376,7 +380,8 @@ fn self_loop_base_derivative(t: f32) -> vec3<f32> {
   let cosine = cos(theta);
   let one_minus_cos = 1.0 - cosine;
   return vec3<f32>(
-    1.20 * one_minus_cos * sine * 6.283185307179586,
+    1.20 * one_minus_cos * sine * 6.283185307179586
+      + 3.141592653589793 * (1.0 - 2.0 * t),
     0.35 * (cosine * one_minus_cos + sine * sine) * 6.283185307179586,
     cosine * 6.283185307179586,
   );
@@ -390,7 +395,7 @@ fn self_point(
 ) -> vec3<f32> {
   let frame = deterministic_frame(link);
   let base = self_loop_base_point(t);
-  let scale = globals.geometry.y / 7.511568580362938;
+  let scale = globals.geometry.y / ${MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH};
   return anchor
     + frame.z * (scale * base.z)
     + frame.x * (lobe_sign * scale * base.x)
@@ -404,7 +409,7 @@ fn self_tangent(
 ) -> vec3<f32> {
   let frame = deterministic_frame(link);
   let base = self_loop_base_derivative(t);
-  let scale = globals.geometry.y / 7.511568580362938;
+  let scale = globals.geometry.y / ${MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH};
   return
     frame.z * (scale * base.z)
     + frame.x * (lobe_sign * scale * base.x)

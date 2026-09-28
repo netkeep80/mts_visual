@@ -458,6 +458,45 @@ approx(
   "double-self END aliases CENTER exactly",
   1e-6,
 );
+
+const firstSelfDeparture = normalized(
+  subtract3(
+    read3(self.sectionCenters, 1),
+    read3(self.sectionCenters, 0),
+  ),
+);
+const firstSelfArrival = normalized(
+  subtract3(
+    read3(self.sectionCenters, self.centerSection),
+    read3(self.sectionCenters, self.centerSection - 1),
+  ),
+);
+assert(
+  Math.abs(dot3(firstSelfDeparture, firstSelfArrival)) < 0.8,
+  "first self half closes through a positional hinge rather than one welded tangent axis",
+);
+
+const secondSelfDeparture = normalized(
+  subtract3(
+    read3(self.sectionCenters, self.centerSection + 1),
+    read3(self.sectionCenters, self.centerSection),
+  ),
+);
+const secondSelfArrival = normalized(
+  subtract3(
+    read3(self.sectionCenters, self.sectionCount - 1),
+    read3(self.sectionCenters, self.sectionCount - 2),
+  ),
+);
+assert(
+  Math.abs(dot3(secondSelfDeparture, secondSelfArrival)) < 0.8,
+  "second self half closes through a positional hinge rather than one welded tangent axis",
+);
+assert(
+  Math.abs(dot3(firstSelfDeparture, secondSelfDeparture)) < 0.8,
+  "double-self lobes leave the shared semantic anchor on different axes",
+);
+
 const selfTurns: number[] = [];
 for (let section = 1; section < self.centerSection; section += 1) {
   const before = normalized(
@@ -488,9 +527,21 @@ assert(
   selfTurnStd > 0.01,
   "self carrier is deliberately non-circular rather than a constant-curvature ring",
 );
-assert(
-  polylineLength(self.sectionCenters, 0, self.centerSection) > h * 0.98,
-  "self first half retains finite rest-scale material extent",
+approx(
+  polylineLength(self.sectionCenters, 0, self.centerSection),
+  h,
+  "self first half preserves normalized rest arc length",
+  h * 0.02,
+);
+approx(
+  polylineLength(
+    self.sectionCenters,
+    self.centerSection,
+    self.sectionCount - 1,
+  ),
+  h,
+  "self second half preserves normalized rest arc length",
+  h * 0.02,
 );
 
 // Same physics tick / same shape rebuild: changing CENTER changes derived
