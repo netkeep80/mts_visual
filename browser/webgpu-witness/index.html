@@ -202,9 +202,9 @@
         <div class="physics-control">
           <label for="simulation-speed">
             <span>Simulation speed</span>
-            <output id="simulation-speed-value">1.00×</output>
+            <output id="simulation-speed-value">10.00×</output>
           </label>
-          <input id="simulation-speed" type="range" min="0" max="8" step="0.05" value="1">
+          <input id="simulation-speed" type="range" min="0" max="20" step="0.05" value="10">
         </div>
 
         <div class="physics-control">
@@ -224,12 +224,19 @@
         </div>
 
         <div class="physics-control">
+          <div class="muted" style="margin-bottom:6px">Global rendering</div>
+          <div class="inline-checks">
+            <label><input id="global-wireframe" type="checkbox" checked> Wireframe</label>
+            <label><input id="global-smooth-normals" type="checkbox" checked> Smooth normals</label>
+          </div>
+        </div>
+
+        <div class="physics-control">
+          <div class="muted" style="margin-bottom:6px">Overlays / camera</div>
           <div class="inline-checks">
             <label><input id="show-center-markers" type="checkbox" checked> CENTER hover</label>
             <label><input id="show-end-cones" type="checkbox" checked> END cones</label>
-            <label><input id="smooth-normals" type="checkbox" checked> Smooth normals</label>
             <label><input id="auto-rotate" type="checkbox"> Auto rotate</label>
-            <label><input id="wireframe" type="checkbox" checked> Wireframe</label>
           </div>
         </div>
 
