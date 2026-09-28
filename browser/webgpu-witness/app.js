@@ -63,13 +63,38 @@ function log(message) {
   ui.log.scrollTop = ui.log.scrollHeight;
 }
 
+const UI_STATUS = Object.freeze({
+  pending: "ожидание",
+  running: "выполняется…",
+  pass: "ПРОЙДЕНО",
+  stale: "УСТАРЕЛО",
+  unavailable: "НЕДОСТУПНО",
+  failed: "НЕ ПРОЙДЕНО",
+  error: "ОШИБКА",
+});
+
+function fixtureDisplayName(name) {
+  switch (name) {
+    case "root-1-R": return "корень 1 · R";
+    case "root-2-RO": return "корень 2 · R + O";
+    case "root-3-ROC": return "корень 3 · R + O + C";
+    case "root-4-ROCL": return "корень 4 · R + O + C + L";
+    case "root-5-ROCLU": return "корень 5 · R + O + C + L + U";
+    case "ordinary": return "обычная связь";
+    case "START-self": return "самозамыкание START";
+    case "END-self": return "самозамыкание END";
+    case "double-self": return "двойное самозамыкание";
+    default: return name;
+  }
+}
+
 function diagnosticLogText() {
   const header = [
-    "mts_visual WebGPU witness diagnostic log",
-    `version: ${buildInfo.version}`,
-    `build SHA: ${buildInfo.mainSha}`,
-    `page: ${location.href}`,
-    `user agent: ${navigator.userAgent}`,
+    "mts_visual — диагностический журнал WebGPU-стенда",
+    `версия: ${buildInfo.version}`,
+    `SHA сборки: ${buildInfo.mainSha}`,
+    `страница: ${location.href}`,
+    `агент пользователя: ${navigator.userAgent}`,
     "",
   ];
   return header.join("\n") + ui.log.textContent;
@@ -89,11 +114,11 @@ async function copyDiagnosticLog() {
     textarea.select();
     const copied = document.execCommand("copy");
     textarea.remove();
-    if (!copied) throw new Error("clipboard copy command failed");
+    if (!copied) throw new Error("не удалось скопировать журнал в буфер обмена");
   }
 
   const original = ui.copyLog.textContent;
-  ui.copyLog.textContent = "Copied";
+  ui.copyLog.textContent = "Скопировано";
   setTimeout(() => {
     ui.copyLog.textContent = original;
   }, 1200);
@@ -126,7 +151,7 @@ const [core, webgpu, buildInfo] = await Promise.all([
   import("./vendor/mts-visual-core.bundle.js"),
   import("./vendor/mts-visual-webgpu.bundle.js"),
   fetch("./build-info.json", { cache: "no-store" }).then((response) => {
-    if (!response.ok) throw new Error(`build-info HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`ошибка загрузки сведений о сборке: HTTP ${response.status}`);
     return response.json();
   }),
 ]);
@@ -137,7 +162,7 @@ for (const exportName of [
   "createRigidSectionWebGpuCompute3D",
 ]) {
   if (typeof webgpu[exportName] !== "function") {
-    throw new Error(`published WebGPU bundle missing export: ${exportName}`);
+    throw new Error(`опубликованный WebGPU-пакет не содержит экспорт: ${exportName}`);
   }
 }
 
@@ -153,7 +178,7 @@ void legacyOctahedralZeroCopyInvariant;
 const baselineAspectRatio = core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO;
 const baselineOctahedra = core.OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA;
 if (!Number.isFinite(baselineAspectRatio) || baselineOctahedra !== 20) {
-  throw new Error("published bundle does not expose accepted 20-octahedron baseline");
+  throw new Error("опубликованный пакет не содержит принятую базовую геометрию на 20 октаэдров");
 }
 
 setStatus(
@@ -163,7 +188,7 @@ setStatus(
 );
 setStatus(
   ui.baseline,
-  `${baselineOctahedra} octa · aspect ${baselineAspectRatio.toFixed(4)}`,
+  `${baselineOctahedra} октаэдров · аспект ${baselineAspectRatio.toFixed(4)}`,
   "ok",
 );
 
@@ -172,7 +197,7 @@ const LINK_OCTAHEDRON_CHOICES = Object.freeze([16, 32, 64, 128, 256]);
 function controlNumber(element, label, minimum, maximum) {
   const value = Number(element.value);
   if (!Number.isFinite(value) || value < minimum || value > maximum) {
-    throw new Error(`invalid ${label} control value: ${element.value}`);
+    throw new Error(`недопустимое значение «${label}»: ${element.value}`);
   }
   return value;
 }
@@ -180,21 +205,21 @@ function controlNumber(element, label, minimum, maximum) {
 function selectedPhysics() {
   const octahedra = Number(ui.lengthOcta.value);
   if (!LINK_OCTAHEDRON_CHOICES.includes(octahedra)) {
-    throw new Error(`invalid octahedron control value: ${ui.lengthOcta.value}`);
+    throw new Error(`недопустимое число октаэдров: ${ui.lengthOcta.value}`);
   }
 
-  const nodeMass = controlNumber(ui.nodeMass, "node mass", 0.05, 20);
+  const nodeMass = controlNumber(ui.nodeMass, "масса CENTER", 0.05, 20);
   const longitudinalStiffness =
-    controlNumber(ui.longitudinalStiffness, "longitudinal stiffness", 0, 100);
+    controlNumber(ui.longitudinalStiffness, "жёсткость растяжения", 0, 100);
   const transverseStiffness =
-    controlNumber(ui.transverseStiffness, "transverse stiffness", 0, 100);
-  const nonlinearity = controlNumber(ui.nonlinearity, "nonlinearity", 0, 50);
+    controlNumber(ui.transverseStiffness, "жёсткость выпрямления", 0, 100);
+  const nonlinearity = controlNumber(ui.nonlinearity, "нелинейность", 0, 50);
   const linearDampingRate =
-    controlNumber(ui.linearDamping, "linear damping", 0, 10);
+    controlNumber(ui.linearDamping, "демпфирование CENTER", 0, 10);
   const angularDampingRate =
-    controlNumber(ui.angularDamping, "angular damping", 0, 10);
+    controlNumber(ui.angularDamping, "угловое демпфирование", 0, 10);
   const simulationSpeed =
-    controlNumber(ui.simulationSpeed, "simulation speed", 0, 20);
+    controlNumber(ui.simulationSpeed, "скорость симуляции", 0, 20);
 
   return Object.freeze({
     octahedra,
@@ -237,7 +262,7 @@ function monolithicPhysicsSignature(physics = selectedPhysics()) {
 function refreshPhysicsControlLabels() {
   const physics = selectedPhysics();
   ui.lengthValue.value =
-    `${physics.octahedra} octa · aspect ${physics.aspectRatio.toFixed(3)}`;
+    `${physics.octahedra} октаэдров · аспект ${physics.aspectRatio.toFixed(3)}`;
   ui.nodeMassValue.value = physics.nodeMass.toFixed(2);
   ui.longitudinalStiffnessValue.value =
     physics.longitudinalStiffness.toFixed(2);
@@ -261,9 +286,9 @@ function selectedMarkerControls() {
     showCenterMarkers: ui.showCenterMarkers.checked,
     showEndCones: ui.showEndCones.checked,
     centerMarkerScale:
-      controlNumber(ui.centerMarkerScale, "CENTER size", 0.25, 8),
+      controlNumber(ui.centerMarkerScale, "размер маркера CENTER", 0.25, 8),
     endConeScale:
-      controlNumber(ui.endConeScale, "END cone size", 0.25, 8),
+      controlNumber(ui.endConeScale, "размер конуса END", 0.25, 8),
   });
 }
 
@@ -286,7 +311,7 @@ const ROOT_BASIS = Object.freeze([
 
 function rootBasisNetwork(count) {
   if (!Number.isSafeInteger(count) || count < 1 || count > ROOT_BASIS.length) {
-    throw new Error(`invalid root-basis stage: ${count}`);
+    throw new Error(`недопустимая ступень корневого базиса: ${count}`);
   }
   return {
     links: ROOT_BASIS.slice(0, count).map(({ key, startKey, endKey }) => ({
@@ -376,8 +401,8 @@ function markDifferentialStale() {
   for (const collection of [rows, rigidRows, monolithicRows]) {
     for (const row of collection.values()) {
       const status = row.querySelector(".status");
-      if (status.textContent === "PASS") {
-        status.textContent = "STALE";
+      if (status.textContent === UI_STATUS.pass) {
+        status.textContent = UI_STATUS.stale;
         status.className = "status warn";
       }
     }
@@ -388,13 +413,13 @@ function markDifferentialStale() {
 function updateOverall() {
   const differentialCurrent = differentialIsCurrent();
   if (differentialCurrent && renderPass) {
-    setStatus(ui.overall, "PASS — monolithic differential + zero-copy live render", "ok");
+    setStatus(ui.overall, "ПРОЙДЕНО — монолитная проверка + zero-copy рендеринг", "ok");
   } else if (device === null) {
-    setStatus(ui.overall, "UNAVAILABLE", "warn");
+    setStatus(ui.overall, UI_STATUS.unavailable, "warn");
   } else if (differentialCurrent || renderPass) {
-    setStatus(ui.overall, "PARTIAL — see diagnostics", "warn");
+    setStatus(ui.overall, "ЧАСТИЧНО — см. диагностику", "warn");
   } else {
-    setStatus(ui.overall, "FAIL / pending", "fail");
+    setStatus(ui.overall, "НЕ ПРОЙДЕНО / ожидание", "fail");
   }
 }
 
@@ -402,7 +427,7 @@ function differentialRow(name) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${name}</td>
-    <td class="status">pending</td>
+    <td class="status">${UI_STATUS.pending}</td>
     <td>${DIFFERENTIAL_STEPS}</td>
     <td>${DIFFERENTIAL_TOLERANCE}</td>
     <td class="pos">—</td>
@@ -413,7 +438,7 @@ function differentialRow(name) {
 
 const rows = new Map();
 for (const fixture of fixtures) {
-  const row = differentialRow(fixture.name);
+  const row = differentialRow(fixtureDisplayName(fixture.name));
   rows.set(fixture.name, row);
   ui.diffBody.appendChild(row);
 }
@@ -422,7 +447,7 @@ function rigidDifferentialRow(name) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${name}</td>
-    <td class="status">pending</td>
+    <td class="status">${UI_STATUS.pending}</td>
     <td>${DIFFERENTIAL_STEPS}</td>
     <td>${RIGID_DIFFERENTIAL_TOLERANCE}</td>
     <td class="center">—</td>
@@ -435,7 +460,7 @@ function rigidDifferentialRow(name) {
 
 const rigidRows = new Map();
 for (const fixture of fixtures) {
-  const row = rigidDifferentialRow(fixture.name);
+  const row = rigidDifferentialRow(fixtureDisplayName(fixture.name));
   rigidRows.set(fixture.name, row);
   ui.rigidDiffBody.appendChild(row);
 }
@@ -444,7 +469,7 @@ function monolithicDifferentialRow(name) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${name}</td>
-    <td class="status">pending</td>
+    <td class="status">${UI_STATUS.pending}</td>
     <td>${DIFFERENTIAL_STEPS}</td>
     <td>${MONOLITHIC_DIFFERENTIAL_TOLERANCE}</td>
     <td class="center">—</td>
@@ -455,22 +480,22 @@ function monolithicDifferentialRow(name) {
 
 const monolithicRows = new Map();
 for (const fixture of fixtures) {
-  const row = monolithicDifferentialRow(fixture.name);
+  const row = monolithicDifferentialRow(fixtureDisplayName(fixture.name));
   monolithicRows.set(fixture.name, row);
   ui.monolithicDiffBody.appendChild(row);
 }
 
 async function acquireDevice() {
   if (!("gpu" in navigator)) {
-    setStatus(ui.webgpu, "UNAVAILABLE — navigator.gpu missing", "warn");
+    setStatus(ui.webgpu, "НЕДОСТУПНО — navigator.gpu отсутствует", "warn");
     updateOverall();
     return null;
   }
 
-  setStatus(ui.webgpu, "requesting adapter…", "warn");
+  setStatus(ui.webgpu, "запрос адаптера…", "warn");
   adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) {
-    setStatus(ui.webgpu, "UNAVAILABLE — no adapter", "warn");
+    setStatus(ui.webgpu, "НЕДОСТУПНО — адаптер не найден", "warn");
     updateOverall();
     return null;
   }
@@ -478,7 +503,7 @@ async function acquireDevice() {
   try {
     device = await adapter.requestDevice();
   } catch (error) {
-    setStatus(ui.webgpu, `FAIL — requestDevice: ${error.message ?? error}`, "fail");
+    setStatus(ui.webgpu, `ОШИБКА — requestDevice: ${error.message ?? error}`, "fail");
     updateOverall();
     return null;
   }
@@ -488,13 +513,13 @@ async function acquireDevice() {
     ? [adapterInfo.vendor, adapterInfo.architecture, adapterInfo.device]
       .filter(Boolean)
       .join(" · ")
-    : "adapter acquired";
-  setStatus(ui.webgpu, `AVAILABLE — ${label || "adapter acquired"}`, "ok");
-  log(`WebGPU device acquired; maxStorageBufferBindingSize=${device.limits.maxStorageBufferBindingSize}; maxStorageBuffersPerShaderStage=${device.limits.maxStorageBuffersPerShaderStage}`);
+    : "адаптер получен";
+  setStatus(ui.webgpu, `ДОСТУПНО — ${label || "адаптер получен"}`, "ok");
+  log(`Устройство WebGPU получено; maxStorageBufferBindingSize=${device.limits.maxStorageBufferBindingSize}; maxStorageBuffersPerShaderStage=${device.limits.maxStorageBuffersPerShaderStage}`);
 
   device.lost.then((info) => {
-    setStatus(ui.webgpu, `DEVICE LOST — ${info.message || info.reason}`, "fail");
-    log(`DEVICE LOST: ${info.reason}: ${info.message}`);
+    setStatus(ui.webgpu, `УСТРОЙСТВО ПОТЕРЯНО — ${info.message || info.reason}`, "fail");
+    log(`УСТРОЙСТВО ПОТЕРЯНО: ${info.reason}: ${info.message}`);
     renderPass = false;
     stopRender();
     updateOverall();
@@ -513,7 +538,7 @@ async function runDifferentials() {
     for (const collection of [rows, rigidRows, monolithicRows]) {
       for (const row of collection.values()) {
         const status = row.querySelector(".status");
-        status.textContent = "UNAVAILABLE";
+        status.textContent = UI_STATUS.unavailable;
         status.className = "status warn";
       }
     }
@@ -530,7 +555,7 @@ async function runDifferentials() {
     const status = row.querySelector(".status");
     const pos = row.querySelector(".pos");
     const vel = row.querySelector(".vel");
-    status.textContent = "running…";
+    status.textContent = UI_STATUS.running;
     status.className = "status warn";
     pos.textContent = "—";
     vel.textContent = "—";
@@ -554,31 +579,31 @@ async function runDifferentials() {
       vel.textContent = fmt(result.maxVelocityDelta);
 
       if (result.available && result.passed) {
-        status.textContent = "PASS";
+        status.textContent = UI_STATUS.pass;
         status.className = "status ok";
         log(
-          `${fixture.name}: PASS Δp=${fmt(result.maxPositionDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
+          `${fixtureDisplayName(fixture.name)}: ПРОЙДЕНО Δp=${fmt(result.maxPositionDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
         );
       } else if (!result.available) {
-        status.textContent = "UNAVAILABLE";
+        status.textContent = UI_STATUS.unavailable;
         status.className = "status warn";
         allPass = false;
-        log(`${fixture.name}: UNAVAILABLE — ${result.reason ?? "unknown"}`);
+        log(`${fixtureDisplayName(fixture.name)}: НЕДОСТУПНО — ${result.reason ?? "причина неизвестна"}`);
       } else {
-        status.textContent = "FAIL";
+        status.textContent = UI_STATUS.failed;
         status.className = "status fail";
         allPass = false;
         log(
-          `${fixture.name}: FAIL Δp=${fmt(result.maxPositionDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
+          `${fixtureDisplayName(fixture.name)}: НЕ ПРОЙДЕНО Δp=${fmt(result.maxPositionDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
         );
       }
     } catch (error) {
-      status.textContent = "ERROR";
+      status.textContent = UI_STATUS.error;
       status.className = "status fail";
       pos.textContent = "—";
       vel.textContent = "—";
       allPass = false;
-      log(`${fixture.name}: ERROR — ${error.stack ?? error}`);
+      log(`${fixtureDisplayName(fixture.name)}: ОШИБКА — ${error.stack ?? error}`);
     }
   }
 
@@ -594,7 +619,7 @@ async function runDifferentials() {
     const quat = row.querySelector(".quat");
     const linear = row.querySelector(".linear");
     const angular = row.querySelector(".angular");
-    status.textContent = "running…";
+    status.textContent = UI_STATUS.running;
     status.className = "status warn";
     center.textContent = "—";
     quat.textContent = "—";
@@ -625,24 +650,24 @@ async function runDifferentials() {
       angular.textContent = fmt(result.maxAngularVelocityDelta);
 
       if (result.passed) {
-        status.textContent = "PASS";
+        status.textContent = UI_STATUS.pass;
         status.className = "status ok";
         log(
-          `rigid ${fixture.name}: PASS Δc=${fmt(result.maxCenterDelta)} Δq=${fmt(result.maxOrientationDelta)} Δv=${fmt(result.maxLinearVelocityDelta)} Δω=${fmt(result.maxAngularVelocityDelta)}`,
+          `жёсткая модель ${fixtureDisplayName(fixture.name)}: ПРОЙДЕНО Δc=${fmt(result.maxCenterDelta)} Δq=${fmt(result.maxOrientationDelta)} Δv=${fmt(result.maxLinearVelocityDelta)} Δω=${fmt(result.maxAngularVelocityDelta)}`,
         );
       } else {
-        status.textContent = "FAIL";
+        status.textContent = UI_STATUS.failed;
         status.className = "status fail";
         rigidAllPass = false;
         log(
-          `rigid ${fixture.name}: FAIL Δc=${fmt(result.maxCenterDelta)} Δq=${fmt(result.maxOrientationDelta)} Δv=${fmt(result.maxLinearVelocityDelta)} Δω=${fmt(result.maxAngularVelocityDelta)}`,
+          `жёсткая модель ${fixtureDisplayName(fixture.name)}: НЕ ПРОЙДЕНО Δc=${fmt(result.maxCenterDelta)} Δq=${fmt(result.maxOrientationDelta)} Δv=${fmt(result.maxLinearVelocityDelta)} Δω=${fmt(result.maxAngularVelocityDelta)}`,
         );
       }
     } catch (error) {
-      status.textContent = "ERROR";
+      status.textContent = UI_STATUS.error;
       status.className = "status fail";
       rigidAllPass = false;
-      log(`rigid ${fixture.name}: ERROR — ${error.stack ?? error}`);
+      log(`жёсткая модель ${fixtureDisplayName(fixture.name)}: ОШИБКА — ${error.stack ?? error}`);
     }
   }
 
@@ -655,7 +680,7 @@ async function runDifferentials() {
     const status = row.querySelector(".status");
     const center = row.querySelector(".center");
     const velocity = row.querySelector(".velocity");
-    status.textContent = "running…";
+    status.textContent = UI_STATUS.running;
     status.className = "status warn";
     center.textContent = "—";
     velocity.textContent = "—";
@@ -681,24 +706,24 @@ async function runDifferentials() {
       velocity.textContent = fmt(result.maxVelocityDelta);
 
       if (result.passed) {
-        status.textContent = "PASS";
+        status.textContent = UI_STATUS.pass;
         status.className = "status ok";
         log(
-          `monolithic ${fixture.name}: PASS Δc=${fmt(result.maxCenterDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
+          `монолитная модель ${fixtureDisplayName(fixture.name)}: ПРОЙДЕНО Δc=${fmt(result.maxCenterDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
         );
       } else {
-        status.textContent = "FAIL";
+        status.textContent = UI_STATUS.failed;
         status.className = "status fail";
         monolithicAllPass = false;
         log(
-          `monolithic ${fixture.name}: FAIL Δc=${fmt(result.maxCenterDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
+          `монолитная модель ${fixtureDisplayName(fixture.name)}: НЕ ПРОЙДЕНО Δc=${fmt(result.maxCenterDelta)} Δv=${fmt(result.maxVelocityDelta)}`,
         );
       }
     } catch (error) {
-      status.textContent = "ERROR";
+      status.textContent = UI_STATUS.error;
       status.className = "status fail";
       monolithicAllPass = false;
-      log(`monolithic ${fixture.name}: ERROR — ${error.stack ?? error}`);
+      log(`монолитная модель ${fixtureDisplayName(fixture.name)}: ОШИБКА — ${error.stack ?? error}`);
     }
   }
 
@@ -707,31 +732,31 @@ async function runDifferentials() {
     monolithicPhysicsSignature(physics);
   ui.rerun.disabled = false;
   log(
-    `differential parameters: ${physics.octahedra} octa, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, dLin=${physics.linearDampingRate.toFixed(2)}, dAng=${physics.angularDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
+    `параметры проверки: ${physics.octahedra} октаэдров, mNode=${physics.nodeMass.toFixed(2)}, kLong=${physics.longitudinalStiffness.toFixed(2)}, kTrans=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, dLin=${physics.linearDampingRate.toFixed(2)}, dAng=${physics.angularDampingRate.toFixed(2)}, скорость=${physics.simulationSpeed.toFixed(2)}x`,
   );
-  log(`rigid differential aspect=${rigidAspectRatio.toFixed(4)} (capless rigid triangular sections)`);
+  log(`аспект жёсткой дифференциальной модели=${rigidAspectRatio.toFixed(4)} (жёсткие треугольные секции без крышек)`);
   log(
-    `monolithic differential: centerMass=mNode, stretch=kLong, straightening=kTrans, damping=dLin · ${monolithicAllPass ? "PASS" : "FAIL"}`,
+    `монолитная проверка: centerMass=mNode, stretch=kLong, straightening=kTrans, damping=dLin · ${monolithicAllPass ? "ПРОЙДЕНО" : "НЕ ПРОЙДЕНО"}`,
   );
   updateOverall();
 }
 
 function selectedScene() {
   switch (ui.scene.value) {
-    case "root-r": return Object.freeze({ id: "root-r", label: "R only", network: rootBasisNetwork(1) });
+    case "root-r": return Object.freeze({ id: "root-r", label: "только R", network: rootBasisNetwork(1) });
     case "root-ro": return Object.freeze({ id: "root-ro", label: "R + O", network: rootBasisNetwork(2) });
     case "root-roc": return Object.freeze({ id: "root-roc", label: "R + O + C", network: rootBasisNetwork(3) });
     case "root-rocl": return Object.freeze({ id: "root-rocl", label: "R + O + C + L", network: rootBasisNetwork(4) });
     case "root-roclu": return Object.freeze({ id: "root-roclu", label: "R + O + C + L + U", network: rootBasisNetwork(5) });
-    case "hub-64": return Object.freeze({ id: "hub-64", label: "stress 64", network: hubHeavyNetwork(64) });
-    case "hub-333": return Object.freeze({ id: "hub-333", label: "stress 333", network: hubHeavyNetwork(333) });
-    case "hub-1000": return Object.freeze({ id: "hub-1000", label: "stress 1000", network: hubHeavyNetwork(1000) });
-    default: throw new Error(`unknown scene: ${ui.scene.value}`);
+    case "hub-64": return Object.freeze({ id: "hub-64", label: "нагрузка 64", network: hubHeavyNetwork(64) });
+    case "hub-333": return Object.freeze({ id: "hub-333", label: "нагрузка 333", network: hubHeavyNetwork(333) });
+    case "hub-1000": return Object.freeze({ id: "hub-1000", label: "нагрузка 1000", network: hubHeavyNetwork(1000) });
+    default: throw new Error(`неизвестная сцена: ${ui.scene.value}`);
   }
 }
 
 function hubHeavyNetwork(count) {
-  if (!Number.isSafeInteger(count) || count < 8) throw new Error("render fixture requires >= 8 Links");
+  if (!Number.isSafeInteger(count) || count < 8) throw new Error("нагрузочная сцена требует не менее 8 связей");
 
   const links = [
     { key: "L1", startKey: "L1", endKey: "L1" },
@@ -1029,7 +1054,7 @@ function installCameraControls(state) {
     } catch (error) {
       if (generation === hoverGeneration && renderState === state) {
         setHoveredCenter(-1);
-        log(`CENTER hover pick ERROR — ${error.stack ?? error}`);
+        log(`ОШИБКА выбора маркера CENTER — ${error.stack ?? error}`);
       }
     } finally {
       hoverBusy = false;
@@ -1069,10 +1094,10 @@ function installCameraControls(state) {
     canvas.classList.remove("dragging");
     if (releasedMode === "center" && releasedDrag) {
       setHoveredCenter(releasedDrag.linkIndex);
-      log(`center drag released: ${releasedDrag.key}`);
+      log(`перетаскивание CENTER завершено: ${releasedDrag.key}`);
       setStatus(
         ui.renderCompute,
-        `AVAILABLE · mC=${state.compute.centerMass.toFixed(2)} · kS=${state.compute.stretchStiffness.toFixed(2)} · kB=${state.compute.straighteningStiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
+        `ДОСТУПНО · mC=${state.compute.centerMass.toFixed(2)} · kS=${state.compute.stretchStiffness.toFixed(2)} · kB=${state.compute.straighteningStiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
         "ok",
       );
     }
@@ -1102,11 +1127,11 @@ function installCameraControls(state) {
     setHoveredCenter(selected);
     mode = "center";
     log(
-      `center drag selected: ${state.centerDrag.key} · source=${source} · one semantic CENTER`,
+      `выбран CENTER для перетаскивания: ${state.centerDrag.key} · источник=${source} · один семантический CENTER`,
     );
     setStatus(
       ui.renderCompute,
-      `DRAG ${state.centerDrag.key} · semantic CENTER override`,
+      `ПЕРЕТАСКИВАНИЕ ${state.centerDrag.key} · переопределение семантического CENTER`,
       "warn",
     );
   };
@@ -1142,7 +1167,7 @@ function installCameraControls(state) {
       activateCenterDrag(
         selected,
         state.semanticCenterCache[selected],
-        "hovered two-octa CENTER neighborhood",
+        "область двух центральных октаэдров CENTER",
       );
     } else {
       mode = "orbit";
@@ -1236,8 +1261,8 @@ async function startRender() {
   stopRender();
 
   if (!device) {
-    setStatus(ui.renderCompute, "UNAVAILABLE", "warn");
-    setStatus(ui.renderZeroCopy, "UNAVAILABLE", "warn");
+    setStatus(ui.renderCompute, UI_STATUS.unavailable, "warn");
+    setStatus(ui.renderZeroCopy, UI_STATUS.unavailable, "warn");
     updateOverall();
     return;
   }
@@ -1274,13 +1299,13 @@ async function startRender() {
 
     if (shape.template.octahedronCount !== physics.octahedra) {
       throw new Error(
-        `length control mismatch: requested ${physics.octahedra} octa, got ${shape.template.octahedronCount}`,
+        `несоответствие длины: запрошено ${physics.octahedra} октаэдров, получено ${shape.template.octahedronCount}`,
       );
     }
 
     const context = ui.canvas.getContext("webgpu");
     if (!context) {
-      throw new Error("canvas.getContext('webgpu') returned null");
+      throw new Error("canvas.getContext('webgpu') вернул null");
     }
 
     const colorFormat = navigator.gpu.getPreferredCanvasFormat();
@@ -1311,7 +1336,7 @@ async function startRender() {
 
     if (!zeroCopy) {
       throw new Error(
-        "monolithic zero-copy invariant failed before first render",
+        "нарушен инвариант monolithic zero-copy до первого кадра",
       );
     }
 
@@ -1320,17 +1345,17 @@ async function startRender() {
     const shapeSnapshot = shape.snapshot();
     setStatus(
       ui.renderCompute,
-      `AVAILABLE · 2 physics passes + 1 derived-shape pass`,
+      `ДОСТУПНО · 2 прохода физики + 1 проход производной геометрии`,
       "ok",
     );
     setStatus(
       ui.renderTopology,
-      `${scene.label} · ${linkCount} Links · ${shapeSnapshot.octahedronCount} octa/Link · semantic state=${(computeSnapshot.centerBytes + computeSnapshot.velocityBytes).toLocaleString()} B · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+      `${scene.label} · ${linkCount} связей · ${shapeSnapshot.octahedronCount} октаэдров/связь · семантическое состояние=${(computeSnapshot.centerBytes + computeSnapshot.velocityBytes).toLocaleString()} Б · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
       "ok",
     );
     setStatus(
       ui.renderZeroCopy,
-      "PASS — shared semantic CENTER + compact shape buffer · 0 B dynamic CPU upload",
+      "ПРОЙДЕНО — общий семантический CENTER + компактный буфер формы · 0 Б динамической загрузки CPU",
       "ok",
     );
     updateOverall();
@@ -1386,7 +1411,7 @@ async function startRender() {
     resetCamera(state.camera, defaultCameraDistance);
     state.cleanupCameraControls = installCameraControls(state);
     renderState = state;
-    ui.pauseRender.textContent = "Pause";
+    ui.pauseRender.textContent = "Пауза";
 
     function ensureDepth() {
       const resized = resizeCanvas(ui.canvas);
@@ -1413,7 +1438,7 @@ async function startRender() {
             || physicsStats.dynamicStateUploadBytes !== 0
           ) {
             throw new Error(
-              `monolithic physics invariant failed: passes=${physicsStats.computePasses} upload=${physicsStats.dynamicStateUploadBytes}`,
+              `нарушен инвариант монолитной физики: проходы=${physicsStats.computePasses}, загрузка=${physicsStats.dynamicStateUploadBytes}`,
             );
           }
           state.steps += 1;
@@ -1431,7 +1456,7 @@ async function startRender() {
           || shapeStats.dynamicStateUploadBytes !== 0
         ) {
           throw new Error(
-            `monolithic shape invariant failed: passes=${shapeStats.computePasses} upload=${shapeStats.dynamicStateUploadBytes}`,
+            `нарушен инвариант производной геометрии: проходы=${shapeStats.computePasses}, загрузка=${shapeStats.dynamicStateUploadBytes}`,
           );
         }
         state.shapeUpdates += 1;
@@ -1481,7 +1506,7 @@ async function startRender() {
           || stats.drawCalls !== expectedDrawCalls
         ) {
           throw new Error(
-            `zero-copy runtime violation: uploads=${stats.dynamicStateUploadBytes} copies=${stats.bufferCopies} readbacks=${stats.readbacks} draws=${stats.drawCalls}/${expectedDrawCalls}`,
+            `нарушение zero-copy во время рендера: загрузки=${stats.dynamicStateUploadBytes}, копии=${stats.bufferCopies}, чтения=${stats.readbacks}, отрисовки=${stats.drawCalls}/${expectedDrawCalls}`,
           );
         }
 
@@ -1492,9 +1517,9 @@ async function startRender() {
         }
       } catch (error) {
         renderPass = false;
-        setStatus(ui.renderCompute, "ERROR", "fail");
-        setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
-        log(`monolithic render ERROR — ${error.stack ?? error}`);
+        setStatus(ui.renderCompute, UI_STATUS.error, "fail");
+        setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
+        log(`ОШИБКА монолитного рендера — ${error.stack ?? error}`);
         updateOverall();
         return;
       }
@@ -1504,7 +1529,7 @@ async function startRender() {
 
     state.raf = requestAnimationFrame(frame);
     log(
-      `v0.5 monolithic render started: scene=${scene.label}, ${linkCount} Links, ${shape.template.octahedronCount} octa/Link, centerMass=${physics.nodeMass.toFixed(2)}, stretch=${physics.longitudinalStiffness.toFixed(2)}, straighten=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, damping=${physics.linearDampingRate.toFixed(2)}, speed=${physics.simulationSpeed.toFixed(2)}x`,
+      `монолитный рендер v0.5 запущен: сцена=${scene.label}, ${linkCount} связей, ${shape.template.octahedronCount} октаэдров/связь, centerMass=${physics.nodeMass.toFixed(2)}, stretch=${physics.longitudinalStiffness.toFixed(2)}, straighten=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, damping=${physics.linearDampingRate.toFixed(2)}, скорость=${physics.simulationSpeed.toFixed(2)}x`,
     );
   } catch (error) {
     try { renderer?.destroy(); } catch {}
@@ -1544,7 +1569,7 @@ async function inspectGeometry() {
       const key = topology.keys[linkIndex];
       const source = networkByKey.get(key);
       if (!source) {
-        throw new Error(`diagnostic source Link missing: ${key}`);
+        throw new Error(`не найдена исходная связь для диагностики: ${key}`);
       }
 
       const startIndex = topology.startIndices[linkIndex];
@@ -1603,12 +1628,12 @@ async function inspectGeometry() {
     const readbackBytes =
       gpuState.centers.byteLength + gpuState.velocities.byteLength;
     log(
-      `monolithic geometry inspection: scene=${render.scene.label}, ${topology.linkCount} Links, readback=${readbackBytes} B, maxBend=${fmt(globalMaxBend)}, potential=${fmt(totalPotentialEnergy)}, maxCenterV=${fmt(globalMaxSpeed)}, restLength=${fmt(restLength)}`,
+      `проверка монолитной геометрии: сцена=${render.scene.label}, ${topology.linkCount} связей, чтение=${readbackBytes} Б, maxBend=${fmt(globalMaxBend)}, потенциал=${fmt(totalPotentialEnergy)}, maxCenterV=${fmt(globalMaxSpeed)}, длинаПокоя=${fmt(restLength)}`,
     );
   } catch (error) {
     ui.geometryBody.innerHTML =
-      `<tr><td colspan="9" class="fail">Inspection ERROR — ${String(error)}</td></tr>`;
-    log(`monolithic geometry inspection ERROR — ${error.stack ?? error}`);
+      `<tr><td colspan="9" class="fail">ОШИБКА проверки — ${String(error)}</td></tr>`;
+    log(`ОШИБКА проверки монолитной геометрии — ${error.stack ?? error}`);
   } finally {
     if (renderState === render) render.paused = wasPaused;
     ui.inspectGeometry.disabled = false;
@@ -1617,7 +1642,7 @@ async function inspectGeometry() {
 
 ui.copyLog.addEventListener("click", () => {
   copyDiagnosticLog().catch((error) => {
-    log(`copy diagnostic log ERROR — ${error.stack ?? error}`);
+    log(`ОШИБКА копирования диагностического журнала — ${error.stack ?? error}`);
   });
 });
 
@@ -1625,7 +1650,7 @@ ui.saveLog.addEventListener("click", () => {
   try {
     saveDiagnosticLog();
   } catch (error) {
-    log(`save diagnostic log ERROR — ${error.stack ?? error}`);
+    log(`ОШИБКА сохранения диагностического журнала — ${error.stack ?? error}`);
   }
 });
 
@@ -1635,18 +1660,18 @@ ui.rerun.addEventListener("click", () => {
     rigidDifferentialAllPass = false;
     monolithicDifferentialAllPass = false;
     monolithicDifferentialPhysicsSignature = null;
-    log(`differential runner ERROR — ${error.stack ?? error}`);
+    log(`ОШИБКА запуска дифференциальной проверки — ${error.stack ?? error}`);
     updateOverall();
   });
 });
 
 ui.scene.addEventListener("change", () => {
-  ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Press Inspect geometry.</td></tr>';
+  ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   startRender().catch((error) => {
     renderPass = false;
-    setStatus(ui.renderCompute, "ERROR", "fail");
-    setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
-    log(`scene render restart ERROR — ${error.stack ?? error}`);
+    setStatus(ui.renderCompute, UI_STATUS.error, "fail");
+    setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
+    log(`ОШИБКА перезапуска сцены — ${error.stack ?? error}`);
     updateOverall();
   });
 });
@@ -1658,9 +1683,9 @@ ui.inspectGeometry.addEventListener("click", () => {
 ui.restartRender.addEventListener("click", () => {
   startRender().catch((error) => {
     renderPass = false;
-    setStatus(ui.renderCompute, "ERROR", "fail");
-    setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
-    log(`render setup ERROR — ${error.stack ?? error}`);
+    setStatus(ui.renderCompute, UI_STATUS.error, "fail");
+    setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
+    log(`ОШИБКА настройки рендера — ${error.stack ?? error}`);
     updateOverall();
   });
 });
@@ -1671,18 +1696,18 @@ ui.resetView.addEventListener("click", () => {
 });
 
 ui.autoRotate.addEventListener("change", () => {
-  log(`camera auto-rotate ${ui.autoRotate.checked ? "enabled" : "disabled"}`);
+  log(`автовращение камеры ${ui.autoRotate.checked ? "включено" : "выключено"}`);
 });
 
 ui.globalWireframe.addEventListener("change", () => {
   log(
-    `global wireframe ${ui.globalWireframe.checked ? "enabled" : "disabled"} — all Link material instances, physics state preserved`,
+    `глобальный каркас ${ui.globalWireframe.checked ? "включён" : "выключен"} — для всех материальных экземпляров связей, физическое состояние сохранено`,
   );
 });
 
 ui.globalSmoothNormals.addEventListener("change", () => {
   log(
-    `global smooth triangle normals ${ui.globalSmoothNormals.checked ? "enabled" : "disabled"} — all filled Link triangles, render-only`,
+    `глобальное сглаживание нормалей ${ui.globalSmoothNormals.checked ? "включено" : "выключено"} — для всех заполненных треугольников связей, только рендер`,
   );
 });
 
@@ -1693,13 +1718,13 @@ ui.showCenterMarkers.addEventListener("change", () => {
     ui.canvas.classList.remove("center-hover");
   }
   log(
-    `CENTER hover handle ${ui.showCenterMarkers.checked ? "enabled" : "disabled"} — L2 wireframe icosahedron, physics state preserved`,
+    `маркер CENTER ${ui.showCenterMarkers.checked ? "включён" : "выключен"} — каркасный икосаэдр L2, физическое состояние сохранено`,
   );
 });
 
 ui.showEndCones.addEventListener("change", () => {
   log(
-    `END cones ${ui.showEndCones.checked ? "enabled" : "disabled"} — physics state preserved`,
+    `конусы END ${ui.showEndCones.checked ? "включены" : "выключены"} — физическое состояние сохранено`,
   );
 });
 
@@ -1716,9 +1741,9 @@ ui.lengthOcta.addEventListener("change", () => {
   updateOverall();
   startRender().catch((error) => {
     renderPass = false;
-    setStatus(ui.renderCompute, "ERROR", "fail");
-    setStatus(ui.renderZeroCopy, "FAIL — see log", "fail");
-    log(`length-control render restart ERROR — ${error.stack ?? error}`);
+    setStatus(ui.renderCompute, UI_STATUS.error, "fail");
+    setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
+    log(`ОШИБКА перезапуска после изменения длины — ${error.stack ?? error}`);
     updateOverall();
   });
 });
@@ -1757,14 +1782,14 @@ function applyLivePhysicsControls() {
   for (const [label, actual, expected] of checks) {
     if (Math.abs(actual - expected) > 1e-12) {
       throw new Error(
-        `${label} control mismatch: requested ${expected}, got ${actual}`,
+        `несоответствие параметра ${label}: запрошено ${expected}, получено ${actual}`,
       );
     }
   }
 
   setStatus(
     ui.renderCompute,
-    `AVAILABLE · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+    `ДОСТУПНО · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
     "ok",
   );
 }
@@ -1786,13 +1811,13 @@ ui.angularDamping.addEventListener("input", () => {
   rigidDifferentialPhysicsSignature = null;
   for (const row of rigidRows.values()) {
     const status = row.querySelector(".status");
-    if (status.textContent === "PASS") {
-      status.textContent = "STALE";
+    if (status.textContent === UI_STATUS.pass) {
+      status.textContent = UI_STATUS.stale;
       status.className = "status warn";
     }
   }
   log(
-    "legacy rigid angular damping changed — monolithic live physics is unaffected",
+    "изменено устаревшее угловое демпфирование жёсткой модели — монолитная физика реального времени не затронута",
   );
   updateOverall();
 });
@@ -1800,7 +1825,7 @@ ui.angularDamping.addEventListener("input", () => {
 ui.pauseRender.addEventListener("click", () => {
   if (!renderState) return;
   renderState.paused = !renderState.paused;
-  ui.pauseRender.textContent = renderState.paused ? "Resume" : "Pause";
+  ui.pauseRender.textContent = renderState.paused ? "Продолжить" : "Пауза";
 });
 
 ui.fullscreenRender.addEventListener("click", async () => {
@@ -1811,15 +1836,15 @@ ui.fullscreenRender.addEventListener("click", async () => {
       await ui.viewportShell.requestFullscreen();
     }
   } catch (error) {
-    log(`fullscreen ERROR — ${error.stack ?? error}`);
+    log(`ОШИБКА полноэкранного режима — ${error.stack ?? error}`);
   }
 });
 
 document.addEventListener("fullscreenchange", () => {
   ui.fullscreenRender.textContent =
     document.fullscreenElement === ui.viewportShell
-      ? "Exit fullscreen"
-      : "Fullscreen";
+      ? "Выйти из полноэкранного режима"
+      : "На весь экран";
 });
 
 try {
@@ -1829,6 +1854,6 @@ try {
     await startRender();
   }
 } catch (error) {
-  setStatus(ui.overall, "ERROR — see diagnostic log", "fail");
+  setStatus(ui.overall, "ОШИБКА — см. диагностический журнал", "fail");
   log(error.stack ?? String(error));
 }
