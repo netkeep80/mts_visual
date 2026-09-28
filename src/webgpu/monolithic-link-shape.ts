@@ -1,4 +1,7 @@
 import {
+  MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH,
+} from "../monolithic-link-shape3d.js";
+import {
   getMonolithicLinkSpringTemplate3D,
   type MonolithicLinkSpringTemplate3D,
 } from "../monolithic-link-spring3d.js";
@@ -392,7 +395,7 @@ fn self_point(
 ) -> vec3<f32> {
   let frame = deterministic_frame(link);
   let base = self_loop_base_point(t);
-  let scale = globals.geometry.y / 8.448334738583334;
+  let scale = globals.geometry.y / ${MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH};
   return anchor
     + frame.z * (scale * base.z)
     + frame.x * (lobe_sign * scale * base.x)
@@ -406,7 +409,7 @@ fn self_tangent(
 ) -> vec3<f32> {
   let frame = deterministic_frame(link);
   let base = self_loop_base_derivative(t);
-  let scale = globals.geometry.y / 8.448334738583334;
+  let scale = globals.geometry.y / ${MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH};
   return
     frame.z * (scale * base.z)
     + frame.x * (lobe_sign * scale * base.x)
