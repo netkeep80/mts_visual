@@ -33,6 +33,7 @@ const ui = {
   resetView: $("reset-view"),
   autoRotate: $("auto-rotate"),
   wireframe: $("wireframe"),
+  smoothNormals: $("smooth-normals"),
   showCenterMarkers: $("show-center-markers"),
   showEndCones: $("show-end-cones"),
   centerMarkerScale: $("center-marker-scale"),
@@ -252,6 +253,7 @@ function selectedMarkerControls() {
   return Object.freeze({
     showCenterMarkers: ui.showCenterMarkers.checked,
     showEndCones: ui.showEndCones.checked,
+    smoothNormals: ui.smoothNormals.checked,
     centerMarkerScale:
       controlNumber(ui.centerMarkerScale, "CENTER size", 0.25, 8),
     endConeScale:
@@ -872,12 +874,14 @@ function pointerWorldRay(state, event) {
 
 function pickCenterIcosahedron(state, event, centers) {
   const ray = pointerWorldRay(state, event);
+  // The two central octahedra define the hover neighborhood around semantic
+  // CENTER. The L2 icosahedron has diameter 2 * octahedron diameter, hence
+  // radius = one octahedron diameter.
   return webgpu.pickRigidSectionCenterIcosahedra3D(
     ray.origin,
     ray.direction,
     centers,
-    2
-      * state.shape.template.edgeRestLength
+    state.shape.template.diameter
       * selectedMarkerControls().centerMarkerScale,
   );
 }
@@ -966,9 +970,87 @@ function installCameraControls(state) {
   let mode = null;
   let lastX = 0;
   let lastY = 0;
-  let pickGeneration = 0;
-  let pendingPickDx = 0;
-  let pendingPickDy = 0;
+  let hoverGeneration = 0;
+  let hoverBusy = false;
+  let hoverTimer = null;
+  let queuedHover = null;
+
+  const setHoveredCenter = (selected) => {
+    const next = Number.isSafeInteger(selected) ? selected : -1;
+    if (state.hoveredCenterLink === next) return;
+    state.hoveredCenterLink = next;
+    canvas.classList.toggle("center-hover", next >= 0);
+  };
+
+  const runHoverPick = async () => {
+    hoverTimer = null;
+    if (
+      hoverBusy
+      || queuedHover === null
+      || pointerId !== null
+      || state.centerDrag
+      || !ui.showCenterMarkers.checked
+      || renderState !== state
+    ) {
+      if (!ui.showCenterMarkers.checked || state.centerDrag) {
+        setHoveredCenter(-1);
+      }
+      return;
+    }
+
+    hoverBusy = true;
+    const point = queuedHover;
+    queuedHover = null;
+    const generation = hoverGeneration;
+    try {
+      // Interaction-triggered readback only. The frame loop remains zero-copy.
+      const gpuState = await state.compute.readBackState();
+      if (
+        generation !== hoverGeneration
+        || renderState !== state
+        || pointerId !== null
+      ) return;
+
+      const worldCenters = [];
+      for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
+        const center = packedVec3(gpuState.centers, link);
+        worldCenters.push(center);
+        state.semanticCenterCache[link] = [...center];
+      }
+      setHoveredCenter(
+        pickCenterIcosahedron(state, point, worldCenters),
+      );
+    } catch (error) {
+      if (generation === hoverGeneration && renderState === state) {
+        setHoveredCenter(-1);
+        log(`CENTER hover pick ERROR — ${error.stack ?? error}`);
+      }
+    } finally {
+      hoverBusy = false;
+      if (
+        queuedHover !== null
+        && pointerId === null
+        && renderState === state
+      ) {
+        hoverTimer = setTimeout(runHoverPick, 45);
+      }
+    }
+  };
+
+  const requestHoverPick = (event) => {
+    if (
+      pointerId !== null
+      || state.centerDrag
+      || !ui.showCenterMarkers.checked
+    ) return;
+    queuedHover = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    if (!hoverBusy && hoverTimer === null) {
+      hoverTimer = setTimeout(runHoverPick, 35);
+    }
+  };
 
   const finishPointer = (event) => {
     if (pointerId !== event.pointerId) return;
@@ -980,6 +1062,7 @@ function installCameraControls(state) {
     state.centerDrag = null;
     canvas.classList.remove("dragging");
     if (releasedMode === "center" && releasedDrag) {
+      setHoveredCenter(releasedDrag.linkIndex);
       log(`center drag released: ${releasedDrag.key}`);
       setStatus(
         ui.renderCompute,
@@ -1010,6 +1093,7 @@ function installCameraControls(state) {
       uploadedBytes: 0,
     };
     state.semanticCenterCache[selected] = [...center];
+    setHoveredCenter(selected);
     mode = "center";
     log(
       `center drag selected: ${state.centerDrag.key} · source=${source} · one semantic CENTER`,
@@ -1021,83 +1105,39 @@ function installCameraControls(state) {
     );
   };
 
-  const beginCenterPick = async (event) => {
-    const generation = ++pickGeneration;
-    mode = "picking";
-    setStatus(ui.renderCompute, "PICKING CENTER ICOSAHEDRON…", "warn");
-    try {
-      // One-shot readback on pointer-down keeps picking exact while ordinary
-      // frames remain zero-copy and the simulated CENTER positions keep moving.
-      const gpuState = await state.compute.readBackState();
-      if (
-        generation !== pickGeneration
-        || pointerId !== event.pointerId
-        || renderState !== state
-      ) return;
-
-      const worldCenters = [];
-      for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
-        const center = packedVec3(gpuState.centers, link);
-        worldCenters.push(center);
-        state.semanticCenterCache[link] = [...center];
-      }
-
-      const selected = pickCenterIcosahedron(state, event, worldCenters);
-
-      if (selected < 0) {
-        mode = "orbit";
-        if (pendingPickDx !== 0 || pendingPickDy !== 0) {
-          state.camera.yaw -= pendingPickDx * 0.006;
-          state.camera.pitch = clamp(
-            state.camera.pitch - pendingPickDy * 0.006,
-            -Math.PI * 0.48,
-            Math.PI * 0.48,
-          );
-        }
-        pendingPickDx = 0;
-        pendingPickDy = 0;
-        log("center icosahedron pick MISS — continuing as orbit");
-        setStatus(
-          ui.renderCompute,
-          `AVAILABLE · mC=${state.compute.centerMass.toFixed(2)} · kS=${state.compute.stretchStiffness.toFixed(2)} · kB=${state.compute.straighteningStiffness.toFixed(2)} · α=${state.compute.nonlinearity.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
-          "ok",
-        );
-        return;
-      }
-
-      activateCenterDrag(
-        selected,
-        worldCenters[selected],
-        "exact world-space icosahedron",
-      );
-      moveCenterDragTarget(state, pendingPickDx, pendingPickDy);
-      pendingPickDx = 0;
-      pendingPickDy = 0;
-    } catch (error) {
-      if (generation !== pickGeneration || renderState !== state) return;
-      log(`center pick ERROR — ${error.stack ?? error}`);
-      mode = "orbit";
-      pendingPickDx = 0;
-      pendingPickDy = 0;
-    }
-  };
-
-  canvas.addEventListener("contextmenu", (event) => event.preventDefault(), listenerOptions);
+  canvas.addEventListener(
+    "contextmenu",
+    (event) => event.preventDefault(),
+    listenerOptions,
+  );
 
   canvas.addEventListener("pointerdown", (event) => {
     if (pointerId !== null) return;
     pointerId = event.pointerId;
     lastX = event.clientX;
     lastY = event.clientY;
-    pendingPickDx = 0;
-    pendingPickDy = 0;
+    hoverGeneration += 1;
+    queuedHover = null;
+    if (hoverTimer !== null) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
     canvas.setPointerCapture(pointerId);
     canvas.classList.add("dragging");
 
     if (event.button === 2 || (event.button === 0 && event.shiftKey)) {
       mode = "pan";
-    } else if (event.button === 0 && ui.showCenterMarkers.checked) {
-      void beginCenterPick(event);
+    } else if (
+      event.button === 0
+      && ui.showCenterMarkers.checked
+      && state.hoveredCenterLink >= 0
+    ) {
+      const selected = state.hoveredCenterLink;
+      activateCenterDrag(
+        selected,
+        state.semanticCenterCache[selected],
+        "hovered two-octa CENTER neighborhood",
+      );
     } else {
       mode = "orbit";
     }
@@ -1105,7 +1145,12 @@ function installCameraControls(state) {
   }, listenerOptions);
 
   canvas.addEventListener("pointermove", (event) => {
+    if (pointerId === null) {
+      requestHoverPick(event);
+      return;
+    }
     if (pointerId !== event.pointerId || mode === null) return;
+
     const dx = event.clientX - lastX;
     const dy = event.clientY - lastY;
     lastX = event.clientX;
@@ -1120,13 +1165,17 @@ function installCameraControls(state) {
       );
     } else if (mode === "pan") {
       panCamera(state.camera, dx, dy);
-    } else if (mode === "picking") {
-      pendingPickDx += dx;
-      pendingPickDy += dy;
     } else if (mode === "center" && state.centerDrag) {
       moveCenterDragTarget(state, dx, dy);
     }
     event.preventDefault();
+  }, listenerOptions);
+
+  canvas.addEventListener("pointerleave", () => {
+    if (pointerId === null) {
+      queuedHover = null;
+      setHoveredCenter(-1);
+    }
   }, listenerOptions);
 
   canvas.addEventListener("pointerup", finishPointer, listenerOptions);
@@ -1144,13 +1193,15 @@ function installCameraControls(state) {
   }, { passive: false, signal: abortController.signal });
 
   return () => {
-    pickGeneration += 1;
+    hoverGeneration += 1;
+    if (hoverTimer !== null) clearTimeout(hoverTimer);
+    queuedHover = null;
     state.centerDrag = null;
+    state.hoveredCenterLink = -1;
     abortController.abort();
-    canvas.classList.remove("dragging");
+    canvas.classList.remove("dragging", "center-hover");
   };
 }
-
 function resizeCanvas(canvas) {
   const scale = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.round(canvas.clientWidth * scale));
@@ -1320,6 +1371,7 @@ async function startRender() {
       },
       cleanupCameraControls: null,
       centerDrag: null,
+      hoveredCenterLink: -1,
       initialSemanticCenters,
       semanticCenterCache: initialSemanticCenters.map((center) => [...center]),
       scene,
@@ -1400,13 +1452,20 @@ async function startRender() {
           showEndCones: markers.showEndCones,
           centerMarkerScale: markers.centerMarkerScale,
           endConeScale: markers.endConeScale,
+          hoveredCenterLink: state.hoveredCenterLink,
+          smoothNormals: markers.smoothNormals,
           clearColor: { r: 0.005, g: 0.008, b: 0.014, a: 1 },
         });
         state.frames += 1;
 
         const expectedDrawCalls =
           1
-          + (markers.showCenterMarkers ? 1 : 0)
+          + (
+            markers.showCenterMarkers
+            && state.hoveredCenterLink >= 0
+              ? 1
+              : 0
+          )
           + (markers.showEndCones ? 1 : 0);
         if (
           stats.dynamicStateUploadBytes !== 0
@@ -1612,12 +1671,20 @@ ui.wireframe.addEventListener("change", () => {
   log(`wireframe ${ui.wireframe.checked ? "enabled" : "disabled"} — physics state preserved`);
 });
 
+ui.smoothNormals.addEventListener("change", () => {
+  log(
+    `smooth triangle normals ${ui.smoothNormals.checked ? "enabled" : "disabled"} — render-only, physics state preserved`,
+  );
+});
+
 ui.showCenterMarkers.addEventListener("change", () => {
-  if (!ui.showCenterMarkers.checked && renderState?.centerDrag) {
+  if (!ui.showCenterMarkers.checked && renderState) {
     renderState.centerDrag = null;
+    renderState.hoveredCenterLink = -1;
+    ui.canvas.classList.remove("center-hover");
   }
   log(
-    `CENTER nodes ${ui.showCenterMarkers.checked ? "enabled" : "disabled"} — physics state preserved`,
+    `CENTER hover handle ${ui.showCenterMarkers.checked ? "enabled" : "disabled"} — L2 wireframe icosahedron, physics state preserved`,
   );
 });
 
