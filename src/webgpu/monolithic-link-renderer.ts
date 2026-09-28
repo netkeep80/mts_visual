@@ -1,4 +1,7 @@
 import {
+  MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH,
+} from "../monolithic-link-shape3d.js";
+import {
   getOctahedralLinkTemplate3D,
   OCTAHEDRAL_TRIANGLE_RADIUS,
 } from "../octahedral-link3d.js";
@@ -206,7 +209,8 @@ function buildUniformData(
   f32[26] = shape.template.restLength;
   f32[27] = shape.template.halfRestLength;
 
-  f32[28] = shape.template.halfRestLength / 8.448334738583334;
+  f32[28] =
+    shape.template.halfRestLength / MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH;
   f32[29] = frame.smoothNormals === false ? 0 : 1;
   f32[30] = 0;
   f32[31] = 0;
