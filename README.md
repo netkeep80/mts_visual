@@ -134,6 +134,37 @@ aspectRatio = sqrt(2) * 10 ≈ 14.14
 
 The low-level two-octahedron template remains legal for low-detail/testing. The 333-Link regression suite now gates hinge accuracy, p95/max spring strain, severe-strain fraction, spring energy over 360 damped ticks, 3D bounds, and exact O(N*E) work. CPU and WebGPU initializers share the same distributed fitting contract.
 
+### 0.5.0 monolithic Link / WebGPU release
+
+Package version `0.5.0` accepts the current monolithic Link path and its real-browser WebGPU witness.
+
+The authoritative live physical state is reduced to semantic Link interaction points and derived carrier state:
+
+```text
+START / CENTER / END
+        |
+        v
+monolithic Link physics
+        |
+        +--> GPU-derived carrier/section frames
+        +--> zero-copy WebGPU renderer
+```
+
+The release includes:
+
+- monolithic stretch + straightening dynamics with semantic CENTER mass/damping;
+- derived octahedral carrier with stable roll gauge and no fake per-octahedron angular body state;
+- self-incidence geometry with a positional hinge instead of a welded terminal tangent;
+- CPU ↔ WebGPU differential coverage for ordinary and self-incidence fixtures;
+- START→CENTER→END red→green→blue material gradient;
+- hover-only L2 wireframe icosahedron for semantic CENTER selection/drag;
+- wireframe-only END cones with deterministic proportions;
+- global wireframe and smooth-normal render controls;
+- browser witness default simulation speed of 10×;
+- Russian browser witness UI and exact-build GitHub Pages verification.
+
+The older scalable octahedral APIs remain available for compatibility and current consumers. The `0.5.0` acceptance slice itself changes only package metadata and documentation; runtime behavior is the already-tested `main` state accepted immediately before the version bump.
+
 ### Capless terminal geometry
 
 Current octahedral geometry has no START/END tetrahedral caps. The terminal physical objects are ordinary triangular sections of the first/last octahedron. Incidence constrains only their geometric centroids:
