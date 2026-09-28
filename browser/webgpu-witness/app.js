@@ -736,7 +736,7 @@ async function runDifferentials() {
   );
   log(`аспект жёсткой дифференциальной модели=${rigidAspectRatio.toFixed(4)} (жёсткие треугольные секции без крышек)`);
   log(
-    `монолитная проверка: centerMass=mNode, stretch=kLong, straightening=kTrans, damping=dLin · ${monolithicAllPass ? "ПРОЙДЕНО" : "НЕ ПРОЙДЕНО"}`,
+    `монолитная проверка: масса CENTER=mNode, растяжение=kLong, выпрямление=kTrans, демпфирование=dLin · ${monolithicAllPass ? "ПРОЙДЕНО" : "НЕ ПРОЙДЕНО"}`,
   );
   updateOverall();
 }
@@ -1529,7 +1529,7 @@ async function startRender() {
 
     state.raf = requestAnimationFrame(frame);
     log(
-      `монолитный рендер v0.5 запущен: сцена=${scene.label}, ${linkCount} связей, ${shape.template.octahedronCount} октаэдров/связь, centerMass=${physics.nodeMass.toFixed(2)}, stretch=${physics.longitudinalStiffness.toFixed(2)}, straighten=${physics.transverseStiffness.toFixed(2)}, alpha=${physics.nonlinearity.toFixed(2)}, damping=${physics.linearDampingRate.toFixed(2)}, скорость=${physics.simulationSpeed.toFixed(2)}x`,
+      `монолитный рендер v0.5 запущен: сцена=${scene.label}, ${linkCount} связей, ${shape.template.octahedronCount} октаэдров/связь, массаCENTER=${physics.nodeMass.toFixed(2)}, растяжение=${physics.longitudinalStiffness.toFixed(2)}, выпрямление=${physics.transverseStiffness.toFixed(2)}, нелинейность=${physics.nonlinearity.toFixed(2)}, демпфирование=${physics.linearDampingRate.toFixed(2)}, скорость=${physics.simulationSpeed.toFixed(2)}x`,
     );
   } catch (error) {
     try { renderer?.destroy(); } catch {}
@@ -1628,7 +1628,7 @@ async function inspectGeometry() {
     const readbackBytes =
       gpuState.centers.byteLength + gpuState.velocities.byteLength;
     log(
-      `проверка монолитной геометрии: сцена=${render.scene.label}, ${topology.linkCount} связей, чтение=${readbackBytes} Б, maxBend=${fmt(globalMaxBend)}, потенциал=${fmt(totalPotentialEnergy)}, maxCenterV=${fmt(globalMaxSpeed)}, длинаПокоя=${fmt(restLength)}`,
+      `проверка монолитной геометрии: сцена=${render.scene.label}, ${topology.linkCount} связей, чтение=${readbackBytes} Б, максИзгиб=${fmt(globalMaxBend)}, потенциал=${fmt(totalPotentialEnergy)}, максСкоростьCENTER=${fmt(globalMaxSpeed)}, длинаПокоя=${fmt(restLength)}`,
     );
   } catch (error) {
     ui.geometryBody.innerHTML =
