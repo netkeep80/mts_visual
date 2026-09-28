@@ -32,8 +32,8 @@ const ui = {
   restartRender: $("restart-render"),
   resetView: $("reset-view"),
   autoRotate: $("auto-rotate"),
-  wireframe: $("wireframe"),
-  smoothNormals: $("smooth-normals"),
+  globalWireframe: $("global-wireframe"),
+  globalSmoothNormals: $("global-smooth-normals"),
   showCenterMarkers: $("show-center-markers"),
   showEndCones: $("show-end-cones"),
   centerMarkerScale: $("center-marker-scale"),
@@ -194,7 +194,7 @@ function selectedPhysics() {
   const angularDampingRate =
     controlNumber(ui.angularDamping, "angular damping", 0, 10);
   const simulationSpeed =
-    controlNumber(ui.simulationSpeed, "simulation speed", 0, 8);
+    controlNumber(ui.simulationSpeed, "simulation speed", 0, 20);
 
   return Object.freeze({
     octahedra,
@@ -249,11 +249,17 @@ function refreshPhysicsControlLabels() {
   ui.simulationSpeedValue.value = `${physics.simulationSpeed.toFixed(2)}×`;
 }
 
+function selectedGlobalRenderControls() {
+  return Object.freeze({
+    wireframe: ui.globalWireframe.checked,
+    smoothNormals: ui.globalSmoothNormals.checked,
+  });
+}
+
 function selectedMarkerControls() {
   return Object.freeze({
     showCenterMarkers: ui.showCenterMarkers.checked,
     showEndCones: ui.showEndCones.checked,
-    smoothNormals: ui.smoothNormals.checked,
     centerMarkerScale:
       controlNumber(ui.centerMarkerScale, "CENTER size", 0.25, 8),
     endConeScale:
@@ -1440,6 +1446,7 @@ async function startRender() {
         }
         const viewProjection = currentViewProjection(state);
 
+        const renderStyle = selectedGlobalRenderControls();
         const markers = selectedMarkerControls();
         const stats = state.renderer.render({
           targetView: state.context.getCurrentTexture().createView(),
@@ -1447,13 +1454,13 @@ async function startRender() {
           viewProjection,
           width: ui.canvas.width,
           height: ui.canvas.height,
-          wireframe: ui.wireframe.checked,
+          wireframe: renderStyle.wireframe,
           showCenterMarkers: markers.showCenterMarkers,
           showEndCones: markers.showEndCones,
           centerMarkerScale: markers.centerMarkerScale,
           endConeScale: markers.endConeScale,
           hoveredCenterLink: state.hoveredCenterLink,
-          smoothNormals: markers.smoothNormals,
+          smoothNormals: renderStyle.smoothNormals,
           clearColor: { r: 0.005, g: 0.008, b: 0.014, a: 1 },
         });
         state.frames += 1;
@@ -1667,13 +1674,15 @@ ui.autoRotate.addEventListener("change", () => {
   log(`camera auto-rotate ${ui.autoRotate.checked ? "enabled" : "disabled"}`);
 });
 
-ui.wireframe.addEventListener("change", () => {
-  log(`wireframe ${ui.wireframe.checked ? "enabled" : "disabled"} — physics state preserved`);
+ui.globalWireframe.addEventListener("change", () => {
+  log(
+    `global wireframe ${ui.globalWireframe.checked ? "enabled" : "disabled"} — all Link material instances, physics state preserved`,
+  );
 });
 
-ui.smoothNormals.addEventListener("change", () => {
+ui.globalSmoothNormals.addEventListener("change", () => {
   log(
-    `smooth triangle normals ${ui.smoothNormals.checked ? "enabled" : "disabled"} — render-only, physics state preserved`,
+    `global smooth triangle normals ${ui.globalSmoothNormals.checked ? "enabled" : "disabled"} — all filled Link triangles, render-only`,
   );
 });
 
