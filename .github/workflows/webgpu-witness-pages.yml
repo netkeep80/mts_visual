@@ -177,7 +177,8 @@ jobs:
           fetch "vendor/mts-visual-webgpu.bundle.js" /tmp/mts-visual-pages-smoke/webgpu.js
 
           jq -e --arg sha "${EXPECTED_SHA}" '.mainSha == $sha'             /tmp/mts-visual-pages-smoke/build-info.json >/dev/null
-          grep -F 'real WebGPU witness' /tmp/mts-visual-pages-smoke/index.html
+          grep -F '<html lang="ru">' /tmp/mts-visual-pages-smoke/index.html
+          grep -F 'id="gpu-canvas"' /tmp/mts-visual-pages-smoke/index.html
           grep -F 'runOctahedralWebGpuDifferentialWitness3D' /tmp/mts-visual-pages-smoke/app.js
           grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' /tmp/mts-visual-pages-smoke/app.js
 
