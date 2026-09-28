@@ -91,6 +91,13 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
     readonly label: string;
     readonly entries: readonly object[];
   }[] = [];
+  readonly bindGroupLayouts: {
+    readonly label: string;
+    readonly entries: readonly {
+      readonly binding?: number;
+      readonly visibility?: number;
+    }[];
+  }[] = [];
   readonly draws: DrawRecord[] = [];
   readonly pipelineDescriptors: {
     readonly label: string;
@@ -124,8 +131,15 @@ class FakeRenderDevice implements WebGpuRenderDeviceLike {
 
   createBindGroupLayout(descriptor: {
     readonly label?: string;
-    readonly entries: readonly object[];
+    readonly entries: readonly {
+      readonly binding?: number;
+      readonly visibility?: number;
+    }[];
   }): object {
+    this.bindGroupLayouts.push({
+      label: descriptor.label ?? "",
+      entries: descriptor.entries,
+    });
     return descriptor;
   }
 
@@ -443,6 +457,20 @@ same(
   renderer.shapeSectionFrameBuffer,
   shape.sectionFrameBuffer,
   "renderer shares exact GPU-derived arc/frame buffer",
+);
+
+const renderLayout = device.bindGroupLayouts.find(
+  (entry) => entry.label === "monolithic-link-render-layout",
+);
+assert(renderLayout !== undefined, "render bind-group layout captured");
+const sceneUniformBinding = renderLayout.entries.find(
+  (entry) => entry.binding === 7,
+);
+assert(sceneUniformBinding !== undefined, "scene uniform binding 7 exists");
+same(
+  sceneUniformBinding.visibility,
+  0x0001 | 0x0002,
+  "scene uniforms are visible to both vertex and fragment stages",
 );
 
 const surfacePipeline = device.pipelineDescriptors.find(

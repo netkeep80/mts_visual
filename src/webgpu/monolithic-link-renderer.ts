@@ -24,6 +24,7 @@ const GPU_BUFFER_USAGE = Object.freeze({
 });
 
 const GPU_SHADER_STAGE_VERTEX = 0x0001;
+const GPU_SHADER_STAGE_FRAGMENT = 0x0002;
 const RENDER_UNIFORM_BYTES = 128;
 const CENTER_L2_TRIANGLE_COUNT = 80;
 const CENTER_VERTEX_COUNT = CENTER_L2_TRIANGLE_COUNT * 3 * 2;
@@ -1159,7 +1160,9 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
       },
       {
         binding: 7,
-        visibility: GPU_SHADER_STAGE_VERTEX,
+        visibility:
+          GPU_SHADER_STAGE_VERTEX
+          | GPU_SHADER_STAGE_FRAGMENT,
         buffer: { type: "uniform" },
       },
     ],
