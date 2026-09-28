@@ -25,8 +25,10 @@ const GPU_BUFFER_USAGE = Object.freeze({
 
 const GPU_SHADER_STAGE_VERTEX = 0x0001;
 const RENDER_UNIFORM_BYTES = 128;
-const CENTER_VERTEX_COUNT = 60;
-const END_CONE_VERTEX_COUNT = 18;
+const CENTER_L2_TRIANGLE_COUNT = 80;
+const CENTER_VERTEX_COUNT = CENTER_L2_TRIANGLE_COUNT * 3 * 2;
+const END_CONE_SEGMENT_COUNT = 12;
+const END_CONE_VERTEX_COUNT = END_CONE_SEGMENT_COUNT * 4;
 
 export interface MonolithicLinkWebGpuRenderFrame3D
 extends OctahedralWebGpuRenderFrame3D {
@@ -34,6 +36,8 @@ extends OctahedralWebGpuRenderFrame3D {
   readonly showEndCones?: boolean;
   readonly centerMarkerScale?: number;
   readonly endConeScale?: number;
+  readonly hoveredCenterLink?: number | null;
+  readonly smoothNormals?: boolean;
 }
 
 export interface MonolithicLinkWebGpuRendererOptions3D {
@@ -202,7 +206,7 @@ function buildUniformData(
   f32[27] = shape.template.halfRestLength;
 
   f32[28] = shape.template.halfRestLength / 7.511568580362938;
-  f32[29] = 0;
+  f32[29] = frame.smoothNormals === false ? 0 : 1;
   f32[30] = 0;
   f32[31] = 0;
   return buffer;
@@ -281,6 +285,8 @@ struct ShapeSample {
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
   @location(0) color: vec3<f32>,
+  @location(1) world_position: vec3<f32>,
+  @location(2) smooth_normal: vec3<f32>,
 };
 
 fn safe_normalize(value: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
@@ -572,19 +578,75 @@ fn section_center(link: u32, section: u32) -> vec3<f32> {
   return sample_section(link, section).point;
 }
 
+fn link_gradient(t_value: f32) -> vec3<f32> {
+  let t = clamp(t_value, 0.0, 1.0);
+  if (t <= 0.5) {
+    let u = t * 2.0;
+    return vec3<f32>(1.0 - u, u, 0.0);
+  }
+  let u = (t - 0.5) * 2.0;
+  return vec3<f32>(0.0, 1.0 - u, u);
+}
+
 @vertex
 fn surface_vertex(
   @builtin(vertex_index) vertex_index: u32,
   @builtin(instance_index) instance_index: u32,
 ) -> VertexOut {
   let local_vertex = surface_indices[vertex_index];
+  let section = local_vertex / 3u;
   let world = material_vertex(instance_index, local_vertex);
+  let center = section_center(instance_index, section);
   let t = clamp(gradient_t[local_vertex], 0.0, 1.0);
 
   var out: VertexOut;
   out.position = scene.view_projection * vec4<f32>(world, 1.0);
-  out.color = vec3<f32>(1.0 - t, 0.0, t);
+  out.color = link_gradient(t);
+  out.world_position = world;
+  out.smooth_normal = safe_normalize(
+    world - center,
+    section_axes(instance_index, section).x,
+  );
   return out;
+}
+
+fn center_ico_child_vertex(
+  face_index: u32,
+  child_index: u32,
+  corner_index: u32,
+) -> vec3<f32> {
+  let face = CENTER_ICO_FACES[face_index];
+  let v0 = CENTER_ICO_VERTICES[face.x];
+  let v1 = CENTER_ICO_VERTICES[face.y];
+  let v2 = CENTER_ICO_VERTICES[face.z];
+  let m01 = safe_normalize(v0 + v1, v0);
+  let m12 = safe_normalize(v1 + v2, v1);
+  let m20 = safe_normalize(v2 + v0, v2);
+
+  var a = v0;
+  var b = m01;
+  var c = m20;
+  if (child_index == 1u) {
+    a = m01;
+    b = v1;
+    c = m12;
+  } else if (child_index == 2u) {
+    a = m20;
+    b = m12;
+    c = v2;
+  } else if (child_index == 3u) {
+    a = m01;
+    b = m12;
+    c = m20;
+  }
+
+  if (corner_index == 0u) {
+    return a;
+  }
+  if (corner_index == 1u) {
+    return b;
+  }
+  return c;
 }
 
 @vertex
@@ -592,23 +654,40 @@ fn center_vertex(
   @builtin(vertex_index) vertex_index: u32,
   @builtin(instance_index) instance_index: u32,
 ) -> VertexOut {
-  let face_index = vertex_index / 3u;
-  let corner = vertex_index % 3u;
-  let face = CENTER_ICO_FACES[face_index];
-  var vertex_id = face.x;
-  if (corner == 1u) {
-    vertex_id = face.y;
-  } else if (corner == 2u) {
-    vertex_id = face.z;
+  let line_index = vertex_index / 2u;
+  let endpoint = vertex_index & 1u;
+  let child_triangle = line_index / 3u;
+  let edge_index = line_index % 3u;
+  let face_index = child_triangle / 4u;
+  let child_index = child_triangle % 4u;
+
+  var corner0 = 0u;
+  var corner1 = 1u;
+  if (edge_index == 1u) {
+    corner0 = 1u;
+    corner1 = 2u;
+  } else if (edge_index == 2u) {
+    corner0 = 2u;
+    corner1 = 0u;
   }
 
+  let unit = center_ico_child_vertex(
+    face_index,
+    child_index,
+    select(corner0, corner1, endpoint == 1u),
+  );
   let center = semantic_centers[instance_index].xyz;
-  let radius = 2.0 * scene.geometry.y * scene.viewport.z;
-  let world = center + CENTER_ICO_VERTICES[vertex_id] * radius;
+  // Icosahedron diameter = 2 * octahedron diameter.
+  // scene.geometry.x is the octahedron radius, so the handle radius is
+  // exactly one octahedron diameter.
+  let radius = 2.0 * scene.geometry.x * scene.viewport.z;
+  let world = center + unit * radius;
 
   var out: VertexOut;
   out.position = scene.view_projection * vec4<f32>(world, 1.0);
-  out.color = vec3<f32>(0.0, 1.0, 0.0);
+  out.color = vec3<f32>(0.15, 1.0, 0.3);
+  out.world_position = world;
+  out.smooth_normal = unit;
   return out;
 }
 
@@ -637,14 +716,18 @@ fn arrow_vertex(
   let bitangent = cross(axis, tangent);
 
   let marker_scale = scene.viewport.w;
-  let height = 3.0 * scene.geometry.y * marker_scale;
-  let base_radius = 1.5 * scene.geometry.y * marker_scale;
+  // Octahedron diameter = 2 * scene.geometry.x.
+  // Cone diameter = 2 * octahedron diameter => radius = 2 * geometry.x.
+  // Cone length = 2 * cone diameter => length = 8 * geometry.x.
+  let base_radius = 2.0 * scene.geometry.x * marker_scale;
+  let height = 8.0 * scene.geometry.x * marker_scale;
   let base_center = tip - axis * height;
 
-  let side = vertex_index / 3u;
-  let corner = vertex_index % 3u;
-  let angle0 = TAU * f32(side) / 6.0;
-  let angle1 = TAU * f32(side + 1u) / 6.0;
+  let segment = vertex_index / 4u;
+  let local = vertex_index % 4u;
+  let segment_count = 12.0;
+  let angle0 = TAU * f32(segment) / segment_count;
+  let angle1 = TAU * f32(segment + 1u) / segment_count;
   let base0 = base_center
     + tangent * (cos(angle0) * base_radius)
     + bitangent * (sin(angle0) * base_radius);
@@ -652,21 +735,50 @@ fn arrow_vertex(
     + tangent * (cos(angle1) * base_radius)
     + bitangent * (sin(angle1) * base_radius);
 
+  // Four vertices per segment form two line-list edges:
+  // tip -> base0 and base0 -> base1.
   var world = tip;
-  if (corner == 1u) {
+  if (local == 1u || local == 2u) {
     world = base0;
-  } else if (corner == 2u) {
+  } else if (local == 3u) {
     world = base1;
   }
 
   var out: VertexOut;
   out.position = scene.view_projection * vec4<f32>(world, 1.0);
-  out.color = vec3<f32>(0.0, 0.95, 1.0);
+  out.color = vec3<f32>(0.0, 0.8, 1.0);
+  out.world_position = world;
+  out.smooth_normal = axis;
   return out;
 }
 
 @fragment
-fn fragment_main(input: VertexOut) -> @location(0) vec4<f32> {
+fn fragment_surface(input: VertexOut) -> @location(0) vec4<f32> {
+  var normal = safe_normalize(
+    input.smooth_normal,
+    vec3<f32>(0.0, 1.0, 0.0),
+  );
+  if (scene.shape.y < 0.5) {
+    var flat = safe_normalize(
+      cross(dpdx(input.world_position), dpdy(input.world_position)),
+      normal,
+    );
+    if (dot(flat, normal) < 0.0) {
+      flat = -flat;
+    }
+    normal = flat;
+  }
+
+  let light = safe_normalize(
+    vec3<f32>(0.45, 0.8, 0.55),
+    vec3<f32>(0.0, 1.0, 0.0),
+  );
+  let diffuse = 0.28 + 0.72 * max(0.0, dot(normal, light));
+  return vec4<f32>(input.color * diffuse, 1.0);
+}
+
+@fragment
+fn fragment_unlit(input: VertexOut) -> @location(0) vec4<f32> {
   return vec4<f32>(input.color, 1.0);
 }
 `;
@@ -792,6 +904,13 @@ implements MonolithicLinkWebGpuRenderer3D {
     let drawCalls = 0;
     if (linkCount > 0) {
       const wireframe = frame.wireframe === true;
+      const hoveredCenterLink =
+        frame.hoveredCenterLink ?? -1;
+      const showHoveredCenter =
+        frame.showCenterMarkers !== false
+        && Number.isSafeInteger(hoveredCenterLink)
+        && hoveredCenterLink >= 0
+        && hoveredCenterLink < linkCount;
       pass.setBindGroup(
         0,
         wireframe
@@ -816,9 +935,9 @@ implements MonolithicLinkWebGpuRenderer3D {
       drawCalls += 1;
 
       pass.setBindGroup(0, this.surfaceBindGroup);
-      if (frame.showCenterMarkers !== false) {
+      if (showHoveredCenter) {
         pass.setPipeline(this.centerPipeline);
-        pass.draw(CENTER_VERTEX_COUNT, linkCount, 0, 0);
+        pass.draw(CENTER_VERTEX_COUNT, 1, 0, hoveredCenterLink);
         drawCalls += 1;
       }
       if (frame.showEndCones !== false) {
@@ -841,8 +960,12 @@ implements MonolithicLinkWebGpuRenderer3D {
         surfaceVerticesPerLink * linkCount,
       centerVertexInvocations:
         frame.showCenterMarkers === false
+          || frame.hoveredCenterLink === undefined
+          || frame.hoveredCenterLink === null
+          || frame.hoveredCenterLink < 0
+          || frame.hoveredCenterLink >= linkCount
           ? 0
-          : CENTER_VERTEX_COUNT * linkCount,
+          : CENTER_VERTEX_COUNT,
       arrowVertexInvocations:
         frame.showEndCones === false
           ? 0
@@ -1052,6 +1175,7 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     topologyMode: "triangle-list" | "line-list" =
       "triangle-list",
     overlay = false,
+    fragmentEntryPoint = "fragment_unlit",
   ): Parameters<
     WebGpuRenderDeviceLike["createRenderPipelineAsync"]
   >[0] => {
@@ -1064,7 +1188,7 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
       },
       fragment: {
         module,
-        entryPoint: "fragment_main",
+        entryPoint: fragmentEntryPoint,
         targets: [{ format: colorFormat }],
       },
       primitive: {
@@ -1093,6 +1217,9 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
       pipelineDescriptor(
         "monolithic-link-surface-pipeline",
         "surface_vertex",
+        "triangle-list",
+        false,
+        "fragment_surface",
       ),
     ),
     device.createRenderPipelineAsync(
@@ -1106,7 +1233,7 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
       pipelineDescriptor(
         "monolithic-link-center-pipeline",
         "center_vertex",
-        "triangle-list",
+        "line-list",
         true,
       ),
     ),
@@ -1114,7 +1241,7 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
       pipelineDescriptor(
         "monolithic-link-arrow-pipeline",
         "arrow_vertex",
-        "triangle-list",
+        "line-list",
         true,
       ),
     ),
