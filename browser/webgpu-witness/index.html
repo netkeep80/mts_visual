@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>mts_visual WebGPU witness</title>
+  <title>mts_visual — WebGPU-стенд</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
@@ -56,24 +56,24 @@
 </head>
 <body>
 <main>
-  <h1>mts_visual — real WebGPU witness</h1>
-  <div class="muted">P4b compute differential + P4c zero-copy renderer on this browser/GPU.</div>
+  <h1>mts_visual — реальный WebGPU-стенд</h1>
+  <div class="muted">Дифференциальная проверка вычислений P4b + zero-copy рендерер P4c в этом браузере/GPU.</div>
 
   <section class="grid section">
-    <div class="card"><div class="muted">Build</div><div id="build" class="value">loading…</div></div>
-    <div class="card"><div class="muted">WebGPU</div><div id="webgpu" class="value">pending</div></div>
-    <div class="card"><div class="muted">Baseline</div><div id="baseline" class="value">pending</div></div>
-    <div class="card"><div class="muted">Overall witness</div><div id="overall" class="value">pending</div></div>
+    <div class="card"><div class="muted">Сборка</div><div id="build" class="value">загрузка…</div></div>
+    <div class="card"><div class="muted">WebGPU</div><div id="webgpu" class="value">ожидание</div></div>
+    <div class="card"><div class="muted">Базовая геометрия</div><div id="baseline" class="value">ожидание</div></div>
+    <div class="card"><div class="muted">Общий статус</div><div id="overall" class="value">ожидание</div></div>
   </section>
 
   <section class="card section">
     <div class="toolbar">
-      <h2 style="margin-right:auto">CPU ↔ GPU differential</h2>
-      <button id="rerun">Run differential again</button>
+      <h2 style="margin-right:auto">Дифференциальная проверка CPU ↔ GPU</h2>
+      <button id="rerun">Повторить проверку</button>
     </div>
     <table>
       <thead>
-        <tr><th>Fixture</th><th>Status</th><th>Steps</th><th>Tolerance</th><th>max Δposition</th><th>max Δvelocity</th></tr>
+        <tr><th>Сценарий</th><th>Статус</th><th>Шаги</th><th>Допуск</th><th>max Δпозиции</th><th>max Δскорости</th></tr>
       </thead>
       <tbody id="diff-body"></tbody>
     </table>
@@ -81,14 +81,14 @@
 
   <section class="card section">
     <div class="toolbar">
-      <h2 style="margin-right:auto">v0.5 rigid-section CPU ↔ GPU differential</h2>
-      <span class="muted">P3 differential · live renderer below uses the same v0.5 rigid state</span>
+      <h2 style="margin-right:auto">v0.5 — дифференциальная проверка жёстких секций CPU ↔ GPU</h2>
+      <span class="muted">Дифференциальная проверка P3 · live-рендерер ниже использует то же жёсткое состояние v0.5</span>
     </div>
     <table>
       <thead>
         <tr>
-          <th>Fixture</th><th>Status</th><th>Steps</th><th>Tolerance</th>
-          <th>max Δcenter</th><th>max Δquaternion</th><th>max Δv</th><th>max Δω</th>
+          <th>Сценарий</th><th>Статус</th><th>Шаги</th><th>Допуск</th>
+          <th>max Δцентра</th><th>max Δкватерниона</th><th>max Δv</th><th>max Δω</th>
         </tr>
       </thead>
       <tbody id="rigid-diff-body"></tbody>
@@ -97,63 +97,63 @@
 
   <section class="card section">
     <div class="toolbar">
-      <h2 style="margin-right:auto">v0.5 monolithic Link CPU ↔ GPU differential</h2>
-      <span class="muted">#92 authoritative live physical kernel</span>
+      <h2 style="margin-right:auto">v0.5 — дифференциальная проверка монолитной связи CPU ↔ GPU</h2>
+      <span class="muted">#92 — основное физическое ядро реального времени</span>
     </div>
     <table>
       <thead>
         <tr>
-          <th>Fixture</th><th>Status</th><th>Steps</th><th>Tolerance</th>
-          <th>max Δcenter</th><th>max Δvelocity</th>
+          <th>Сценарий</th><th>Статус</th><th>Шаги</th><th>Допуск</th>
+          <th>max Δцентра</th><th>max Δскорости</th>
         </tr>
       </thead>
       <tbody id="monolithic-diff-body"></tbody>
     </table>
     <div class="camera-hint">
-      Live physical contract: CENTER mass · stretch stiffness · straightening stiffness ·
-      conservative nonlinearity · CENTER damping.
+      Физический контракт реального времени: масса CENTER · жёсткость растяжения · жёсткость выпрямления ·
+      консервативная нелинейность · демпфирование CENTER.
     </div>
   </section>
 
   <section class="card section">
     <div class="toolbar">
-      <h2 style="margin-right:auto">v0.5 monolithic Link zero-copy live render</h2>
-      <span class="muted">semantic CENTER physics · globally derived octahedral carrier</span>
+      <h2 style="margin-right:auto">v0.5 — zero-copy рендеринг монолитной связи в реальном времени</h2>
+      <span class="muted">физика семантического CENTER · глобально производный октаэдрический носитель</span>
     </div>
 
     <div class="live-lab">
-      <aside class="control-sidebar" aria-label="Live physics controls">
+      <aside class="control-sidebar" aria-label="Параметры физики в реальном времени">
         <div class="physics-control">
-          <label for="scene"><span>Scene</span></label>
+          <label for="scene"><span>Сцена</span></label>
           <select id="scene">
-            <option value="root-r" selected>1 · R only</option>
+            <option value="root-r" selected>1 · только R</option>
             <option value="root-ro">2 · R + O</option>
             <option value="root-roc">3 · R + O + C</option>
             <option value="root-rocl">4 · R + O + C + L</option>
             <option value="root-roclu">5 · R + O + C + L + U</option>
-            <option value="hub-64">stress · 64 Links</option>
-            <option value="hub-333">stress · 333 Links</option>
-            <option value="hub-1000">stress · 1,000 Links</option>
+            <option value="hub-64">нагрузка · 64 связи</option>
+            <option value="hub-333">нагрузка · 333 связи</option>
+            <option value="hub-1000">нагрузка · 1 000 связей</option>
           </select>
         </div>
 
         <div class="physics-control">
           <label for="length-octa">
-            <span>Link length</span>
-            <output id="length-value">32 octa</output>
+            <span>Длина связи</span>
+            <output id="length-value">32 октаэдра</output>
           </label>
           <select id="length-octa">
-            <option value="16">16 octa</option>
-            <option value="32" selected>32 octa</option>
-            <option value="64">64 octa</option>
-            <option value="128">128 octa</option>
-            <option value="256">256 octa</option>
+            <option value="16">16 октаэдров</option>
+            <option value="32" selected>32 октаэдра</option>
+            <option value="64">64 октаэдра</option>
+            <option value="128">128 октаэдров</option>
+            <option value="256">256 октаэдров</option>
           </select>
         </div>
 
         <div class="physics-control">
           <label for="node-mass">
-            <span>CENTER mass</span>
+            <span>Масса CENTER</span>
             <output id="node-mass-value">1.00</output>
           </label>
           <input id="node-mass" type="range" min="0.05" max="20" step="0.05" value="1">
@@ -161,7 +161,7 @@
 
         <div class="physics-control">
           <label for="longitudinal-stiffness">
-            <span>Stretch k</span>
+            <span>Растяжение k</span>
             <output id="longitudinal-stiffness-value">1.00</output>
           </label>
           <input id="longitudinal-stiffness" type="range" min="0" max="100" step="0.1" value="1">
@@ -169,7 +169,7 @@
 
         <div class="physics-control">
           <label for="transverse-stiffness">
-            <span>Straightening k</span>
+            <span>Выпрямление k</span>
             <output id="transverse-stiffness-value">1.00</output>
           </label>
           <input id="transverse-stiffness" type="range" min="0" max="100" step="0.1" value="1">
@@ -177,7 +177,7 @@
 
         <div class="physics-control">
           <label for="nonlinearity">
-            <span>Nonlinearity α</span>
+            <span>Нелинейность α</span>
             <output id="nonlinearity-value">0.00</output>
           </label>
           <input id="nonlinearity" type="range" min="0" max="50" step="0.1" value="0">
@@ -185,7 +185,7 @@
 
         <div class="physics-control">
           <label for="linear-damping">
-            <span>CENTER damping</span>
+            <span>Демпфирование CENTER</span>
             <output id="linear-damping-value">1.50</output>
           </label>
           <input id="linear-damping" type="range" min="0" max="10" step="0.05" value="1.5">
@@ -193,7 +193,7 @@
 
         <div class="physics-control">
           <label for="angular-damping">
-            <span>Legacy rigid angular damping</span>
+            <span>Устаревшее угловое демпфирование жёстких секций</span>
             <output id="angular-damping-value">1.50</output>
           </label>
           <input id="angular-damping" type="range" min="0" max="10" step="0.05" value="1.5">
@@ -201,7 +201,7 @@
 
         <div class="physics-control">
           <label for="simulation-speed">
-            <span>Simulation speed</span>
+            <span>Скорость симуляции</span>
             <output id="simulation-speed-value">10.00×</output>
           </label>
           <input id="simulation-speed" type="range" min="0" max="20" step="0.05" value="10">
@@ -209,7 +209,7 @@
 
         <div class="physics-control">
           <label for="center-marker-scale">
-            <span>CENTER hover size ×</span>
+            <span>Размер маркера CENTER ×</span>
             <output id="center-marker-scale-value">1.00×</output>
           </label>
           <input id="center-marker-scale" type="range" min="0.25" max="8" step="0.05" value="1">
@@ -217,35 +217,35 @@
 
         <div class="physics-control">
           <label for="end-cone-scale">
-            <span>END cone size ×</span>
+            <span>Размер конуса END ×</span>
             <output id="end-cone-scale-value">1.00×</output>
           </label>
           <input id="end-cone-scale" type="range" min="0.25" max="8" step="0.05" value="1">
         </div>
 
         <div class="physics-control">
-          <div class="muted" style="margin-bottom:6px">Global rendering</div>
+          <div class="muted" style="margin-bottom:6px">Глобальный рендеринг</div>
           <div class="inline-checks">
-            <label><input id="global-wireframe" type="checkbox" checked> Wireframe</label>
-            <label><input id="global-smooth-normals" type="checkbox" checked> Smooth normals</label>
+            <label><input id="global-wireframe" type="checkbox" checked> Каркас</label>
+            <label><input id="global-smooth-normals" type="checkbox" checked> Сглаживать нормали</label>
           </div>
         </div>
 
         <div class="physics-control">
-          <div class="muted" style="margin-bottom:6px">Overlays / camera</div>
+          <div class="muted" style="margin-bottom:6px">Наложения / камера</div>
           <div class="inline-checks">
-            <label><input id="show-center-markers" type="checkbox" checked> CENTER hover</label>
-            <label><input id="show-end-cones" type="checkbox" checked> END cones</label>
-            <label><input id="auto-rotate" type="checkbox"> Auto rotate</label>
+            <label><input id="show-center-markers" type="checkbox" checked> Маркер CENTER</label>
+            <label><input id="show-end-cones" type="checkbox" checked> Конусы END</label>
+            <label><input id="auto-rotate" type="checkbox"> Автовращение</label>
           </div>
         </div>
 
         <div class="control-actions">
-          <button id="restart-render">Restart</button>
-          <button id="pause-render">Pause</button>
-          <button id="reset-view">Reset view</button>
-          <button id="fullscreen-render">Fullscreen</button>
-          <button id="inspect-geometry">Inspect</button>
+          <button id="restart-render">Перезапустить</button>
+          <button id="pause-render">Пауза</button>
+          <button id="reset-view">Сбросить вид</button>
+          <button id="fullscreen-render">На весь экран</button>
+          <button id="inspect-geometry">Проверить геометрию</button>
         </div>
       </aside>
 
@@ -253,37 +253,37 @@
         <div id="viewport-shell" class="viewport-shell">
           <canvas id="gpu-canvas"></canvas>
         </div>
-        <div class="camera-hint">Mouse: hover the two central octahedra to reveal the green L2 wireframe icosahedron · left drag that handle = move semantic CENTER · left drag elsewhere = orbit · wheel = zoom · right drag or Shift+left drag = pan</div>
+        <div class="camera-hint">Мышь: наведите на два центральных октаэдра, чтобы показать зелёный каркасный икосаэдр L2 · перетаскивание ЛКМ за маркер = перемещение семантического CENTER · ЛКМ в другом месте = вращение камеры · колесо = масштаб · ПКМ или Shift+ЛКМ = панорамирование</div>
         <div class="grid" style="margin-top:12px">
-          <div><span class="muted">Compute</span><div id="render-compute" class="value">pending</div></div>
-          <div><span class="muted">Topology</span><div id="render-topology" class="value">pending</div></div>
+          <div><span class="muted">Вычисление</span><div id="render-compute" class="value">pending</div></div>
+          <div><span class="muted">Топология</span><div id="render-topology" class="value">pending</div></div>
           <div><span class="muted">Zero-copy</span><div id="render-zero-copy" class="value">pending</div></div>
-          <div><span class="muted">Frames / steps</span><div id="render-frames" class="value">0 / 0</div></div>
+          <div><span class="muted">Кадры / шаги</span><div id="render-frames" class="value">0 / 0</div></div>
         </div>
       </div>
     </div>
 
     <div class="card" style="margin-top:12px">
       <div class="toolbar">
-        <h2 style="margin-right:auto">Geometry inspection</h2>
-        <span class="muted">one-shot GPU readback; ordinary render remains zero-copy</span>
+        <h2 style="margin-right:auto">Проверка геометрии</h2>
+        <span class="muted">разовое чтение GPU; обычный рендер остаётся zero-copy</span>
       </div>
       <table>
         <thead>
           <tr>
-            <th>Link</th>
-            <th>Equation</th>
+            <th>Связь</th>
+            <th>Уравнение</th>
             <th>|S-C|</th>
             <th>|C-E|</th>
-            <th>bend |S-2C+E|</th>
+            <th>изгиб |S-2C+E|</th>
             <th>Δ CENTER</th>
-            <th>Potential E</th>
+            <th>Потенциал E</th>
             <th>|v CENTER|</th>
-            <th>rest L</th>
+            <th>L покоя</th>
           </tr>
         </thead>
         <tbody id="geometry-body">
-          <tr><td colspan="9" class="muted">Press Inspect geometry.</td></tr>
+          <tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>
         </tbody>
       </table>
     </div>
@@ -291,9 +291,9 @@
 
   <section class="card section">
     <div class="toolbar">
-      <h2 style="margin-right:auto">Diagnostic log</h2>
-      <button id="copy-log" type="button">Copy log</button>
-      <button id="save-log" type="button">Save log</button>
+      <h2 style="margin-right:auto">Диагностический журнал</h2>
+      <button id="copy-log" type="button">Копировать журнал</button>
+      <button id="save-log" type="button">Сохранить журнал</button>
     </div>
     <pre id="log"></pre>
   </section>
