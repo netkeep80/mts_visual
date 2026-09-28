@@ -1336,7 +1336,7 @@ async function startRender() {
 
     if (!zeroCopy) {
       throw new Error(
-        "нарушен инвариант monolithic zero-copy до первого кадра",
+        "нарушен инвариант монолитного zero-copy до первого кадра",
       );
     }
 
@@ -1764,20 +1764,20 @@ function applyLivePhysicsControls() {
 
   const snapshot = compute.snapshot();
   const checks = [
-    ["centerMass", snapshot.centerMass, physics.nodeMass],
+    ["масса CENTER", snapshot.centerMass, physics.nodeMass],
     [
-      "stretchStiffness",
+      "жёсткость растяжения",
       snapshot.stretchStiffness,
       physics.longitudinalStiffness,
     ],
     [
-      "straighteningStiffness",
+      "жёсткость выпрямления",
       snapshot.straighteningStiffness,
       physics.transverseStiffness,
     ],
-    ["nonlinearity", snapshot.nonlinearity, physics.nonlinearity],
-    ["dampingRate", snapshot.dampingRate, physics.linearDampingRate],
-    ["simulationSpeed", snapshot.simulationSpeed, physics.simulationSpeed],
+    ["нелинейность", snapshot.nonlinearity, physics.nonlinearity],
+    ["демпфирование CENTER", snapshot.dampingRate, physics.linearDampingRate],
+    ["скорость симуляции", snapshot.simulationSpeed, physics.simulationSpeed],
   ];
   for (const [label, actual, expected] of checks) {
     if (Math.abs(actual - expected) > 1e-12) {
