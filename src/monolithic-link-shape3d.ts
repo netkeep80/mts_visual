@@ -7,6 +7,7 @@ import type {
 const EPSILON = 1e-9;
 const TWO_PI = 2 * Math.PI;
 const SELF_HINGE_OPENING = Math.PI;
+export const MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH = 8.448334738583334;
 const ARC_INTEGRATION_STEPS = 96;
 const ARC_BISECTION_STEPS = 40;
 const ROLL_GAUGE_WEAK_BEND_SINE = 0.015;
@@ -366,14 +367,6 @@ function selfLoopBaseDerivative(u: number): MonolithicLinkVec3 {
   ];
 }
 
-let selfLoopUnitArcLength: number | null = null;
-
-function unitSelfLoopArcLength(): number {
-  if (selfLoopUnitArcLength !== null) return selfLoopUnitArcLength;
-  selfLoopUnitArcLength = simpsonArcLength(selfLoopBaseDerivative);
-  return selfLoopUnitArcLength;
-}
-
 function buildSelfHalfCurve(
   anchor: MonolithicLinkVec3,
   axes: readonly [
@@ -384,7 +377,8 @@ function buildSelfHalfCurve(
   restArcLength: number,
   lobeSign: number,
 ): HalfCurve {
-  const scale = restArcLength / unitSelfLoopArcLength();
+  const scale =
+    restArcLength / MONOLITHIC_SELF_LOOP_UNIT_ARC_LENGTH;
   const [xAxis, yAxis, zAxis] = axes;
 
   const map = (base: MonolithicLinkVec3): MonolithicLinkVec3 =>
