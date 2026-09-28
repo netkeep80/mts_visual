@@ -206,7 +206,7 @@ function buildUniformData(
   f32[26] = shape.template.restLength;
   f32[27] = shape.template.halfRestLength;
 
-  f32[28] = shape.template.halfRestLength / 7.511568580362938;
+  f32[28] = shape.template.halfRestLength / 8.448334738583334;
   f32[29] = frame.smoothNormals === false ? 0 : 1;
   f32[30] = 0;
   f32[31] = 0;
@@ -403,8 +403,9 @@ fn self_loop_base_point(t: f32) -> vec3<f32> {
   let theta = TAU * t;
   let sine = sin(theta);
   let one_minus_cos = 1.0 - cos(theta);
+  let hinge_opening = PI * t * (1.0 - t);
   return vec3<f32>(
-    0.60 * one_minus_cos * one_minus_cos,
+    0.60 * one_minus_cos * one_minus_cos + hinge_opening,
     0.35 * sine * one_minus_cos,
     sine,
   );
@@ -416,7 +417,8 @@ fn self_loop_base_derivative(t: f32) -> vec3<f32> {
   let cosine = cos(theta);
   let one_minus_cos = 1.0 - cosine;
   return vec3<f32>(
-    1.20 * one_minus_cos * sine * TAU,
+    1.20 * one_minus_cos * sine * TAU
+      + PI * (1.0 - 2.0 * t),
     0.35 * (cosine * one_minus_cos + sine * sine) * TAU,
     cosine * TAU,
   );
