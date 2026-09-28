@@ -23,6 +23,7 @@
     th { color: #9fb1c9; font-weight: 600; }
     canvas { width: 100%; height: 100%; background: #000; display: block; border-radius: 10px; border: 1px solid #25334a; cursor: grab; touch-action: none; user-select: none; }
     canvas.dragging { cursor: grabbing; }
+    canvas.center-hover:not(.dragging) { cursor: pointer; }
     .camera-hint { margin-top: 8px; font-size: 12px; color: #98a7bd; }
     button, select { background: #172338; color: #e9eef7; border: 1px solid #395070; border-radius: 8px; padding: 8px 12px; }
     button:hover { background: #20304a; }
@@ -208,7 +209,7 @@
 
         <div class="physics-control">
           <label for="center-marker-scale">
-            <span>CENTER size ×</span>
+            <span>CENTER hover size ×</span>
             <output id="center-marker-scale-value">1.00×</output>
           </label>
           <input id="center-marker-scale" type="range" min="0.25" max="8" step="0.05" value="1">
@@ -224,8 +225,9 @@
 
         <div class="physics-control">
           <div class="inline-checks">
-            <label><input id="show-center-markers" type="checkbox" checked> CENTER nodes</label>
+            <label><input id="show-center-markers" type="checkbox" checked> CENTER hover</label>
             <label><input id="show-end-cones" type="checkbox" checked> END cones</label>
+            <label><input id="smooth-normals" type="checkbox" checked> Smooth normals</label>
             <label><input id="auto-rotate" type="checkbox"> Auto rotate</label>
             <label><input id="wireframe" type="checkbox" checked> Wireframe</label>
           </div>
@@ -244,7 +246,7 @@
         <div id="viewport-shell" class="viewport-shell">
           <canvas id="gpu-canvas"></canvas>
         </div>
-        <div class="camera-hint">Mouse: left drag on green CENTER = move Link center · left drag elsewhere = orbit · wheel = zoom · right drag or Shift+left drag = pan</div>
+        <div class="camera-hint">Mouse: hover the two central octahedra to reveal the green L2 wireframe icosahedron · left drag that handle = move semantic CENTER · left drag elsewhere = orbit · wheel = zoom · right drag or Shift+left drag = pan</div>
         <div class="grid" style="margin-top:12px">
           <div><span class="muted">Compute</span><div id="render-compute" class="value">pending</div></div>
           <div><span class="muted">Topology</span><div id="render-topology" class="value">pending</div></div>
