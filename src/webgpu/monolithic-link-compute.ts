@@ -1,7 +1,8 @@
 import type { VisualLinkNetwork } from "../index.js";
 import {
   MONOLITHIC_LINK_BASE_TIME_STEP,
-  createMonolithicLinkSpringPhysics3D,
+  createMonolithicLinkSemanticCenterSeed3D,
+  getMonolithicLinkSpringTemplate3D,
   type MonolithicLinkSpringOptions3D,
 } from "../monolithic-link-spring3d.js";
 import {
@@ -32,6 +33,17 @@ export type MonolithicLinkWebGpuVec3 = readonly [number, number, number];
 export interface MonolithicLinkWebGpuState3D {
   readonly centers: Float32Array;
   readonly velocities: Float32Array;
+}
+
+export interface MonolithicLinkWebGpuTopology3D {
+  readonly linkCount: number;
+  readonly startIndices: Uint32Array;
+  readonly endIndices: Uint32Array;
+}
+
+export interface MonolithicLinkWebGpuInitialState3D {
+  readonly centers: Float32Array;
+  readonly velocities?: Float32Array;
 }
 
 export interface MonolithicLinkWebGpuStepStats3D {
@@ -72,7 +84,7 @@ export interface MonolithicLinkWebGpuOverrideStats3D {
 }
 
 export interface MonolithicLinkWebGpuCompute3D {
-  readonly topology: OctahedralLinkTopology3D;
+  readonly topology: MonolithicLinkWebGpuTopology3D;
   readonly centerBuffer: WebGpuBufferLike;
   readonly velocityBuffer: WebGpuBufferLike;
   readonly linkForceBuffer: WebGpuBufferLike;
@@ -269,7 +281,7 @@ function resolvePhysics(options: MonolithicLinkSpringOptions3D): ResolvedPhysics
 }
 
 function buildReverseIncidence(
-  topology: OctahedralLinkTopology3D,
+  topology: MonolithicLinkWebGpuTopology3D,
 ): ReverseIncidence {
   const counts = new Uint32Array(topology.linkCount);
   for (let source = 0; source < topology.linkCount; source += 1) {
@@ -303,7 +315,7 @@ function buildReverseIncidence(
 }
 
 function packedTopologyData(
-  topology: OctahedralLinkTopology3D,
+  topology: MonolithicLinkWebGpuTopology3D,
   reverse: ReverseIncidence,
 ): Uint32Array {
   const topologyWords = topology.linkCount * 2;
@@ -325,7 +337,7 @@ function packedTopologyData(
 }
 
 function globalsData(
-  topology: OctahedralLinkTopology3D,
+  topology: MonolithicLinkWebGpuTopology3D,
   restLength: number,
   physics: ResolvedPhysics,
 ): ArrayBuffer {
@@ -476,7 +488,7 @@ async function readBackBuffer(
 
 class MonolithicLinkWebGpuController
 implements MonolithicLinkWebGpuCompute3D {
-  readonly topology: OctahedralLinkTopology3D;
+  readonly topology: MonolithicLinkWebGpuTopology3D;
   readonly centerBuffer: WebGpuBufferLike;
   readonly velocityBuffer: WebGpuBufferLike;
   readonly linkForceBuffer: WebGpuBufferLike;
@@ -504,7 +516,7 @@ implements MonolithicLinkWebGpuCompute3D {
 
   constructor(args: {
     device: WebGpuDeviceLike;
-    topology: OctahedralLinkTopology3D;
+    topology: MonolithicLinkWebGpuTopology3D;
     centerBuffer: WebGpuBufferLike;
     velocityBuffer: WebGpuBufferLike;
     linkForceBuffer: WebGpuBufferLike;
