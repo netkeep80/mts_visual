@@ -90,6 +90,7 @@ export interface WebGpuDeviceLike {
     readonly maxComputeWorkgroupsPerDimension?: number;
     readonly maxStorageBufferBindingSize?: number;
     readonly maxStorageBuffersPerShaderStage?: number;
+    readonly maxBufferSize?: number;
   };
   createBuffer(descriptor: {
     readonly label?: string;
