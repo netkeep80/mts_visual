@@ -2491,21 +2491,25 @@ async function mountLabMode(modeId) {
   const mechanical = modeId === "mechanical-3d";
   const structural = modeId === "structural-2d";
   const blueprint = modeId === "blueprint-2d";
+  const document2d = modeId === "document-2d";
   const classic = modeId === "classic-3d";
-  const hasSideControls = mechanical || structural || blueprint || classic;
+  const hasSideControls = mechanical || structural || blueprint || document2d || classic;
 
   ui.mechanicalControls.hidden = !mechanical;
   ui.structuralControls.hidden = !structural;
   ui.blueprintControls.hidden = !blueprint;
+  ui.documentControls.hidden = !document2d;
   ui.classicControls.hidden = !classic;
   ui.canvas.hidden = !mechanical;
   ui.structuralViewport.hidden = !structural;
   ui.blueprintViewport.hidden = !blueprint;
+  ui.documentViewport.hidden = !document2d;
   ui.classicViewport.hidden = !classic;
-  ui.modePlaceholder.hidden = mechanical || structural || blueprint || classic;
+  ui.modePlaceholder.hidden = mechanical || structural || blueprint || document2d || classic;
   ui.mechanicalCameraHint.hidden = !mechanical;
   ui.mechanicalRenderDiagnostics.hidden = !mechanical;
   ui.structuralRenderDiagnostics.hidden = !structural;
+  ui.documentRenderDiagnostics.hidden = !document2d;
   ui.classicRenderDiagnostics.hidden = !classic;
   ui.mechanicalGeometryPanel.hidden = !mechanical;
   ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
@@ -2517,6 +2521,7 @@ async function mountLabMode(modeId) {
 
   if (structural) return mountStructural2D();
   if (blueprint) return mountBlueprint();
+  if (document2d) return mountDocument2D();
   if (classic) return mountClassic3D();
 
   updateModePlaceholder(modeId);
@@ -2597,7 +2602,7 @@ ui.rerun.addEventListener("click", () => {
 ui.scene.addEventListener("change", () => {
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
-  if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "classic-3d") {
+  if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "document-2d" || activeMode === "classic-3d") {
     activateLabMode(activeMode).catch((error) => {
       log(`ОШИБКА перезапуска режима ${activeMode} — ${error.stack ?? error}`);
     });
@@ -2681,6 +2686,28 @@ ui.blueprintReset.addEventListener("click", () => {
 
 ui.blueprintExport.addEventListener("click", () => {
   downloadBlueprintSvg();
+});
+
+for (const control of [
+  ui.documentProfile,
+  ui.documentStrategy,
+  ui.documentRoot,
+]) {
+  control.addEventListener("change", () => {
+    if (document2dState) renderDocumentState(document2dState, { fit: true });
+  });
+}
+
+ui.documentFit.addEventListener("click", () => {
+  if (document2dState) fitDocumentState(document2dState);
+});
+
+ui.documentReset.addEventListener("click", () => {
+  if (document2dState) renderDocumentState(document2dState, { fit: true });
+});
+
+ui.documentExport.addEventListener("click", () => {
+  downloadDocumentSvg();
 });
 
 for (const control of [
@@ -2901,6 +2928,7 @@ document.addEventListener("fullscreenchange", () => {
   }
   if (structuralState) requestAnimationFrame(() => fitStructuralState(structuralState));
   if (blueprintState) requestAnimationFrame(() => fitBlueprintState(blueprintState));
+  if (document2dState) requestAnimationFrame(() => fitDocumentState(document2dState));
 });
 
 try {
