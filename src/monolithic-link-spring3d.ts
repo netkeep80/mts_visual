@@ -330,6 +330,27 @@ function compactSemanticCenterSeed(
   ];
 }
 
+export function createMonolithicLinkSemanticCenterSeed3D(
+  linkCount: number,
+  aspectRatio: number,
+): Float32Array {
+  if (!Number.isSafeInteger(linkCount) || linkCount < 0) {
+    throw new Error(
+      `invalid monolithic Link seed linkCount: ${String(linkCount)}`,
+    );
+  }
+  const template = getMonolithicLinkSpringTemplate3D(aspectRatio);
+  const centers = new Float32Array(linkCount * 3);
+  for (let link = 0; link < linkCount; link += 1) {
+    writeVec3(
+      centers,
+      link,
+      compactSemanticCenterSeed(template, link, linkCount),
+    );
+  }
+  return centers;
+}
+
 export class MonolithicLinkSpringPhysics3D {
   readonly topology: OctahedralLinkTopology3D;
   readonly template: MonolithicLinkSpringTemplate3D;
@@ -378,18 +399,13 @@ export class MonolithicLinkSpringPhysics3D {
     );
 
     const count = this.topology.linkCount;
-    this.centers = new Float32Array(count * 3);
+    this.centers = createMonolithicLinkSemanticCenterSeed3D(
+      count,
+      this.template.aspectRatio,
+    );
     this.velocities = new Float32Array(count * 3);
     this.forces = new Float64Array(count * 3);
     this.linkForceContributions = new Float64Array(count * 9);
-
-    for (let link = 0; link < count; link += 1) {
-      writeVec3(
-        this.centers,
-        link,
-        compactSemanticCenterSeed(this.template, link, count),
-      );
-    }
   }
 
   semanticCenter(link: number): MonolithicLinkVec3 {

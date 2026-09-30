@@ -8,3 +8,4 @@ export * from "./rigid-section-renderer.js";
 export * from "./rigid-section-interaction.js";
 export * from "./monolithic-link-capacity.js";
 export * from "./monolithic-link-detail-selection.js";
+export * from "./monolithic-link-benchmark.js";
