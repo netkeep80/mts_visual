@@ -1,10 +1,5 @@
 import { runMechanicalWebGpuBenchmark } from "./benchmark.js";
-import {
-  benchmarkEvidenceFileName,
-  createBenchmarkConfig,
-  parseMechanicalBenchmarkQuery,
-  serializeBenchmarkEvidence,
-} from "./benchmark-ui-model.js";
+import { createBenchmarkUiController } from "./benchmark-ui-controller.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -518,184 +513,26 @@ let rigidDifferentialPhysicsSignature = null;
 let monolithicDifferentialPhysicsSignature = null;
 let renderPass = false;
 let renderState = null;
-let benchmarkRunning = false;
-let benchmarkStopRequested = false;
-let benchmarkEvidence = null;
 
 const MECHANICAL_DETAIL_SLOT_BUDGET = 4096;
 const MECHANICAL_DETAIL_FRUSTUM_MARGIN = 0.18;
 const MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS = 70;
 const MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS = 250;
 
-function selectedBenchmarkConfig() {
-  return createBenchmarkConfig(
-    {
-      linkCount: ui.benchmarkLinks.value,
-      topologyProfile: ui.benchmarkProfile.value,
-      seed: ui.benchmarkSeed.value,
-      octahedra: ui.benchmarkOcta.value,
-      detailProfile: ui.benchmarkDetail.value,
-      warmupCount: ui.benchmarkWarmup.value,
-      sampleCount: ui.benchmarkSamples.value,
-      renderEnabled: ui.benchmarkRender.checked,
-    },
-    selectedPhysics(),
-  );
-}
-
-function benchmarkProgress(event) {
-  const labels = {
-    device: "устройство",
-    topology: "топология",
-    "compute-create": "compute init",
-    "shape-create": "shape init",
-    "renderer-create": "renderer init",
-    warmup: "warmup",
-    samples: "samples",
-    done: "завершение",
-  };
-  const total = Math.max(1, event.total ?? 1);
-  const completed = Math.max(0, event.completed ?? 0);
-  ui.benchmarkProgress.max = total;
-  ui.benchmarkProgress.value = Math.min(total, completed);
-  ui.benchmarkStatus.textContent =
-    `${labels[event.phase] ?? event.phase} · ${completed}/${total}`;
-}
-
-function renderBenchmarkEvidence(evidence) {
-  benchmarkEvidence = evidence;
-  ui.benchmarkResult.textContent = JSON.stringify(evidence, null, 2);
-  ui.benchmarkCopy.disabled = false;
-  ui.benchmarkDownload.disabled = false;
-
-  if (evidence.status === "PASS") {
-    const physicsMedian =
-      evidence.stages.physics?.medianMs?.toFixed(3) ?? "—";
-    const shapeMedian =
-      evidence.stages.shape?.medianMs?.toFixed(3) ?? "—";
-    ui.benchmarkStatus.textContent =
-      `PASS · samples=${evidence.sampleCountCompleted} · physics median=${physicsMedian} ms · shape median=${shapeMedian} ms`;
-    ui.benchmarkStatus.className = "lab-mode-status ok";
-  } else if (evidence.status === "CAPACITY_BLOCKED") {
-    ui.benchmarkStatus.textContent =
-      `CAPACITY_BLOCKED · ${evidence.capacityBlockReason}`;
-    ui.benchmarkStatus.className = "lab-mode-status warn";
-  } else {
-    ui.benchmarkStatus.textContent =
-      `RUNTIME_FAILED · ${evidence.error ?? "неизвестная ошибка"}`;
-    ui.benchmarkStatus.className = "lab-mode-status fail";
-  }
-}
-
-async function runBenchmarkFromUi() {
-  if (benchmarkRunning) return;
-  if (!adapter) {
-    throw new Error("WebGPU adapter недоступен");
-  }
-
-  const config = selectedBenchmarkConfig();
-  benchmarkRunning = true;
-  benchmarkStopRequested = false;
-  benchmarkEvidence = null;
-  ui.benchmarkRun.disabled = true;
-  ui.benchmarkStop.disabled = false;
-  ui.benchmarkCopy.disabled = true;
-  ui.benchmarkDownload.disabled = true;
-  ui.benchmarkResult.textContent = "evidence: benchmark выполняется…";
-  ui.benchmarkProgress.max = 1;
-  ui.benchmarkProgress.value = 0;
-  ui.benchmarkStatus.className = "lab-mode-status";
-  log(
-    `benchmark start: Links=${config.linkCount}, topology=${config.topologyProfile}, octa=${config.octahedra}, detail=${config.detailProfile}, render=${config.renderEnabled}, warmup=${config.warmupCount}, samples=${config.sampleCount}`,
-  );
-
-  try {
-    const interactiveMechanicalSuspended = renderState !== null;
-    if (
-      interactiveMechanicalSuspended
-      && typeof device?.queue?.onSubmittedWorkDone === "function"
-    ) {
-      ui.benchmarkStatus.textContent =
-        "изоляция benchmark · ожидание завершения интерактивной GPU queue";
-      await device.queue.onSubmittedWorkDone();
-    }
-
-    const evidence = await runMechanicalWebGpuBenchmark({
-      adapter,
-      webgpu,
-      buildInfo,
-      canvas: ui.benchmarkCanvas,
-      config: {
-        ...config,
-        resourceIsolation: interactiveMechanicalSuspended
-          ? "separate-device+interactive-mechanical-suspended"
-          : "separate-device",
-      },
-      onProgress: benchmarkProgress,
-      shouldStop: () => benchmarkStopRequested,
-    });
-    renderBenchmarkEvidence(evidence);
-    log(
-      `benchmark result: ${evidence.status} · Links=${evidence.linkCount} · detail=${evidence.effectiveDetailCapacity} · samples=${evidence.sampleCountCompleted}`,
-    );
-  } finally {
-    benchmarkRunning = false;
-    ui.benchmarkRun.disabled = false;
-    ui.benchmarkStop.disabled = true;
-  }
-}
-
-function downloadBenchmarkEvidence() {
-  const text = serializeBenchmarkEvidence(benchmarkEvidence);
-  const blob = new Blob(
-    [text],
-    { type: "application/json;charset=utf-8" },
-  );
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = benchmarkEvidenceFileName(
-    benchmarkEvidence,
-    buildInfo.mainSha,
-  );
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function applyBenchmarkQuery(params) {
-  const query = parseMechanicalBenchmarkQuery(
-    params,
-    ui.benchmarkLinks.value,
-  );
-  if (!query.requested) return false;
-
-  const values = query.values;
-  if (values.linkCount !== undefined) {
-    ui.benchmarkLinks.value = String(values.linkCount);
-  }
-  if (values.topologyProfile !== undefined) {
-    ui.benchmarkProfile.value = values.topologyProfile;
-  }
-  if (values.detailProfile !== undefined) {
-    ui.benchmarkDetail.value = values.detailProfile;
-  }
-  if (values.octahedra !== undefined) {
-    ui.benchmarkOcta.value = String(values.octahedra);
-  }
-  if (values.seed !== undefined) {
-    ui.benchmarkSeed.value = String(values.seed);
-  }
-  if (values.warmupCount !== undefined) {
-    ui.benchmarkWarmup.value = String(values.warmupCount);
-  }
-  if (values.sampleCount !== undefined) {
-    ui.benchmarkSamples.value = String(values.sampleCount);
-  }
-  ui.benchmarkRender.checked = values.renderEnabled;
-  return true;
-}
+const benchmarkController = createBenchmarkUiController({
+  ui,
+  selectedPhysics,
+  getAdapter: () => adapter,
+  getInteractiveDevice: () => device,
+  isMechanicalMounted: () => renderState !== null,
+  runBenchmark: runMechanicalWebGpuBenchmark,
+  webgpu,
+  buildInfo,
+  copyText,
+  downloadTextFile,
+  log,
+});
+benchmarkController.mount();
 
 function differentialIsCurrent() {
   return monolithicDifferentialAllPass
@@ -2215,7 +2052,7 @@ async function startRender() {
     function frame(now) {
       if (renderState !== state) return;
 
-      if (benchmarkRunning) {
+      if (benchmarkController.isRunning()) {
         state.lastFrameAt = now;
         state.raf = requestAnimationFrame(frame);
         return;
@@ -3692,58 +3529,6 @@ ui.labInputCopy.addEventListener("click", () => {
   });
 });
 
-ui.benchmarkRun.addEventListener("click", () => {
-  runBenchmarkFromUi().catch((error) => {
-    ui.benchmarkStatus.textContent =
-      `RUNTIME_FAILED · ${error instanceof Error ? error.message : String(error)}`;
-    ui.benchmarkStatus.className = "lab-mode-status fail";
-    ui.benchmarkResult.textContent =
-      `benchmark runner error:\n${error instanceof Error ? error.stack ?? error.message : String(error)}`;
-    log(
-      `ОШИБКА benchmark runner — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
-    );
-    benchmarkRunning = false;
-    ui.benchmarkRun.disabled = false;
-    ui.benchmarkStop.disabled = true;
-  });
-});
-
-ui.benchmarkStop.addEventListener("click", () => {
-  if (!benchmarkRunning) return;
-  benchmarkStopRequested = true;
-  ui.benchmarkStop.disabled = true;
-  ui.benchmarkStatus.textContent =
-    "остановка после текущего warmup/sample…";
-  log("benchmark: запрошена остановка после текущего sample");
-});
-
-ui.benchmarkCopy.addEventListener("click", () => {
-  copyText(serializeBenchmarkEvidence(benchmarkEvidence)).then(() => {
-    ui.benchmarkStatus.textContent =
-      `${benchmarkEvidence.status} · JSON скопирован`;
-  }).catch((error) => {
-    log(
-      `ОШИБКА копирования benchmark evidence — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
-    );
-  });
-});
-
-ui.benchmarkDownload.addEventListener("click", () => {
-  try {
-    downloadBenchmarkEvidence();
-  } catch (error) {
-    log(
-      `ОШИБКА сохранения benchmark evidence — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
-    );
-  }
-});
-
-ui.benchmarkDetail.addEventListener("change", () => {
-  if (ui.benchmarkDetail.value === "semantic") {
-    ui.benchmarkRender.checked = false;
-  }
-});
-
 ui.labRunCycleTest.addEventListener("click", () => {
   runLabModeCycleSelfTest().catch((error) => {
     log(`ОШИБКА mode-cycle self-test — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
@@ -4119,9 +3904,9 @@ try {
     await runLabModeCycleSelfTest();
   }
 
-  if (applyBenchmarkQuery(startupParams)) {
+  if (benchmarkController.applyQuery(startupParams)) {
     log("запрошен Mechanical WebGPU benchmark через URL");
-    await runBenchmarkFromUi();
+    await benchmarkController.run();
   }
 } catch (error) {
   setStatus(ui.overall, "ОШИБКА — см. диагностический журнал", "fail");
@@ -4129,7 +3914,8 @@ try {
 }
 
 window.addEventListener("pagehide", () => {
-  benchmarkStopRequested = true;
+  benchmarkController.requestStop({ announce: false });
+  benchmarkController.dispose();
   void labLifecycle.dispose();
   stopRender();
 });

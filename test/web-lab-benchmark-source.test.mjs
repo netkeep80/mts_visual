@@ -85,41 +85,25 @@ assert(
 );
 
 assert(
-  app.includes('from "./benchmark-ui-model.js"')
-    && app.includes("parseMechanicalBenchmarkQuery")
-    && app.includes("createBenchmarkConfig")
-    && app.includes("serializeBenchmarkEvidence"),
-  "app must delegate benchmark UI data rules to the pure benchmark UI model",
+  app.includes('from "./benchmark-ui-controller.js"')
+    && app.includes("createBenchmarkUiController")
+    && app.includes("benchmarkController.isRunning()"),
+  "app must delegate benchmark UI lifecycle to the benchmark controller",
 );
 assert(
-  app.includes("applyBenchmarkQuery(startupParams)"),
-  "startup must support URL-addressable benchmark opt-in",
+  app.includes("benchmarkController.applyQuery(startupParams)")
+    && app.includes("await benchmarkController.run()"),
+  "startup must use the benchmark controller for URL-addressable opt-in",
 );
 assert(
   !app.includes('ui.benchmarkLinks.value = "1000000";'),
   "ordinary page load must not force the 1M preset",
 );
 assert(
-  app.includes("benchmarkStopRequested = true"),
-  "Stop/pagehide must prevent another benchmark sample",
-);
-assert(
-  app.includes("if (benchmarkRunning)")
-    && app.includes("state.raf = requestAnimationFrame(frame)")
-    && app.includes("await device.queue.onSubmittedWorkDone()")
-    && app.includes('"separate-device+interactive-mechanical-suspended"'),
-  "benchmark must suspend and drain the interactive Mechanical GPU pipeline",
-);
-assert(
   benchmark.includes("samples.physics.length < sampleCount")
     && benchmark.includes('"USER_STOPPED_BEFORE_REQUESTED_SAMPLE_COUNT"'),
   "stopped partial runs must not be reported as PASS",
 );
-assert(
-  app.includes("downloadBenchmarkEvidence"),
-  "benchmark evidence must be downloadable",
-);
-
 assert(
   html.includes('<option value="1000000">1 000 000</option>'),
   "1M must be an explicit selectable preset",
