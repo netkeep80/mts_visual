@@ -35,7 +35,14 @@
     .live-lab.placeholder-mode { grid-template-columns: minmax(0, 1fr); }
     .mode-placeholder { height:100%; min-height:320px; display:grid; place-items:center; text-align:center; padding:32px; color:#98a7bd; background:radial-gradient(circle at 50% 40%, #172338 0, #090d14 60%); }
     .mode-placeholder strong { display:block; color:#e9eef7; font-size:20px; margin-bottom:8px; }
-    .blueprint-viewport, .classic-viewport { width:100%; height:100%; background:#070b11; overflow:hidden; touch-action:none; user-select:none; }
+    .structural-viewport, .blueprint-viewport, .classic-viewport { width:100%; height:100%; background:#070b11; overflow:hidden; touch-action:none; user-select:none; }
+    .structural-viewport { cursor:grab; }
+    .structural-viewport.dragging { cursor:grabbing; }
+    .structural-viewport svg { width:100%; height:100%; display:block; }
+    .structural-viewport .structural-start { stroke:#ff6b6b; stroke-width:2; opacity:.88; vector-effect:non-scaling-stroke; }
+    .structural-viewport .structural-end { stroke:#68a0ff; stroke-width:2; opacity:.88; vector-effect:non-scaling-stroke; }
+    .structural-viewport [data-role="structural-node"] circle { fill:#65d98b; stroke:#071109; stroke-width:2; vector-effect:non-scaling-stroke; }
+    .structural-viewport [data-role="structural-label"] { fill:#e9eef7; font:600 12px ui-monospace, SFMono-Regular, Consolas, monospace; paint-order:stroke; stroke:#090d14; stroke-width:3px; stroke-linejoin:round; }
     .blueprint-viewport { cursor:grab; }
     .classic-viewport { position:relative; }
     .blueprint-viewport.dragging { cursor:grabbing; }
@@ -274,6 +281,37 @@
         </div>
       </aside>
 
+      <aside id="structural-controls" class="control-sidebar" aria-label="Параметры структурного 2D" hidden>
+        <div class="physics-control">
+          <label for="structural-root"><span>Явный корень</span></label>
+          <select id="structural-root">
+            <option value="" selected>Без явного корня</option>
+          </select>
+        </div>
+        <div class="physics-control">
+          <label for="structural-spacing"><span>Шаг слоёв</span><output id="structural-spacing-value">112</output></label>
+          <input id="structural-spacing" type="range" min="64" max="240" step="4" value="112">
+        </div>
+        <div class="physics-control">
+          <label for="structural-node-spacing"><span>Мин. расстояние</span><output id="structural-node-spacing-value">72</output></label>
+          <input id="structural-node-spacing" type="range" min="36" max="160" step="4" value="72">
+        </div>
+        <div class="physics-control">
+          <div class="inline-checks">
+            <label><input id="structural-optimize" type="checkbox" checked> Минимизировать пересечения</label>
+          </div>
+        </div>
+        <div class="control-actions">
+          <button id="structural-fit" type="button">Вписать</button>
+          <button id="structural-reset" type="button">Пересчитать</button>
+          <button id="structural-export" type="button">Скачать SVG</button>
+        </div>
+        <div class="physics-control">
+          <div class="muted">Смысл схемы</div>
+          <div class="camera-hint">Зелёные узлы — сами Links. Красная дуга показывает START → CENTER, синяя — CENTER → END. Рекурсивные компоненты сначала сворачиваются в SCC.</div>
+        </div>
+      </aside>
+
       <aside id="blueprint-controls" class="control-sidebar" aria-label="Параметры Blueprint 2D" hidden>
         <div class="physics-control">
           <label for="blueprint-spacing"><span>Шаг раскладки</span><output id="blueprint-spacing-value">96</output></label>
@@ -344,11 +382,18 @@
       <div class="viewport-column">
         <div id="viewport-shell" class="viewport-shell">
           <div id="mode-placeholder" class="mode-placeholder" hidden></div>
+          <div id="structural-viewport" class="structural-viewport" role="application" aria-label="Структурная 2D визуализация асети" hidden></div>
           <div id="blueprint-viewport" class="blueprint-viewport" role="application" aria-label="Интерактивная Blueprint 2D визуализация асети" hidden></div>
           <div id="classic-viewport" class="classic-viewport" role="application" aria-label="Классический 3D: отталкивание центров и пружины" hidden></div>
           <canvas id="gpu-canvas"></canvas>
         </div>
         <div id="mechanical-camera-hint" class="camera-hint">Мышь: наведите на два центральных октаэдра, чтобы показать зелёный каркасный икосаэдр L2 · перетаскивание ЛКМ за маркер = перемещение семантического CENTER · ЛКМ в другом месте = вращение камеры · колесо = масштаб · ПКМ или Shift+ЛКМ = панорамирование</div>
+        <div id="structural-render-diagnostics" class="grid" style="margin-top:12px" hidden>
+          <div><span class="muted">SCC / слои</span><div id="structural-components" class="value">0 / 0</div></div>
+          <div><span class="muted">Пересечения</span><div id="structural-crossings" class="value">0 → 0</div></div>
+          <div><span class="muted">Оптимизатор</span><div id="structural-optimizer" class="value">0 проверок</div></div>
+          <div><span class="muted">Связи</span><div id="structural-link-count" class="value">0</div></div>
+        </div>
         <div id="classic-render-diagnostics" class="grid" style="margin-top:12px" hidden>
           <div><span class="muted">Шаг / состояние</span><div id="classic-tick" class="value">0</div></div>
           <div><span class="muted">Пружины / пары заряда</span><div id="classic-evaluations" class="value">0 / 0</div></div>
