@@ -31,6 +31,28 @@ const ui = {
   blueprintFit: $("blueprint-fit"),
   blueprintReset: $("blueprint-reset"),
   blueprintExport: $("blueprint-export"),
+  classicControls: $("classic-controls"),
+  classicViewport: $("classic-viewport"),
+  classicCharge: $("classic-charge"),
+  classicChargeValue: $("classic-charge-value"),
+  classicRestLength: $("classic-rest-length"),
+  classicRestLengthValue: $("classic-rest-length-value"),
+  classicStiffness: $("classic-stiffness"),
+  classicStiffnessValue: $("classic-stiffness-value"),
+  classicDamping: $("classic-damping"),
+  classicDampingValue: $("classic-damping-value"),
+  classicTimeStep: $("classic-time-step"),
+  classicTimeStepValue: $("classic-time-step-value"),
+  classicLabels: $("classic-labels"),
+  classicPause: $("classic-pause"),
+  classicReset: $("classic-reset"),
+  classicFit: $("classic-fit"),
+  classicFullscreen: $("classic-fullscreen"),
+  classicRenderDiagnostics: $("classic-render-diagnostics"),
+  classicTick: $("classic-tick"),
+  classicEvaluations: $("classic-evaluations"),
+  classicMaxVelocity: $("classic-max-velocity"),
+  classicPinned: $("classic-pinned"),
   modePlaceholder: $("mode-placeholder"),
   scene: $("scene"),
   inspectGeometry: $("inspect-geometry"),
@@ -89,7 +111,7 @@ const LAB_MODE_UI = Object.freeze({
   "structural-2d": Object.freeze({ label: "Структурный 2D", issue: 126, ready: false, description: "структурная карта асети" }),
   "blueprint-2d": Object.freeze({ label: "Blueprint 2D", issue: 127, ready: true, description: "цельные связи START → CENTER → END · SVG · drag / pan / zoom" }),
   "document-2d": Object.freeze({ label: "Документный 2D", issue: 123, ready: false, description: "детерминированная публикационная проекция" }),
-  "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: false, description: "центры с взаимным отталкиванием + пружины инцидентности" }),
+  "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: true, description: "центры с взаимным отталкиванием + пружины инцидентности" }),
   "mechanical-3d": Object.freeze({ label: "Механический 3D", issue: 129, ready: true, description: "монолитная физика связи · WebGPU zero-copy" }),
 });
 
@@ -181,9 +203,10 @@ function fmt(value) {
     : value.toFixed(6);
 }
 
-const [core, webgpu, buildInfo] = await Promise.all([
+const [core, webgpu, threeVisual, buildInfo] = await Promise.all([
   import("./vendor/mts-visual-core.bundle.js"),
   import("./vendor/mts-visual-webgpu.bundle.js"),
+  import("./vendor/mts-visual-three.bundle.js"),
   fetch("./build-info.json", { cache: "no-store" }).then((response) => {
     if (!response.ok) throw new Error(`ошибка загрузки сведений о сборке: HTTP ${response.status}`);
     return response.json();
@@ -197,6 +220,17 @@ for (const exportName of [
 ]) {
   if (typeof webgpu[exportName] !== "function") {
     throw new Error(`опубликованный WebGPU-пакет не содержит экспорт: ${exportName}`);
+  }
+}
+
+for (const exportName of [
+  "createVisualThreeLiveRenderer",
+  "destroyVisualThreeRenderer",
+  "fitVisualThreeRenderer",
+  "setVisualThreeLivePaused",
+]) {
+  if (typeof threeVisual[exportName] !== "function") {
+    throw new Error(`опубликованный Three-пакет не содержит экспорт: ${exportName}`);
   }
 }
 
@@ -775,6 +809,23 @@ async function runDifferentials() {
   updateOverall();
 }
 
+function classicSeparationNetwork() {
+  return {
+    links: [
+      { key: "R", startKey: "R", endKey: "R" },
+      { key: "O", startKey: "O", endKey: "R" },
+      { key: "C", startKey: "R", endKey: "C" },
+      { key: "L", startKey: "O", endKey: "C" },
+      { key: "U", startKey: "C", endKey: "O" },
+      { key: "A", startKey: "L", endKey: "U" },
+      { key: "B", startKey: "L", endKey: "A" },
+      { key: "D", startKey: "B", endKey: "U" },
+      { key: "E", startKey: "A", endKey: "D" },
+      { key: "F", startKey: "B", endKey: "E" },
+    ],
+  };
+}
+
 function selectedScene() {
   switch (ui.scene.value) {
     case "root-r": return Object.freeze({ id: "root-r", label: "только R", network: rootBasisNetwork(1) });
@@ -782,6 +833,7 @@ function selectedScene() {
     case "root-roc": return Object.freeze({ id: "root-roc", label: "R + O + C", network: rootBasisNetwork(3) });
     case "root-rocl": return Object.freeze({ id: "root-rocl", label: "R + O + C + L", network: rootBasisNetwork(4) });
     case "root-roclu": return Object.freeze({ id: "root-roclu", label: "R + O + C + L + U", network: rootBasisNetwork(5) });
+    case "classic-separation": return Object.freeze({ id: "classic-separation", label: "Classic · разведение похожих связей", network: classicSeparationNetwork() });
     case "hub-64": return Object.freeze({ id: "hub-64", label: "нагрузка 64", network: hubHeavyNetwork(64) });
     case "hub-333": return Object.freeze({ id: "hub-333", label: "нагрузка 333", network: hubHeavyNetwork(333) });
     case "hub-1000": return Object.freeze({ id: "hub-1000", label: "нагрузка 1000", network: hubHeavyNetwork(1000) });
@@ -1888,6 +1940,111 @@ function mountBlueprint() {
   };
 }
 
+let classicState = null;
+
+function selectedClassicOptions() {
+  return Object.freeze({
+    charge: controlNumber(ui.classicCharge, "отталкивание центров", 0, 3),
+    restLength: controlNumber(ui.classicRestLength, "длина покоя Classic", 0.25, 8),
+    springStiffness: controlNumber(ui.classicStiffness, "жёсткость пружин Classic", 0, 0.30),
+    damping: controlNumber(ui.classicDamping, "затухание Classic", 0.50, 0.99),
+    timeStep: controlNumber(ui.classicTimeStep, "шаг времени Classic", 0.02, 0.50),
+  });
+}
+
+function refreshClassicControlLabels() {
+  const options = selectedClassicOptions();
+  ui.classicChargeValue.value = options.charge.toFixed(2);
+  ui.classicRestLengthValue.value = options.restLength.toFixed(2);
+  ui.classicStiffnessValue.value = options.springStiffness.toFixed(3);
+  ui.classicDampingValue.value = options.damping.toFixed(2);
+  ui.classicTimeStepValue.value = options.timeStep.toFixed(2);
+}
+
+function classicPresentationNetwork(network) {
+  return {
+    links: network.links.map((link) => {
+      const copy = { ...link };
+      if (ui.classicLabels.checked) copy.label = link.label ?? link.key;
+      else delete copy.label;
+      return copy;
+    }),
+  };
+}
+
+function updateClassicDiagnostics(state) {
+  const snapshot = core.snapshotLivePhysics3D(state.controller);
+  const linkCount = state.controller.model.keys.length;
+  const chargePairs = linkCount * (linkCount - 1) / 2;
+  ui.classicTick.textContent = `${snapshot.tick} · ${snapshot.awake ? "активен" : "покой"}`;
+  ui.classicEvaluations.textContent =
+    `${state.controller.model.springs.length} / ${chargePairs}`;
+  ui.classicMaxVelocity.textContent = fmt(snapshot.maxVelocity);
+  ui.classicPinned.textContent = String(snapshot.pinnedKeys.length);
+}
+
+function applyClassicPhysicsControls() {
+  refreshClassicControlLabels();
+  if (!classicState) return;
+  const options = selectedClassicOptions();
+  classicState.options = options;
+  core.setLivePhysics3DOptions(classicState.controller, options);
+  if (!classicState.paused) {
+    threeVisual.setVisualThreeLivePaused(ui.classicViewport, false);
+  }
+  updateClassicDiagnostics(classicState);
+}
+
+function mountClassic3D() {
+  const scene = selectedScene();
+  const network = classicPresentationNetwork(scene.network);
+  const options = selectedClassicOptions();
+  const controller = core.createLivePhysics3D(
+    network,
+    core.createInitialPhysics3DState(network, { radius: 3 }),
+    options,
+  );
+  const state = {
+    scene,
+    network,
+    controller,
+    options,
+    paused: false,
+    diagnosticsTimer: null,
+  };
+  classicState = state;
+  refreshClassicControlLabels();
+  ui.classicPause.textContent = "Пауза";
+
+  const renderer = threeVisual.createVisualThreeLiveRenderer(
+    ui.classicViewport,
+    network,
+    controller,
+    {
+      samples: 18,
+      nodeRadius: 0.13,
+      onActivateKey: (key) => {
+        log(`Classic 3D: выбрана связь ${key}`);
+      },
+    },
+  );
+  state.diagnosticsTimer = window.setInterval(() => {
+    if (classicState === state) updateClassicDiagnostics(state);
+  }, 200);
+  updateClassicDiagnostics(state);
+
+  log(
+    `Classic 3D запущен: сцена=${scene.label}, связей=${network.links.length}, пружин=${controller.model.springs.length}, пар отталкивания=${network.links.length * (network.links.length - 1) / 2}`,
+  );
+
+  return () => {
+    if (state.diagnosticsTimer !== null) window.clearInterval(state.diagnosticsTimer);
+    threeVisual.destroyVisualThreeRenderer(ui.classicViewport);
+    ui.classicViewport.replaceChildren();
+    if (classicState === state) classicState = null;
+  };
+}
+
 function updateModePlaceholder(modeId) {
   const definition = labModeUi(modeId);
   const scene = selectedScene();
@@ -1902,15 +2059,19 @@ function updateModePlaceholder(modeId) {
 async function mountLabMode(modeId) {
   const mechanical = modeId === "mechanical-3d";
   const blueprint = modeId === "blueprint-2d";
-  const hasSideControls = mechanical || blueprint;
+  const classic = modeId === "classic-3d";
+  const hasSideControls = mechanical || blueprint || classic;
 
   ui.mechanicalControls.hidden = !mechanical;
   ui.blueprintControls.hidden = !blueprint;
+  ui.classicControls.hidden = !classic;
   ui.canvas.hidden = !mechanical;
   ui.blueprintViewport.hidden = !blueprint;
-  ui.modePlaceholder.hidden = mechanical || blueprint;
+  ui.classicViewport.hidden = !classic;
+  ui.modePlaceholder.hidden = mechanical || blueprint || classic;
   ui.mechanicalCameraHint.hidden = !mechanical;
   ui.mechanicalRenderDiagnostics.hidden = !mechanical;
+  ui.classicRenderDiagnostics.hidden = !classic;
   ui.mechanicalGeometryPanel.hidden = !mechanical;
   ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
 
@@ -1920,6 +2081,7 @@ async function mountLabMode(modeId) {
   }
 
   if (blueprint) return mountBlueprint();
+  if (classic) return mountClassic3D();
 
   updateModePlaceholder(modeId);
   log(`режим ${modeId} выбран; renderer будет подключён отдельным этапом roadmap`);
@@ -1999,9 +2161,9 @@ ui.rerun.addEventListener("click", () => {
 ui.scene.addEventListener("change", () => {
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
-  if (activeMode === "blueprint-2d") {
-    activateLabMode("blueprint-2d").catch((error) => {
-      log(`ОШИБКА перезапуска Blueprint 2D — ${error.stack ?? error}`);
+  if (activeMode === "blueprint-2d" || activeMode === "classic-3d") {
+    activateLabMode(activeMode).catch((error) => {
+      log(`ОШИБКА перезапуска режима ${activeMode} — ${error.stack ?? error}`);
     });
     return;
   }
@@ -2053,6 +2215,51 @@ ui.blueprintReset.addEventListener("click", () => {
 
 ui.blueprintExport.addEventListener("click", () => {
   downloadBlueprintSvg();
+});
+
+for (const control of [
+  ui.classicCharge,
+  ui.classicRestLength,
+  ui.classicStiffness,
+  ui.classicDamping,
+  ui.classicTimeStep,
+]) {
+  control.addEventListener("input", applyClassicPhysicsControls);
+}
+
+ui.classicLabels.addEventListener("change", () => {
+  if (!classicState) return;
+  activateLabMode("classic-3d").catch((error) => {
+    log(`ОШИБКА обновления подписей Classic 3D — ${error.stack ?? error}`);
+  });
+});
+
+ui.classicPause.addEventListener("click", () => {
+  if (!classicState) return;
+  classicState.paused = !classicState.paused;
+  threeVisual.setVisualThreeLivePaused(ui.classicViewport, classicState.paused);
+  ui.classicPause.textContent = classicState.paused ? "Продолжить" : "Пауза";
+  updateClassicDiagnostics(classicState);
+});
+
+ui.classicReset.addEventListener("click", () => {
+  if (!classicState) return;
+  activateLabMode("classic-3d").catch((error) => {
+    log(`ОШИБКА сброса Classic 3D — ${error.stack ?? error}`);
+  });
+});
+
+ui.classicFit.addEventListener("click", () => {
+  if (classicState) threeVisual.fitVisualThreeRenderer(ui.classicViewport);
+});
+
+ui.classicFullscreen.addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement === ui.viewportShell) await document.exitFullscreen();
+    else await ui.viewportShell.requestFullscreen();
+  } catch (error) {
+    log(`ОШИБКА полноэкранного режима Classic 3D — ${error.stack ?? error}`);
+  }
 });
 
 ui.inspectGeometry.addEventListener("click", () => {
@@ -2220,10 +2427,12 @@ ui.fullscreenRender.addEventListener("click", async () => {
 });
 
 document.addEventListener("fullscreenchange", () => {
-  ui.fullscreenRender.textContent =
-    document.fullscreenElement === ui.viewportShell
-      ? "Выйти из полноэкранного режима"
-      : "На весь экран";
+  const active = document.fullscreenElement === ui.viewportShell;
+  ui.fullscreenRender.textContent = active ? "Выйти из полноэкранного режима" : "На весь экран";
+  ui.classicFullscreen.textContent = active ? "Выйти из полноэкранного режима" : "На весь экран";
+  if (classicState) {
+    requestAnimationFrame(() => threeVisual.fitVisualThreeRenderer(ui.classicViewport));
+  }
 });
 
 try {

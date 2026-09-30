@@ -3,6 +3,7 @@ import "./blueprint-svg.test.js";
 import "./blueprint-interaction.test.js";
 import "./geometry3d.test.js";
 import "./physics3d.test.js";
+import "./classic3d-separation.test.js";
 import "./octahedral-link3d.test.js";
 import "./octahedral-live3d.test.js";
 import "./rigid-section3d.test.js";
