@@ -12,6 +12,7 @@ const DEFAULT_MAX_WORKGROUPS_PER_DIMENSION = 65_535;
 const WORKGROUP_SIZE = 64;
 const COMPUTE_GLOBAL_BYTES = 48;
 const SHAPE_GLOBAL_BYTES = 32;
+const DETAIL_SELECTION_CONTROL_BYTES = 96;
 const RENDER_UNIFORM_BYTES = 128;
 const END_CONE_VERTEX_COUNT = 48;
 const HOVERED_CENTER_VERTEX_COUNT = 480;
@@ -53,6 +54,8 @@ export interface MonolithicLinkWebGpuCapacityPlan3D {
   readonly endConeVertexInvocations: number;
   readonly computePassesPerStep: number;
   readonly semanticInvocationsPerStep: number;
+  readonly selectorInvocationsPerStep: number;
+  readonly selectorCandidateVisitsPerStep: number;
   readonly detailInvocationsPerStep: number;
   readonly dispatch: Readonly<{
     workgroupsX: number;
@@ -264,6 +267,11 @@ export function planMonolithicLinkWebGpuCapacity3D(
     buffer("shape.sectionFrames", sectionFrameBytes, true),
     buffer("shape.topology", linkTopologyBytes, true),
     buffer("shape.globals", SHAPE_GLOBAL_BYTES, false),
+    buffer(
+      "shape.detailSelection",
+      DETAIL_SELECTION_CONTROL_BYTES,
+      false,
+    ),
 
     buffer("renderer.topology", linkTopologyBytes, true),
     buffer(
@@ -305,6 +313,7 @@ export function planMonolithicLinkWebGpuCapacity3D(
     COMPUTE_GLOBAL_BYTES
     + 4
     + SHAPE_GLOBAL_BYTES
+    + DETAIL_SELECTION_CONTROL_BYTES
     + template.surfaceTriangles.byteLength
     + wireframe.byteLength
     + template.gradientT.byteLength
@@ -319,6 +328,7 @@ export function planMonolithicLinkWebGpuCapacity3D(
   const fixedBuffers = buffers.filter((candidate) =>
     candidate.name === "compute.globals"
     || candidate.name === "shape.globals"
+    || candidate.name === "shape.detailSelection"
     || candidate.name === "renderer.surfaceIndices"
     || candidate.name === "renderer.wireframeIndices"
     || candidate.name === "renderer.gradient"
@@ -354,6 +364,9 @@ export function planMonolithicLinkWebGpuCapacity3D(
     detailedLinkCount,
     maxComputeWorkgroupsPerDimension,
   );
+  const gpuSelectorActive =
+    linkCount > detailedLinkCount
+    && detailedLinkCount > 0;
 
   const maximumSupportedLinkCount = Math.min(
     maximumLinksByStorageBinding ?? Number.MAX_SAFE_INTEGER,
@@ -406,12 +419,20 @@ export function planMonolithicLinkWebGpuCapacity3D(
       "END cone vertex invocations",
     ),
     computePassesPerStep:
-      linkCount === 0 ? 0 : 3 + (detailedLinkCount > 0 ? 1 : 0),
+      linkCount === 0
+        ? 0
+        : 3
+          + (gpuSelectorActive ? 1 : 0)
+          + (detailedLinkCount > 0 ? 1 : 0),
     semanticInvocationsPerStep: safeMultiply(
       linkCount,
       3,
       "semantic compute invocations",
     ),
+    selectorInvocationsPerStep:
+      gpuSelectorActive ? detailedLinkCount : 0,
+    selectorCandidateVisitsPerStep:
+      gpuSelectorActive ? linkCount : 0,
     detailInvocationsPerStep: detailedLinkCount,
     dispatch: Object.freeze({
       workgroupsX: dispatch.workgroupsX,

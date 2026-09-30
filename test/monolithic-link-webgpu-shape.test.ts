@@ -278,6 +278,8 @@ function fakeCompute(
 
 for (const needle of [
   "fn shape_parameter_main",
+  "fn shape_detail_select_main",
+  "fn detail_candidate_better",
   "fn shape_detail_main",
   "fn solve_amplitude",
   "fn half_arc_length",
@@ -285,7 +287,10 @@ for (const needle of [
   "for (var iteration = 0u; iteration < 24u;",
   "shape_parameters[link] = vec4<f32>(",
   "var<storage, read_write> roll_gauge",
-  "var<storage, read> detail_link_indices",
+  "var<storage, read_write> detail_link_indices",
+  "var<uniform> detail_selection: DetailSelectionGlobals",
+  "candidate = candidate + detail_count",
+  "selected_link % detail_count == slot",
   "var<storage, read_write> section_frames",
   "fn update_roll_gauge",
   "fn curve_polyline_length",
@@ -374,13 +379,18 @@ same(
   5 * 33 * 16,
   "small-scene section frame cache retains exact legacy extent",
 );
+same(shape.detailSelectionControlBuffer.size, 96, "GPU detail selector uses one fixed 96-byte uniform");
+same(snapshot.selectionMode, "manual", "small full-detail scene starts in manual identity mode");
+same(snapshot.selectionControlBytes, 96, "snapshot reports fixed selector control bytes");
 
 const setupWriteCount = device.queue.writes.length;
 const step = shape.update();
 same(step.compactDispatches, 1, "shape update has one compact all-Link dispatch");
+same(step.selectorDispatches, 0, "full-detail identity mode does not dispatch GPU selector");
 same(step.detailDispatches, 1, "shape update has one bounded detail dispatch");
 same(step.dispatches, 2, "shape update is split into compact + detail dispatches");
 same(step.computePasses, 2, "shape update is exactly two compute passes with detail active");
+same(step.selectionMode, "manual", "small full-detail update remains manual identity");
 same(step.detailedLinkCount, 5, "shape step reports active detail slots");
 same(step.dynamicStateUploadBytes, 0, "shape update uploads no CPU dynamic state");
 same(device.queue.writes.length, setupWriteCount, "ordinary shape update performs no queue.writeBuffer");
@@ -451,7 +461,9 @@ same(
 );
 const boundedStep = boundedShape.update();
 same(boundedStep.compactDispatches, 1, "bounded shape still updates every compact Link");
+same(boundedStep.selectorDispatches, 0, "explicit bounded mapping remains manual");
 same(boundedStep.detailDispatches, 1, "bounded shape updates selected detail slots");
+same(boundedStep.selectionMode, "manual", "explicit bounded mapping reports manual mode");
 same(boundedStep.detailedLinkCount, 3, "bounded step reports selected detail slots");
 same(boundedDevice.dispatches[0]!.x, 16, "bounded compact pass covers all 1000 Links");
 same(boundedDevice.dispatches[1]!.x, 1, "three detailed Links need one workgroup");
@@ -460,8 +472,10 @@ const writesBeforeSelection = boundedDevice.queue.writes.length;
 const selection = boundedShape.setDetailLinkIndices([2, 4]);
 same(selection.detailedLinkCount, 2, "detail selection can be changed without remount");
 same(selection.detailCapacity, 7, "selection does not resize cache");
+same(selection.selectionMode, "manual", "CPU-provided detail mapping is explicit manual mode");
 same(selection.indexUploadBytes, 2 * 4, "selection uploads only semantic Link indices");
 same(selection.globalsUploadBytes, 32, "selection updates only shape globals");
+same(selection.selectionControlUploadBytes, 0, "manual mapping uploads no GPU selector control");
 same(
   boundedDevice.queue.writes.length,
   writesBeforeSelection + 2,
@@ -472,6 +486,74 @@ const selectedStep = boundedShape.update();
 same(selectedStep.detailedLinkCount, 2, "next detail pass follows new selection");
 same(boundedDevice.dispatches.length, 2, "compact + detail dispatch remain serialized");
 same(boundedDevice.dispatches[1]!.x, 1, "two detail slots remain one workgroup");
+
+const gpuWritesBefore = boundedDevice.queue.writes.length;
+const identityView = [
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+];
+const gpuSelection = boundedShape.setGpuDetailSelectionView({
+  viewProjection: identityView,
+  selectedLink: 999,
+  frustumMargin: 0.18,
+});
+same(gpuSelection.detailedLinkCount, 7, "GPU selector activates every bounded detail slot");
+same(gpuSelection.detailCapacity, 7, "GPU selector preserves allocated detail capacity");
+same(gpuSelection.selectionMode, "gpu-partition", "GPU selector reports partition mode");
+same(gpuSelection.indexUploadBytes, 0, "GPU selector uploads no semantic Link index list");
+same(gpuSelection.globalsUploadBytes, 32, "GPU selector updates only shape globals");
+same(gpuSelection.selectionControlUploadBytes, 96, "GPU selector uploads one fixed camera uniform");
+same(
+  boundedDevice.queue.writes.length,
+  gpuWritesBefore + 2,
+  "GPU selector camera change performs exactly globals + control writes",
+);
+const selectorWrite = [...boundedDevice.queue.writes].reverse().find(
+  (write) => write.label === "monolithic-link-detail-selection",
+);
+assert(selectorWrite !== undefined, "GPU selector writes its fixed control buffer");
+same(selectorWrite.bytes, 96, "GPU selector control upload is exactly 96 bytes");
+const selectorBuffer = boundedDevice.buffers.find(
+  (buffer) => buffer.label === "monolithic-link-detail-selection",
+);
+assert(selectorBuffer !== undefined, "GPU selector control buffer exists");
+same(
+  new Uint32Array(selectorBuffer.bytes)[18],
+  999,
+  "GPU selector control encodes selected semantic Link",
+);
+same(
+  new Float32Array(selectorBuffer.bytes)[20],
+  Math.fround(0.18),
+  "GPU selector control encodes frustum margin",
+);
+
+boundedDevice.dispatches.length = 0;
+const gpuStep = boundedShape.update();
+same(gpuStep.compactDispatches, 1, "GPU mode keeps compact all-Link pass");
+same(gpuStep.selectorDispatches, 1, "GPU mode adds exactly one selector pass");
+same(gpuStep.detailDispatches, 1, "GPU mode keeps one detail-frame pass");
+same(gpuStep.dispatches, 3, "GPU mode has compact + selector + detail dispatches");
+same(gpuStep.computePasses, 3, "GPU mode has exactly three shape compute passes");
+same(gpuStep.selectionMode, "gpu-partition", "GPU step exposes selector mode");
+same(boundedDevice.dispatches.length, 3, "device sees compact, selector and detail dispatches");
+same(boundedDevice.dispatches[0]!.entryPoint, "shape_parameter_main", "compact kernel remains first");
+same(boundedDevice.dispatches[1]!.entryPoint, "shape_detail_select_main", "selector kernel runs second");
+same(boundedDevice.dispatches[2]!.entryPoint, "shape_detail_main", "detail frame kernel runs after selector");
+same(
+  boundedShape.snapshot().selectionMode,
+  "gpu-partition",
+  "snapshot exposes active GPU selector mode",
+);
+
+const manualAgain = boundedShape.setDetailLinkIndices([6, 5, 4]);
+same(manualAgain.selectionMode, "manual", "manual mapping disables GPU selector mode");
+boundedDevice.dispatches.length = 0;
+const manualAgainStep = boundedShape.update();
+same(manualAgainStep.selectorDispatches, 0, "manual fallback removes selector dispatch");
+same(manualAgainStep.computePasses, 2, "manual fallback returns to compact + detail passes");
 
 for (const invalid of [
   [1, 1],
@@ -485,6 +567,22 @@ for (const invalid of [
     assert(
       String(error).includes("monolithic shape detail"),
       `invalid detail selection fails closed: ${invalid.join(",")}`,
+    );
+  }
+}
+
+for (const invalidView of [
+  { viewProjection: identityView.slice(0, 15) },
+  { viewProjection: identityView, selectedLink: 1000 },
+  { viewProjection: identityView, frustumMargin: -0.1 },
+]) {
+  try {
+    boundedShape.setGpuDetailSelectionView(invalidView);
+    throw new Error("invalid GPU detail selection view accepted");
+  } catch (error) {
+    assert(
+      String(error).includes("monolithic shape detail"),
+      "invalid GPU detail selection fails closed",
     );
   }
 }
