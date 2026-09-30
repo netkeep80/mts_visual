@@ -59,7 +59,7 @@ for (const needle of [
   '"PASS"',
   "timestampQuerySupported",
   "timestampQueryUsed: false",
-  'resourceIsolation: "separate-device"',
+  'config.resourceIsolation ?? "separate-device"',
 ]) {
   assert(
     benchmark.includes(needle),
@@ -103,6 +103,13 @@ assert(
 assert(
   app.includes("benchmarkStopRequested = true"),
   "Stop/pagehide must prevent another benchmark sample",
+);
+assert(
+  app.includes("if (benchmarkRunning)")
+    && app.includes("state.raf = requestAnimationFrame(frame)")
+    && app.includes("await device.queue.onSubmittedWorkDone()")
+    && app.includes('"separate-device+interactive-mechanical-suspended"'),
+  "benchmark must suspend and drain the interactive Mechanical GPU pipeline",
 );
 assert(
   benchmark.includes("samples.physics.length < sampleCount")
