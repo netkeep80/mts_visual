@@ -29,6 +29,7 @@ import "./three-live-topology.test.js";
 import "./three-controls.test.js";
 import "./presentation.test.js";
 import "./structural2d.test.js";
+import "./document2d.test.js";
 import "./lab-lifecycle.test.js";
 import "./three-presentation.test.js";
 import "./three-labels.test.js";
