@@ -42,6 +42,7 @@ interface WebGpuQueueLike {
     size?: number,
   ): void;
   submit(commandBuffers: readonly object[]): void;
+  onSubmittedWorkDone?(): Promise<void>;
 }
 
 interface WebGpuComputePassLike {
