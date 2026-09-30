@@ -43,6 +43,31 @@ const basis: VisualLinkNetwork = {
   ],
 };
 
+const rootBasisOnly: VisualLinkNetwork = {
+  links: basis.links.filter((link) => link.key !== "X"),
+};
+
+const rootBasisLayout = layoutDocument2D(rootBasisOnly, {
+  profile: "article",
+  strategy: "auto",
+});
+same(rootBasisLayout.metrics.qualityAfter.crossings, 0, "R/O/C/L/U auto layout must reach zero crossings");
+assert(rootBasisLayout.metrics.zeroCrossingFound, "R/O/C/L/U must report zero-crossing witness");
+assert(rootBasisLayout.metrics.seedCandidates > 3, "small-network search must evaluate more than the three base families");
+assert(rootBasisLayout.metrics.seedVariant.includes(":"), "selected deterministic seed variant is reported");
+
+const reversedRootBasis: VisualLinkNetwork = {
+  links: [...rootBasisOnly.links].reverse(),
+};
+same(
+  JSON.stringify(layoutDocument2D(reversedRootBasis, {
+    profile: "article",
+    strategy: "auto",
+  })),
+  JSON.stringify(rootBasisLayout),
+  "R/O/C/L/U zero-crossing layout is input-order stable",
+);
+
 const article = layoutDocument2D(basis, {
   profile: "article",
   strategy: "auto",
