@@ -1413,6 +1413,9 @@ implements MonolithicLinkWebGpuShape3D {
       control,
     );
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
+    // In GPU mode the CPU-side array is only a slot-count shadow.
+    // The selector shader overwrites every active detail slot in the shared
+    // detailLinkIndexBuffer before the detail-frame pass consumes it.
     this.currentDetailLinkIndices = defaultDetailLinkIndices(
       this.detailCapacityValue,
     );
