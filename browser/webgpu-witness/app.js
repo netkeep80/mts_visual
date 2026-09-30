@@ -3115,6 +3115,13 @@ ui.documentExport.addEventListener("click", () => {
   downloadDocumentSvg();
 });
 
+ui.documentManifest.addEventListener("click", () => {
+  downloadDocumentManifest().catch((error) => {
+    ui.documentDigest.textContent = "ошибка";
+    log(`ОШИБКА экспорта Document manifest — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
+});
+
 for (const control of [
   ui.classicCharge,
   ui.classicRestLength,
