@@ -75,7 +75,9 @@ export interface Document2DQuality {
 
 export interface Document2DMetrics {
   readonly seedStrategy: Exclude<Document2DSeedStrategy, "auto">;
+  readonly seedVariant: string;
   readonly seedCandidates: number;
+  readonly zeroCrossingFound: boolean;
   readonly optimizerEvaluations: number;
   readonly optimizerPasses: number;
   readonly qualityBefore: Document2DQuality;
@@ -126,6 +128,7 @@ interface ResolvedOptions {
 
 interface EvaluatedCandidate {
   readonly strategy: Exclude<Document2DSeedStrategy, "auto">;
+  readonly variant: string;
   readonly poses: ReadonlyMap<VisualKey, Document2DPose>;
   readonly links: readonly Document2DLinkGeometry[];
   readonly labels: readonly Document2DLabel[];
@@ -169,19 +172,19 @@ export function layoutDocument2D(
   const strategies: readonly Exclude<Document2DSeedStrategy, "auto">[] =
     resolved.strategy === "auto" ? AUTO_STRATEGIES : [resolved.strategy];
 
-  const seedCandidates = strategies.map((strategy) =>
-    evaluateCandidate(
-      normalized,
-      createSeedPoses(normalized, strategy, resolved),
-      strategy,
-      resolved,
-    )
+  const seedCandidates = createSeedCandidates(
+    normalized,
+    strategies,
+    resolved,
   );
   const seed = seedCandidates.reduce((best, candidate) =>
     betterQuality(candidate.quality, best.quality) ? candidate : best
   );
 
   const optimized = optimizeCandidate(normalized, seed, resolved);
+  const zeroCrossingFound = seedCandidates.some((candidate) =>
+    candidate.quality.crossings === 0
+  ) || optimized.candidate.quality.crossings === 0;
   const finalPoses = normalized.links.map((link) =>
     freezePose(optimized.candidate.poses.get(link.key)!)
   );
@@ -199,7 +202,9 @@ export function layoutDocument2D(
     labels: optimized.candidate.labels,
     metrics: Object.freeze({
       seedStrategy: seed.strategy,
+      seedVariant: seed.variant,
       seedCandidates: seedCandidates.length,
+      zeroCrossingFound,
       optimizerEvaluations: optimized.evaluations,
       optimizerPasses: optimized.passes,
       qualityBefore: seed.quality,
@@ -345,6 +350,133 @@ function resolveOptions(network: VisualLinkNetwork, options: Document2DOptions):
   });
 }
 
+function createSeedCandidates(
+  network: VisualLinkNetwork,
+  strategies: readonly Exclude<Document2DSeedStrategy, "auto">[],
+  options: ResolvedOptions,
+): readonly EvaluatedCandidate[] {
+  const candidates: EvaluatedCandidate[] = [];
+  const perStrategyBudget = seedPermutationBudget(network.links.length);
+
+  for (const strategy of strategies) {
+    const base = createSeedPoses(network, strategy, options);
+    const variants = createPermutationVariants(
+      network,
+      base,
+      options.rootKey,
+      perStrategyBudget,
+    );
+    for (const variant of variants) {
+      candidates.push(evaluateCandidate(
+        network,
+        variant.poses,
+        strategy,
+        options,
+        `${strategy}:${variant.id}`,
+      ));
+    }
+  }
+
+  return Object.freeze(candidates);
+}
+
+function seedPermutationBudget(linkCount: number): number {
+  if (linkCount <= 1) return 1;
+  if (linkCount <= 6) return 720;
+  if (linkCount === 7) return 480;
+  if (linkCount === 8) return 240;
+  if (linkCount === 9) return 120;
+  if (linkCount === 10) return 60;
+  return 1;
+}
+
+function createPermutationVariants(
+  network: VisualLinkNetwork,
+  base: ReadonlyMap<VisualKey, Document2DPose>,
+  rootKey: VisualKey | undefined,
+  limit: number,
+): readonly Readonly<{
+  id: string;
+  poses: ReadonlyMap<VisualKey, Document2DPose>;
+}>[] {
+  const keys = network.links.map((link) => link.key)
+    .filter((key) => key !== rootKey);
+  if (keys.length <= 1 || limit <= 1) {
+    return Object.freeze([Object.freeze({
+      id: "base",
+      poses: rebuildSeedThetas(network, base),
+    })]);
+  }
+
+  const slots = keys.map((key) => base.get(key)!);
+  const permutation = keys.map((_key, index) => index);
+  const variants: Array<Readonly<{
+    id: string;
+    poses: ReadonlyMap<VisualKey, Document2DPose>;
+  }>> = [];
+
+  do {
+    const candidate = clonePoseMap(base);
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index]!;
+      const slot = slots[permutation[index]!]!;
+      const previous = candidate.get(key)!;
+      candidate.set(key, freezePose({
+        key,
+        x: slot.x,
+        y: slot.y,
+        theta: previous.theta,
+      }));
+    }
+    variants.push(Object.freeze({
+      id: permutation.every((value, index) => value === index)
+        ? "base"
+        : `perm-${permutation.join("-")}`,
+      poses: rebuildSeedThetas(network, candidate),
+    }));
+    if (variants.length >= limit) break;
+  } while (nextLexicographicPermutation(permutation));
+
+  return Object.freeze(variants);
+}
+
+function nextLexicographicPermutation(values: number[]): boolean {
+  let pivot = values.length - 2;
+  while (pivot >= 0 && values[pivot]! >= values[pivot + 1]!) pivot -= 1;
+  if (pivot < 0) return false;
+
+  let successor = values.length - 1;
+  while (values[successor]! <= values[pivot]!) successor -= 1;
+  [values[pivot], values[successor]] = [values[successor]!, values[pivot]!];
+
+  for (let left = pivot + 1, right = values.length - 1; left < right; left += 1, right -= 1) {
+    [values[left], values[right]] = [values[right]!, values[left]!];
+  }
+  return true;
+}
+
+function rebuildSeedThetas(
+  network: VisualLinkNetwork,
+  poses: ReadonlyMap<VisualKey, Document2DPose>,
+): ReadonlyMap<VisualKey, Document2DPose> {
+  const points = new Map<VisualKey, Point2D>();
+  for (const [key, pose] of poses) {
+    points.set(key, freezePoint({ x: pose.x, y: pose.y }));
+  }
+
+  const result = new Map<VisualKey, Document2DPose>();
+  for (const link of network.links) {
+    const pose = poses.get(link.key)!;
+    result.set(link.key, freezePose({
+      key: link.key,
+      x: pose.x,
+      y: pose.y,
+      theta: seedTheta(link, points),
+    }));
+  }
+  return result;
+}
+
 function createSeedPoses(
   network: VisualLinkNetwork,
   strategy: Exclude<Document2DSeedStrategy, "auto">,
@@ -433,6 +565,39 @@ function optimizeCandidate(
     const angle = options.angleStep * Math.pow(0.7, pass);
     let best = current;
 
+    for (let leftIndex = 0; leftIndex < keys.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < keys.length; rightIndex += 1) {
+        if (evaluations >= options.optimizerEvaluations) break;
+        const leftKey = keys[leftIndex]!;
+        const rightKey = keys[rightIndex]!;
+        if (leftKey === options.rootKey || rightKey === options.rootKey) continue;
+
+        const candidatePoses = clonePoseMap(current.poses);
+        const leftPose = candidatePoses.get(leftKey)!;
+        const rightPose = candidatePoses.get(rightKey)!;
+        candidatePoses.set(leftKey, freezePose({
+          ...leftPose,
+          x: rightPose.x,
+          y: rightPose.y,
+        }));
+        candidatePoses.set(rightKey, freezePose({
+          ...rightPose,
+          x: leftPose.x,
+          y: leftPose.y,
+        }));
+        const candidate = evaluateCandidate(
+          network,
+          candidatePoses,
+          current.strategy,
+          options,
+          `${current.variant}:swap-${leftKey}-${rightKey}`,
+        );
+        evaluations += 1;
+        if (betterQuality(candidate.quality, best.quality)) best = candidate;
+      }
+      if (evaluations >= options.optimizerEvaluations) break;
+    }
+
     for (const key of keys) {
       const base = current.poses.get(key)!;
       const moves = [
@@ -446,6 +611,9 @@ function optimizeCandidate(
         { dx: -step * Math.SQRT1_2, dy: -step * Math.SQRT1_2, da: 0 },
         { dx: 0, dy: 0, da: angle },
         { dx: 0, dy: 0, da: -angle },
+        { dx: 0, dy: 0, da: Math.PI / 2 },
+        { dx: 0, dy: 0, da: -Math.PI / 2 },
+        { dx: 0, dy: 0, da: Math.PI },
       ];
       for (const move of moves) {
         if (evaluations >= options.optimizerEvaluations) break;
@@ -461,6 +629,7 @@ function optimizeCandidate(
           candidatePoses,
           current.strategy,
           options,
+          `${current.variant}:move-${key}`,
         );
         evaluations += 1;
         if (betterQuality(candidate.quality, best.quality)) best = candidate;
@@ -485,6 +654,7 @@ function evaluateCandidate(
   poses: ReadonlyMap<VisualKey, Document2DPose>,
   strategy: Exclude<Document2DSeedStrategy, "auto">,
   options: ResolvedOptions,
+  variant = strategy,
 ): EvaluatedCandidate {
   const links = buildGeometryFromPoseMap(
     network,
@@ -500,6 +670,7 @@ function evaluateCandidate(
   );
   return Object.freeze({
     strategy,
+    variant,
     poses,
     links,
     labels,
