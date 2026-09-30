@@ -1,5 +1,6 @@
 import { runMechanicalWebGpuBenchmark } from "./benchmark.js";
 import { createBenchmarkUiController } from "./benchmark-ui-controller.js";
+import { createLabModeMountController } from "./lab-mode-mount-controller.js";
 import {
   LAB_REAL_CYCLE,
   LAB_REAL_CYCLE_REPEATS,
@@ -3290,58 +3291,26 @@ async function runLabModeCycleSelfTest() {
   }
 }
 
-async function mountLabMode(modeId) {
-  const mechanical = modeId === "mechanical-3d";
-  const structural = modeId === "structural-2d";
-  const blueprint = modeId === "blueprint-2d";
-  const document2d = modeId === "document-2d";
-  const classic = modeId === "classic-3d";
-  const hasSideControls = mechanical || structural || blueprint || document2d || classic;
-
-  ui.mechanicalControls.hidden = !mechanical;
-  ui.structuralControls.hidden = !structural;
-  ui.blueprintControls.hidden = !blueprint;
-  ui.documentControls.hidden = !document2d;
-  ui.classicControls.hidden = !classic;
-  ui.canvas.hidden = !mechanical;
-  ui.structuralViewport.hidden = !structural;
-  ui.blueprintViewport.hidden = !blueprint;
-  ui.documentViewport.hidden = !document2d;
-  ui.classicViewport.hidden = !classic;
-  ui.modePlaceholder.hidden = mechanical || structural || blueprint || document2d || classic;
-  ui.mechanicalCameraHint.hidden = !mechanical;
-  ui.mechanicalRenderDiagnostics.hidden = !mechanical;
-  ui.structuralRenderDiagnostics.hidden = !structural;
-  ui.documentRenderDiagnostics.hidden = !document2d;
-  ui.classicRenderDiagnostics.hidden = !classic;
-  ui.mechanicalGeometryPanel.hidden = !mechanical;
-  ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
-
-  let cleanup;
-  if (mechanical) {
+const labModeMountController = createLabModeMountController({
+  ui,
+  mountMechanical: async () => {
     await startRender();
-    cleanup = () => stopRender();
-  } else if (structural) {
-    cleanup = mountStructural2D();
-  } else if (blueprint) {
-    cleanup = mountBlueprint();
-  } else if (document2d) {
-    cleanup = mountDocument2D();
-  } else if (classic) {
-    cleanup = mountClassic3D();
-  } else {
+    return () => stopRender();
+  },
+  mountStructural: () => mountStructural2D(),
+  mountBlueprint: () => mountBlueprint(),
+  mountDocument: () => mountDocument2D(),
+  mountClassic: () => mountClassic3D(),
+  mountPlaceholder: (modeId) => {
     updateModePlaceholder(modeId);
-    cleanup = () => ui.modePlaceholder.replaceChildren();
-  }
+    return () => ui.modePlaceholder.replaceChildren();
+  },
+  claimResources: claimLabResources,
+  releaseResources: releaseLabResources,
+});
 
-  claimLabResources(modeId);
-  return async () => {
-    try {
-      await cleanup?.();
-    } finally {
-      releaseLabResources(modeId);
-    }
-  };
+async function mountLabMode(modeId) {
+  return labModeMountController.mount(modeId);
 }
 
 const modeIdsInUi = [...ui.visualizationMode.options].map((option) => option.value);
