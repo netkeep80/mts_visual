@@ -12,6 +12,8 @@ const ui = {
   canvas: $("gpu-canvas"),
   visualizationMode: $("visualization-mode"),
   modeStatus: $("mode-status"),
+  labRunCycleTest: $("lab-run-cycle-test"),
+  labCycleStatus: $("lab-cycle-status"),
   labCopyDiagnostics: $("lab-copy-diagnostics"),
   labDiagnosticMode: $("lab-diagnostic-mode"),
   labDiagnosticInput: $("lab-diagnostic-input"),
@@ -162,6 +164,32 @@ const LAB_MODE_UI = Object.freeze({
 
 function labModeUi(modeId) {
   return LAB_MODE_UI[modeId] ?? null;
+}
+
+const labResourceLedger = {
+  activeAbortScopes: 0,
+  activeClassicRenderers: 0,
+  activeMechanicalRenderers: 0,
+  activeRafOwners: 0,
+  mechanicalContextConfigured: false,
+};
+
+function addLabResource(name) {
+  if (!Number.isSafeInteger(labResourceLedger[name])) {
+    throw new Error(`неизвестный счётчик ресурсов лаборатории: ${name}`);
+  }
+  labResourceLedger[name] += 1;
+}
+
+function removeLabResource(name) {
+  if (!Number.isSafeInteger(labResourceLedger[name]) || labResourceLedger[name] <= 0) {
+    throw new Error(`нарушен lifecycle ресурсов лаборатории: ${name} уже равен 0`);
+  }
+  labResourceLedger[name] -= 1;
+}
+
+function labResourceLedgerSnapshot() {
+  return Object.freeze({ ...labResourceLedger });
 }
 
 const UI_STATUS = Object.freeze({
