@@ -1140,6 +1140,7 @@ function sharedDiagnosticSnapshot() {
       version: buildInfo.version,
       buildSha: buildInfo.mainSha,
     },
+    resources: labResourceLedgerSnapshot(),
     detail: activeModeDiagnosticDetail(),
   };
 }
@@ -1648,6 +1649,10 @@ function stopRender() {
 
   cancelAnimationFrame(state.raf);
   try { state.cleanupCameraControls?.(); } catch {}
+  if (state.listenerScopeRegistered) {
+    removeLabResource("activeAbortScopes");
+    state.listenerScopeRegistered = false;
+  }
   try { state.renderer.destroy(); } catch {}
   try { state.depthTexture?.destroy(); } catch {}
   try { state.context.unconfigure?.(); } catch {}
@@ -1815,9 +1820,12 @@ async function startRender() {
       scene,
       network,
       resourceRegistered: false,
+      listenerScopeRegistered: false,
     };
     resetCamera(state.camera, defaultCameraDistance);
     state.cleanupCameraControls = installCameraControls(state);
+    addLabResource("activeAbortScopes");
+    state.listenerScopeRegistered = true;
     renderState = state;
     addLabResource("activeMechanicalRenderers");
     addLabResource("activeRafOwners");
