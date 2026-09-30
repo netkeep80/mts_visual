@@ -22,6 +22,17 @@ function usage() {
   ].join("\n");
 }
 
+const ALLOWED_OPTIONS = new Set([
+  "input",
+  "output",
+  "manifest",
+  "profile",
+  "strategy",
+  "root",
+  "renderer-sha",
+  "format",
+]);
+
 function parseArgs(argv) {
   if (argv[0] !== "render-2d") throw new Error(usage());
   const result = {};
@@ -29,6 +40,9 @@ function parseArgs(argv) {
     const token = argv[index];
     if (!token.startsWith("--")) throw new Error(`unexpected argument: ${token}\n${usage()}`);
     const name = token.slice(2);
+    if (!ALLOWED_OPTIONS.has(name)) {
+      throw new Error(`unknown option: --${name}\n${usage()}`);
+    }
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) {
       throw new Error(`missing value for --${name}\n${usage()}`);
@@ -98,6 +112,7 @@ async function runRender2D(argv) {
   const inputPath = required(options, "input");
   const outputPath = required(options, "output");
   const manifestPath = options.manifest ?? `${outputPath}.manifest.json`;
+  const format = oneOf(options.format ?? "svg", ["svg"], "format");
   const profile = oneOf(options.profile ?? "article", ["formal", "article", "debug"], "profile");
   const strategy = oneOf(
     options.strategy ?? "auto",
@@ -144,6 +159,9 @@ async function runRender2D(argv) {
     outputPath,
     outputDigest: sha256(svgBytes),
   });
+  if (format !== manifest.format) {
+    throw new Error(`internal format mismatch: requested ${format}, manifest ${manifest.format}`);
+  }
 
   await mkdir(dirname(manifestPath), { recursive: true });
   const manifestText = JSON.stringify(manifest, null, 2) + "\n";
