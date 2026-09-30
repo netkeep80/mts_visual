@@ -46,6 +46,7 @@ const million = parseMechanicalBenchmarkQuery(
 assert.deepEqual(million.values, {
   linkCount: 1_000_000,
   detailProfile: "semantic",
+  seed: 0,
   sampleCount: 1,
   renderEnabled: false,
 });
