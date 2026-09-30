@@ -31,10 +31,15 @@ export interface MonolithicLinkWebGpuCapacityBuffer3D {
 
 export interface MonolithicLinkWebGpuCapacityPlan3D {
   readonly linkCount: number;
+  readonly detailedLinkCount: number;
+  readonly detailCapacity: number;
   readonly octahedronCount: number;
   readonly sectionCount: number;
   readonly persistentGpuBytes: number;
-  readonly persistentBytesPerLink: number;
+  readonly compactPersistentGpuBytes: number;
+  readonly detailCacheBytes: number;
+  readonly persistentBytesPerLink: 148;
+  readonly detailBytesPerSlot: number;
   readonly fixedBytes: number;
   readonly buffers: readonly MonolithicLinkWebGpuCapacityBuffer3D[];
   readonly largestStorageBuffer: MonolithicLinkWebGpuCapacityBuffer3D;
@@ -46,18 +51,25 @@ export interface MonolithicLinkWebGpuCapacityPlan3D {
   readonly surfaceVertexInvocations: number;
   readonly wireframeVertexInvocations: number;
   readonly endConeVertexInvocations: number;
-  readonly computePassesPerStep: 3;
+  readonly computePassesPerStep: number;
   readonly semanticInvocationsPerStep: number;
+  readonly detailInvocationsPerStep: number;
   readonly dispatch: Readonly<{
     workgroupsX: number;
     workgroupsY: number;
     coveredInvocationsPerPass: number;
     maximumLinksByDispatch: number;
   }>;
+  readonly detailDispatch: Readonly<{
+    workgroupsX: number;
+    workgroupsY: number;
+    coveredInvocationsPerPass: number;
+  }>;
   readonly limits: Readonly<{
     maxStorageBufferBindingSize: number | null;
     maxBufferSize: number | null;
     maxComputeWorkgroupsPerDimension: number;
+    maximumDetailedLinksByBinding: number | null;
     maximumLinksByStorageBinding: number | null;
     maximumLinksByBufferSize: number | null;
     maximumSupportedLinkCount: number;
@@ -132,29 +144,60 @@ function buffer(
   });
 }
 
-function maximumByPerLinkBuffer(
+function maximumSemanticLinksForLimit(
   limit: number | null,
-  sectionCount: number,
-  staticStorageBuffers: readonly MonolithicLinkWebGpuCapacityBuffer3D[],
+  fixedBuffers: readonly MonolithicLinkWebGpuCapacityBuffer3D[],
 ): number | null {
   if (limit === null) return null;
-  if (staticStorageBuffers.some((candidate) => candidate.allocatedBytes > limit)) {
+  if (fixedBuffers.some((candidate) => candidate.allocatedBytes > limit)) {
     return 0;
   }
-  return Math.floor(limit / (sectionCount * 16));
+  return Math.max(
+    0,
+    Math.min(
+      Math.floor(limit / 16),
+      Math.floor(limit / 48),
+      Math.floor(Math.max(0, limit - 4) / 20),
+      Math.floor(limit / 8),
+    ),
+  );
+}
+
+function boundedDetailCapacity(
+  linkCount: number,
+  sectionCount: number,
+  storageLimit: number | null,
+  bufferLimit: number | null,
+): {
+  readonly capacity: number;
+  readonly maximumByBinding: number | null;
+} {
+  const finiteLimits = [storageLimit, bufferLimit].filter(
+    (value): value is number => value !== null,
+  );
+  if (finiteLimits.length === 0) {
+    return Object.freeze({
+      capacity: linkCount,
+      maximumByBinding: null,
+    });
+  }
+  const limit = Math.min(...finiteLimits);
+  const maximumByBinding = Math.floor(limit / (sectionCount * 16));
+  return Object.freeze({
+    capacity: Math.min(linkCount, maximumByBinding),
+    maximumByBinding,
+  });
 }
 
 /**
  * Deterministic capacity model for the current monolithic Mechanical 3D path.
  *
- * It mirrors the exact persistent GPU buffers allocated by:
- * - createMonolithicLinkWebGpuCompute3D
- * - createMonolithicLinkWebGpuShape3D
- * - createMonolithicLinkWebGpuZeroCopyRenderer3D
+ * Global semantic/shape state is O(LinkCount). Detailed section frames are a
+ * separately bounded presentation cache whose capacity is limited by adapter
+ * storage/buffer limits instead of total Link count.
  *
- * It intentionally excludes swap-chain/depth textures, driver overhead and the
- * host-side VisualLinkNetwork/string objects because those are environment/UI
- * concerns rather than persistent monolithic Link buffers.
+ * Excludes swap-chain/depth textures, driver overhead and host-side
+ * VisualLinkNetwork/string objects.
  */
 export function planMonolithicLinkWebGpuCapacity3D(
   linkCountValue: number,
@@ -169,18 +212,44 @@ export function planMonolithicLinkWebGpuCapacity3D(
     template.surfaceTriangles,
   );
 
+  const maxStorageBufferBindingSize = requireOptionalLimit(
+    adapterLimits.maxStorageBufferBindingSize,
+    "maxStorageBufferBindingSize",
+  );
+  const maxBufferSize = requireOptionalLimit(
+    adapterLimits.maxBufferSize,
+    "maxBufferSize",
+  );
+  const maxComputeWorkgroupsPerDimension = requireWorkgroupLimit(
+    adapterLimits.maxComputeWorkgroupsPerDimension,
+  );
+
+  const detail = boundedDetailCapacity(
+    linkCount,
+    sectionCount,
+    maxStorageBufferBindingSize,
+    maxBufferSize,
+  );
+  const detailCapacity = detail.capacity;
+  const detailedLinkCount = detailCapacity;
+
   const vectorBytes = safeMultiply(linkCount, 16, "semantic vec4");
   const linkForceBytes = safeMultiply(linkCount, 48, "three force vec4");
   const computeTopologyBytes = safeAdd([
     safeMultiply(linkCount, 20, "compute topology"),
     4,
   ], "compute topology");
-  const shapeSectionFrameBytes = safeMultiply(
-    safeMultiply(linkCount, sectionCount, "section frames count"),
-    16,
-    "section frames bytes",
-  );
   const linkTopologyBytes = safeMultiply(linkCount, 8, "two-index topology");
+  const detailIndexBytes = safeMultiply(
+    detailCapacity,
+    4,
+    "detail index cache",
+  );
+  const sectionFrameBytes = safeMultiply(
+    safeMultiply(detailCapacity, sectionCount, "detail section count"),
+    16,
+    "detail section frame bytes",
+  );
 
   const buffers = Object.freeze([
     buffer("compute.centers", vectorBytes, true),
@@ -191,7 +260,8 @@ export function planMonolithicLinkWebGpuCapacity3D(
 
     buffer("shape.parameters", vectorBytes, true),
     buffer("shape.gauge", vectorBytes, true),
-    buffer("shape.sectionFrames", shapeSectionFrameBytes, true),
+    buffer("shape.detailIndices", detailIndexBytes, true),
+    buffer("shape.sectionFrames", sectionFrameBytes, true),
     buffer("shape.topology", linkTopologyBytes, true),
     buffer("shape.globals", SHAPE_GLOBAL_BYTES, false),
 
@@ -210,15 +280,27 @@ export function planMonolithicLinkWebGpuCapacity3D(
     buffer("renderer.uniforms", RENDER_UNIFORM_BYTES, false),
   ]);
 
+  const detailNames = new Set([
+    "shape.detailIndices",
+    "shape.sectionFrames",
+  ]);
+  const detailCacheBytes = safeAdd(
+    buffers
+      .filter((candidate) => detailNames.has(candidate.name))
+      .map((candidate) => candidate.allocatedBytes),
+    "detail cache bytes",
+  );
+  const compactPersistentGpuBytes = safeAdd(
+    buffers
+      .filter((candidate) => !detailNames.has(candidate.name))
+      .map((candidate) => candidate.allocatedBytes),
+    "compact persistent GPU bytes",
+  );
   const persistentGpuBytes = safeAdd(
-    buffers.map((candidate) => candidate.allocatedBytes),
+    [compactPersistentGpuBytes, detailCacheBytes],
     "persistent GPU bytes",
   );
 
-  const perLinkLogicalBytes =
-    16 + 16 + 48 + 20
-    + 16 + 16 + sectionCount * 16 + 8
-    + 8;
   const fixedBytes =
     COMPUTE_GLOBAL_BYTES
     + 4
@@ -227,22 +309,11 @@ export function planMonolithicLinkWebGpuCapacity3D(
     + wireframe.byteLength
     + template.gradientT.byteLength
     + RENDER_UNIFORM_BYTES;
+  const detailBytesPerSlot = 4 + sectionCount * 16;
 
   const storageBuffers = buffers.filter((candidate) => candidate.storageBinding);
   const largestStorageBuffer = storageBuffers.reduce((largest, candidate) =>
     candidate.allocatedBytes > largest.allocatedBytes ? candidate : largest
-  );
-
-  const maxStorageBufferBindingSize = requireOptionalLimit(
-    adapterLimits.maxStorageBufferBindingSize,
-    "maxStorageBufferBindingSize",
-  );
-  const maxBufferSize = requireOptionalLimit(
-    adapterLimits.maxBufferSize,
-    "maxBufferSize",
-  );
-  const maxComputeWorkgroupsPerDimension = requireWorkgroupLimit(
-    adapterLimits.maxComputeWorkgroupsPerDimension,
   );
 
   const fixedBuffers = buffers.filter((candidate) =>
@@ -257,14 +328,12 @@ export function planMonolithicLinkWebGpuCapacity3D(
     (candidate) => candidate.storageBinding,
   );
 
-  const maximumLinksByStorageBinding = maximumByPerLinkBuffer(
+  const maximumLinksByStorageBinding = maximumSemanticLinksForLimit(
     maxStorageBufferBindingSize,
-    sectionCount,
     fixedStorageBuffers,
   );
-  const maximumLinksByBufferSize = maximumByPerLinkBuffer(
+  const maximumLinksByBufferSize = maximumSemanticLinksForLimit(
     maxBufferSize,
-    sectionCount,
     fixedBuffers,
   );
   const maximumLinksByDispatch = safeMultiply(
@@ -279,6 +348,10 @@ export function planMonolithicLinkWebGpuCapacity3D(
 
   const dispatch = computeOctahedralWebGpuDispatch2D(
     linkCount,
+    maxComputeWorkgroupsPerDimension,
+  );
+  const detailDispatch = computeOctahedralWebGpuDispatch2D(
+    detailedLinkCount,
     maxComputeWorkgroupsPerDimension,
   );
 
@@ -300,49 +373,62 @@ export function planMonolithicLinkWebGpuCapacity3D(
 
   return Object.freeze({
     linkCount,
+    detailedLinkCount,
+    detailCapacity,
     octahedronCount,
     sectionCount,
     persistentGpuBytes,
-    persistentBytesPerLink: perLinkLogicalBytes,
+    compactPersistentGpuBytes,
+    detailCacheBytes,
+    persistentBytesPerLink: 148 as const,
+    detailBytesPerSlot,
     fixedBytes,
     buffers,
     largestStorageBuffer,
-    sectionFrameBytes: shapeSectionFrameBytes,
+    sectionFrameBytes,
     surfaceVerticesPerLink: template.surfaceTriangles.length,
     wireframeVerticesPerLink: wireframe.length,
     endConeVerticesPerLink: END_CONE_VERTEX_COUNT,
     hoveredCenterVertices: HOVERED_CENTER_VERTEX_COUNT,
     surfaceVertexInvocations: safeMultiply(
       template.surfaceTriangles.length,
-      linkCount,
+      detailedLinkCount,
       "surface vertex invocations",
     ),
     wireframeVertexInvocations: safeMultiply(
       wireframe.length,
-      linkCount,
+      detailedLinkCount,
       "wireframe vertex invocations",
     ),
     endConeVertexInvocations: safeMultiply(
       END_CONE_VERTEX_COUNT,
-      linkCount,
+      detailedLinkCount,
       "END cone vertex invocations",
     ),
-    computePassesPerStep: 3 as const,
+    computePassesPerStep:
+      linkCount === 0 ? 0 : 3 + (detailedLinkCount > 0 ? 1 : 0),
     semanticInvocationsPerStep: safeMultiply(
       linkCount,
       3,
       "semantic compute invocations",
     ),
+    detailInvocationsPerStep: detailedLinkCount,
     dispatch: Object.freeze({
       workgroupsX: dispatch.workgroupsX,
       workgroupsY: dispatch.workgroupsY,
       coveredInvocationsPerPass: dispatch.coveredInvocations,
       maximumLinksByDispatch,
     }),
+    detailDispatch: Object.freeze({
+      workgroupsX: detailDispatch.workgroupsX,
+      workgroupsY: detailDispatch.workgroupsY,
+      coveredInvocationsPerPass: detailDispatch.coveredInvocations,
+    }),
     limits: Object.freeze({
       maxStorageBufferBindingSize,
       maxBufferSize,
       maxComputeWorkgroupsPerDimension,
+      maximumDetailedLinksByBinding: detail.maximumByBinding,
       maximumLinksByStorageBinding,
       maximumLinksByBufferSize,
       maximumSupportedLinkCount,

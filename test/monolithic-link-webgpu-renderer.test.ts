@@ -330,44 +330,72 @@ function fakeShape(
     topology.linkCount * 16,
     "monolithic-link-roll-gauge",
   );
+  const detailLinkIndexBuffer = new FakeBuffer(
+    topology.linkCount * 4,
+    "monolithic-link-detail-indices",
+  );
   const sectionFrameBuffer = new FakeBuffer(
     topology.linkCount * (template.octahedronCount + 1) * 16,
     "monolithic-link-section-frames",
   );
   let destroyed = false;
+  let detailCount = topology.linkCount;
   return {
     compute,
     template,
     parameterBuffer,
     gaugeBuffer,
+    detailLinkIndexBuffer,
     sectionFrameBuffer,
+    setDetailLinkIndices(indices) {
+      detailCount = indices.length;
+      return {
+        detailedLinkCount: detailCount,
+        detailCapacity: topology.linkCount,
+        indexUploadBytes: indices.length * 4,
+        globalsUploadBytes: 32,
+      };
+    },
     update() {
       return {
-        dispatches: 1,
-        computePasses: 1,
+        compactDispatches: 1,
+        detailDispatches: detailCount > 0 ? 1 : 0,
+        dispatches: detailCount > 0 ? 2 : 1,
+        computePasses: detailCount > 0 ? 2 : 1,
+        detailedLinkCount: detailCount,
         dynamicStateUploadBytes: 0 as const,
       };
     },
     snapshot() {
+      const detailLinkIndexBytes = topology.linkCount * 4;
+      const sectionFrameBytes =
+        topology.linkCount * (template.octahedronCount + 1) * 16;
       return {
         status: destroyed ? "destroyed" as const : "available" as const,
         linkCount: topology.linkCount,
+        detailedLinkCount: detailCount,
+        detailCapacity: topology.linkCount,
         octahedronCount: template.octahedronCount,
         sectionCount: template.octahedronCount + 1,
         parameterBytes: topology.linkCount * 16,
         gaugeBytes: topology.linkCount * 16,
-        sectionFrameBytes:
-          topology.linkCount * (template.octahedronCount + 1) * 16,
+        detailLinkIndexBytes,
+        sectionFrameBytes,
         topologyBytes: topology.linkCount * 2 * 4,
+        compactDynamicStateBytes: topology.linkCount * 32,
+        detailDynamicStateBytes:
+          detailLinkIndexBytes + sectionFrameBytes,
         dynamicStateBytes:
           topology.linkCount * 32
-          + topology.linkCount * (template.octahedronCount + 1) * 16,
+          + detailLinkIndexBytes
+          + sectionFrameBytes,
       };
     },
     destroy() {
       destroyed = true;
       parameterBuffer.destroy();
       gaugeBuffer.destroy();
+      detailLinkIndexBuffer.destroy();
       sectionFrameBuffer.destroy();
     },
   };
@@ -378,8 +406,10 @@ for (const needle of [
   "@group(0) @binding(1) var<storage, read> shape_parameters",
   "@group(0) @binding(2) var<storage, read> roll_gauge",
   "@group(0) @binding(3) var<storage, read> section_frames",
+  "@group(0) @binding(4) var<storage, read> detail_link_indices",
   "fn sample_section",
-  "let descriptor = section_frames[link * scene.counts.w + section];",
+  "detail_slot * scene.counts.w + section",
+  "let link = detail_link_indices[detail_slot];",
   "let twist = select(0.0, PI / 3.0, (section & 1u) == 1u);",
   "if (params.z > 0.5 && params.w <= 0.5)",
   "shared_direction = second_direction;",
@@ -390,7 +420,7 @@ for (const needle of [
   "let hinge_opening = PI * t * (1.0 - t);",
   "+ PI * (1.0 - 2.0 * t),",
   "let center = semantic_centers[instance_index].xyz;",
-  "let tip = section_center(instance_index, end_section);",
+  "let tip = section_center(link, detail_slot, end_section);",
   "fn link_gradient(t_value: f32)",
   "return vec3<f32>(1.0 - u, u, 0.0);",
   "return vec3<f32>(0.0, 1.0 - u, u);",
@@ -456,6 +486,11 @@ same(
   "renderer shares exact persistent roll-gauge buffer",
 );
 same(
+  renderer.shapeDetailLinkIndexBuffer,
+  shape.detailLinkIndexBuffer,
+  "renderer shares exact detail-slot to semantic-Link mapping buffer",
+);
+same(
   renderer.shapeSectionFrameBuffer,
   shape.sectionFrameBuffer,
   "renderer shares exact GPU-derived arc/frame buffer",
@@ -466,9 +501,9 @@ const renderLayout = device.bindGroupLayouts.find(
 );
 assert(renderLayout !== undefined, "render bind-group layout captured");
 const sceneUniformBinding = renderLayout.entries.find(
-  (entry) => entry.binding === 7,
+  (entry) => entry.binding === 8,
 );
-assert(sceneUniformBinding !== undefined, "scene uniform binding 7 exists");
+assert(sceneUniformBinding !== undefined, "scene uniform binding 8 exists");
 same(
   sceneUniformBinding.visibility,
   0x0001 | 0x0002,
@@ -540,6 +575,7 @@ same(bound[0], compute.centerBuffer, "binding 0 is semantic CENTER buffer");
 same(bound[1], shape.parameterBuffer, "binding 1 is compact shape buffer");
 same(bound[2], shape.gaugeBuffer, "binding 2 is persistent roll gauge");
 same(bound[3], shape.sectionFrameBuffer, "binding 3 is derived section frame buffer");
+same(bound[4], shape.detailLinkIndexBuffer, "binding 4 is detail-slot mapping buffer");
 
 const identity = new Float32Array([
   1, 0, 0, 0,
@@ -560,6 +596,8 @@ const stats = renderer.render({
   smoothNormals: false,
 });
 
+same(stats.linkCount, 2, "renderer keeps full semantic Link count");
+same(stats.detailedLinkCount, 2, "renderer draws only active detail slots");
 same(stats.drawCalls, 3, "filled frame uses material + hovered CENTER + END");
 same(stats.dynamicStateUploadBytes, 0, "frame uploads no dynamic state");
 same(stats.bufferCopies, 0, "frame performs no buffer copies");
@@ -641,6 +679,9 @@ same(
 );
 
 const snapshot = renderer.snapshot();
+same(snapshot.linkCount, 2, "snapshot retains semantic Link count");
+same(snapshot.detailedLinkCount, 2, "snapshot reports active detail slots");
+same(snapshot.detailCapacity, 2, "snapshot reports bounded detail capacity");
 same(snapshot.sharedSemanticCenterBuffer, true, "snapshot proves semantic centers are shared");
 same(snapshot.sharedShapeParameterBuffer, true, "snapshot proves shape parameters are shared");
 same(snapshot.rendererDynamicStateBytes, 0, "renderer owns zero dynamic duplicate state");
@@ -648,11 +689,50 @@ same(snapshot.dynamicStateUploadBytesPerFrame, 0, "ordinary frame uploads zero d
 same(snapshot.octahedronCount, 2, "minimum fixture is two octahedra");
 same(snapshot.sectionCount, 3, "two octahedra expose three connecting triangles");
 
+shape.setDetailLinkIndices([1]);
+device.resetFrame();
+const oneDetail = renderer.render({
+  targetView: {},
+  depthView: {},
+  viewProjection: identity,
+  width: 1280,
+  height: 720,
+  wireframe: false,
+  showCenterMarkers: false,
+  showEndCones: true,
+});
+same(oneDetail.linkCount, 2, "detail filtering does not change semantic Link count");
+same(oneDetail.detailedLinkCount, 1, "renderer follows live detail-slot selection");
+same(device.draws[0]!.instanceCount, 1, "surface draw uses detail-slot count");
+same(device.draws[1]!.instanceCount, 1, "END draw uses detail-slot count");
+
+shape.setDetailLinkIndices([]);
+device.resetFrame();
+const noDetail = renderer.render({
+  targetView: {},
+  depthView: {},
+  viewProjection: identity,
+  width: 1280,
+  height: 720,
+  wireframe: false,
+  showCenterMarkers: true,
+  showEndCones: true,
+  hoveredCenterLink: 1,
+});
+same(noDetail.linkCount, 2, "zero-detail frame retains semantic Link count");
+same(noDetail.detailedLinkCount, 0, "zero-detail frame has no material instances");
+same(noDetail.drawCalls, 1, "semantic hovered CENTER remains drawable without detail slots");
+same(noDetail.surfaceVertexInvocations, 0, "zero-detail frame performs no carrier surface work");
+same(noDetail.arrowVertexInvocations, 0, "zero-detail frame performs no END carrier work");
+same(noDetail.centerVertexInvocations, 80 * 3 * 2, "semantic CENTER overlay is independent of detail cache");
+same(device.draws.length, 1, "zero-detail frame emits only hovered CENTER draw");
+same(device.draws[0]!.firstInstance, 1, "zero-detail CENTER still addresses semantic Link index");
+
 renderer.destroy();
 same(renderer.snapshot().status, "destroyed", "renderer destroy updates status");
 
 console.log(
-  "[v0.5 #102 monolithic carrier renderer] PASS links="
+  "[v0.6 #153 bounded-detail renderer] PASS links="
   + snapshot.linkCount
   + " octa="
   + snapshot.octahedronCount
