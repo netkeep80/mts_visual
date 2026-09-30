@@ -706,6 +706,28 @@ same(oneDetail.detailedLinkCount, 1, "renderer follows live detail-slot selectio
 same(device.draws[0]!.instanceCount, 1, "surface draw uses detail-slot count");
 same(device.draws[1]!.instanceCount, 1, "END draw uses detail-slot count");
 
+shape.setDetailLinkIndices([]);
+device.resetFrame();
+const noDetail = renderer.render({
+  targetView: {},
+  depthView: {},
+  viewProjection: identity,
+  width: 1280,
+  height: 720,
+  wireframe: false,
+  showCenterMarkers: true,
+  showEndCones: true,
+  hoveredCenterLink: 1,
+});
+same(noDetail.linkCount, 2, "zero-detail frame retains semantic Link count");
+same(noDetail.detailedLinkCount, 0, "zero-detail frame has no material instances");
+same(noDetail.drawCalls, 1, "semantic hovered CENTER remains drawable without detail slots");
+same(noDetail.surfaceVertexInvocations, 0, "zero-detail frame performs no carrier surface work");
+same(noDetail.arrowVertexInvocations, 0, "zero-detail frame performs no END carrier work");
+same(noDetail.centerVertexInvocations, 80 * 3 * 2, "semantic CENTER overlay is independent of detail cache");
+same(device.draws.length, 1, "zero-detail frame emits only hovered CENTER draw");
+same(device.draws[0]!.firstInstance, 1, "zero-detail CENTER still addresses semantic Link index");
+
 renderer.destroy();
 same(renderer.snapshot().status, "destroyed", "renderer destroy updates status");
 
