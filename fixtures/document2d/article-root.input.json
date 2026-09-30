@@ -1,0 +1,41 @@
+{
+  "schema": "mts-visual-document-input/v1",
+  "links": [
+    {
+      "key": "R",
+      "startKey": "R",
+      "endKey": "R",
+      "label": "ROOT"
+    },
+    {
+      "key": "O",
+      "startKey": "O",
+      "endKey": "R",
+      "label": "START"
+    },
+    {
+      "key": "C",
+      "startKey": "R",
+      "endKey": "C",
+      "label": "END"
+    },
+    {
+      "key": "L",
+      "startKey": "O",
+      "endKey": "C",
+      "label": "PAIR"
+    },
+    {
+      "key": "U",
+      "startKey": "C",
+      "endKey": "O",
+      "label": "U"
+    },
+    {
+      "key": "X",
+      "startKey": "L",
+      "endKey": "U",
+      "label": "link of links"
+    }
+  ]
+}

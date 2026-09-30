@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build --silent && node dist/test/model.test.js && node test/document2d-cli.test.mjs",
+    "test": "npm run build --silent && node dist/test/model.test.js && node test/document2d-cli.test.mjs && node test/document2d-fixture.test.mjs",
     "check": "npm test",
     "render-2d": "npm run build --silent && node bin/mts-visual.mjs render-2d"
   },
