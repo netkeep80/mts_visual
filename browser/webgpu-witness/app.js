@@ -713,12 +713,27 @@ async function runBenchmarkFromUi() {
   );
 
   try {
+    const interactiveMechanicalSuspended = renderState !== null;
+    if (
+      interactiveMechanicalSuspended
+      && typeof device?.queue?.onSubmittedWorkDone === "function"
+    ) {
+      ui.benchmarkStatus.textContent =
+        "изоляция benchmark · ожидание завершения интерактивной GPU queue";
+      await device.queue.onSubmittedWorkDone();
+    }
+
     const evidence = await runMechanicalWebGpuBenchmark({
       adapter,
       webgpu,
       buildInfo,
       canvas: ui.benchmarkCanvas,
-      config,
+      config: {
+        ...config,
+        resourceIsolation: interactiveMechanicalSuspended
+          ? "separate-device+interactive-mechanical-suspended"
+          : "separate-device",
+      },
       onProgress: benchmarkProgress,
       shouldStop: () => benchmarkStopRequested,
     });
@@ -2324,6 +2339,12 @@ async function startRender() {
 
     function frame(now) {
       if (renderState !== state) return;
+
+      if (benchmarkRunning) {
+        state.lastFrameAt = now;
+        state.raf = requestAnimationFrame(frame);
+        return;
+      }
 
       try {
         ensureDepth();
