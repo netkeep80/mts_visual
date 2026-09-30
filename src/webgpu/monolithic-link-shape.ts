@@ -1001,13 +1001,26 @@ function adapterDetailCapacity(
   linkCount: number,
   sectionCount: number,
 ): number {
-  const limit = device.limits?.maxStorageBufferBindingSize;
-  if (limit === undefined) return linkCount;
-  if (!Number.isSafeInteger(limit) || limit <= 0) {
-    throw new Error(
-      `invalid monolithic shape maxStorageBufferBindingSize: ${String(limit)}`,
-    );
+  const storageLimit = device.limits?.maxStorageBufferBindingSize;
+  const bufferLimit = device.limits?.maxBufferSize;
+  for (const [name, value] of [
+    ["maxStorageBufferBindingSize", storageLimit],
+    ["maxBufferSize", bufferLimit],
+  ] as const) {
+    if (
+      value !== undefined
+      && (!Number.isSafeInteger(value) || value <= 0)
+    ) {
+      throw new Error(
+        `invalid monolithic shape ${name}: ${String(value)}`,
+      );
+    }
   }
+  const limit = Math.min(
+    storageLimit ?? Number.MAX_SAFE_INTEGER,
+    bufferLimit ?? Number.MAX_SAFE_INTEGER,
+  );
+  if (limit === Number.MAX_SAFE_INTEGER) return linkCount;
   return Math.min(
     linkCount,
     Math.floor(limit / (sectionCount * 16)),
