@@ -495,6 +495,11 @@ let monolithicDifferentialPhysicsSignature = null;
 let renderPass = false;
 let renderState = null;
 
+const MECHANICAL_DETAIL_SLOT_BUDGET = 4096;
+const MECHANICAL_DETAIL_FRUSTUM_MARGIN = 0.18;
+const MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS = 70;
+const MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS = 1000;
+
 function differentialIsCurrent() {
   return monolithicDifferentialAllPass
     && monolithicDifferentialPhysicsSignature
@@ -999,6 +1004,13 @@ function setSelectedVisualKey(key) {
     throw new Error(`неизвестная выбранная связь: ${key}`);
   }
   selectedVisualKey = key;
+  if (renderState?.scene === scene) {
+    scheduleMechanicalDetailSelection(
+      renderState,
+      "shared-selection",
+      0,
+    );
+  }
   updateSharedDiagnostics();
 }
 
@@ -1075,8 +1087,27 @@ function mechanicalDiagnosticDetail() {
     velocityBytes: compute.velocityBytes,
     octahedraPerLink: shape.octahedronCount,
     detail: {
+      policy: "cached-frustum-priority/v1",
+      slotBudget: MECHANICAL_DETAIL_SLOT_BUDGET,
       detailedLinkCount: shape.detailedLinkCount,
       detailCapacity: shape.detailCapacity,
+      culledLinkCount:
+        renderState.detailSelection?.culledLinkCount
+        ?? Math.max(0, renderState.compute.topology.linkCount - shape.detailedLinkCount),
+      visibleCandidateCount:
+        renderState.detailSelection?.visibleCandidateCount ?? null,
+      selectedPinned:
+        renderState.detailSelection?.selectedPinned ?? false,
+      hoveredPinned:
+        renderState.detailSelection?.hoveredPinned ?? false,
+      selectionReason:
+        renderState.detailSelection?.reason ?? "initial-prefix",
+      selectionUpdates: renderState.detailSelectionUpdates,
+      centerCacheRevision: renderState.centerCacheRevision,
+      selectionCenterRevision:
+        renderState.detailSelection?.centerCacheRevision ?? null,
+      indexUploadBytes: renderState.detailSelectionIndexUploadBytes,
+      globalsUploadBytes: renderState.detailSelectionGlobalsUploadBytes,
       compactDynamicStateBytes: shape.compactDynamicStateBytes,
       detailDynamicStateBytes: shape.detailDynamicStateBytes,
       sectionFrameBytes: shape.sectionFrameBytes,
@@ -1250,6 +1281,72 @@ function currentViewProjection(state) {
   return multiply4(projection, view);
 }
 
+function sameDetailIndices(left, right) {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function selectedMechanicalLinkIndex(state) {
+  if (selectedVisualKey === null) return -1;
+  return state.linkIndexByKey.get(selectedVisualKey) ?? -1;
+}
+
+function refreshMechanicalDetailSelection(state, reason) {
+  if (renderState !== state) return null;
+  const shapeSnapshot = state.shape.snapshot();
+  const selection = webgpu.selectMonolithicLinkDetail3D({
+    linkCount: state.compute.topology.linkCount,
+    detailCapacity: shapeSnapshot.detailCapacity,
+    viewProjection: currentViewProjection(state),
+    centerAt: (linkIndex) => state.semanticCenterCache[linkIndex],
+    selectedLink: selectedMechanicalLinkIndex(state),
+    hoveredLink: state.hoveredCenterLink,
+    frustumMargin: MECHANICAL_DETAIL_FRUSTUM_MARGIN,
+  });
+
+  const previous = state.detailSelection?.indices ?? [];
+  let updateStats = null;
+  if (!sameDetailIndices(previous, selection.indices)) {
+    updateStats = state.shape.setDetailLinkIndices(selection.indices);
+    state.detailSelectionUpdates += 1;
+    state.detailSelectionIndexUploadBytes += updateStats.indexUploadBytes;
+    state.detailSelectionGlobalsUploadBytes += updateStats.globalsUploadBytes;
+  }
+
+  state.detailSelection = {
+    ...selection,
+    reason,
+    centerCacheRevision: state.centerCacheRevision,
+  };
+  updateSharedDiagnostics();
+  return updateStats;
+}
+
+function scheduleMechanicalDetailSelection(
+  state,
+  reason,
+  delay = MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS,
+) {
+  if (renderState !== state) return;
+  if (state.detailSelectionTimer !== null) {
+    clearTimeout(state.detailSelectionTimer);
+  }
+  state.detailSelectionTimer = setTimeout(() => {
+    state.detailSelectionTimer = null;
+    if (renderState !== state) return;
+    try {
+      refreshMechanicalDetailSelection(state, reason);
+    } catch (error) {
+      log(
+        `ОШИБКА выбора detail-cache (${reason}) — ${error.stack ?? error}`,
+      );
+    }
+  }, Math.max(0, delay));
+}
+
 function projectWorldToClient(state, world) {
   const clip = transformPoint4(currentViewProjection(state), world);
   if (!(clip[3] > 1e-6)) return null;
@@ -1393,6 +1490,11 @@ function installCameraControls(state) {
     if (state.hoveredCenterLink === next) return;
     state.hoveredCenterLink = next;
     canvas.classList.toggle("center-hover", next >= 0);
+    scheduleMechanicalDetailSelection(
+      state,
+      "hover-priority",
+      0,
+    );
   };
 
   const runHoverPick = async () => {
@@ -1430,6 +1532,7 @@ function installCameraControls(state) {
         worldCenters.push(center);
         state.semanticCenterCache[link] = [...center];
       }
+      state.centerCacheRevision += 1;
       setHoveredCenter(
         pickCenterIcosahedron(state, point, worldCenters),
       );
@@ -1582,6 +1685,12 @@ function installCameraControls(state) {
     } else if (mode === "center" && state.centerDrag) {
       moveCenterDragTarget(state, dx, dy);
     }
+    if (mode === "orbit" || mode === "pan") {
+      scheduleMechanicalDetailSelection(
+        state,
+        "camera-interaction",
+      );
+    }
     event.preventDefault();
   }, listenerOptions);
 
@@ -1603,6 +1712,10 @@ function installCameraControls(state) {
       state.camera.distance * factor,
       state.camera.minDistance,
       state.camera.maxDistance,
+    );
+    scheduleMechanicalDetailSelection(
+      state,
+      "camera-zoom",
     );
   }, { passive: false, signal: abortController.signal });
 
@@ -1635,6 +1748,10 @@ function stopRender() {
   renderPass = false;
 
   cancelAnimationFrame(state.raf);
+  if (state.detailSelectionTimer !== null) {
+    clearTimeout(state.detailSelectionTimer);
+    state.detailSelectionTimer = null;
+  }
   try { state.cleanupCameraControls?.(); } catch {}
   try { state.renderer.destroy(); } catch {}
   try { state.depthTexture?.destroy(); } catch {}
@@ -1681,6 +1798,12 @@ async function startRender() {
       device,
       compute,
       physics.aspectRatio,
+      {
+        detailCapacity: Math.min(
+          linkCount,
+          MECHANICAL_DETAIL_SLOT_BUDGET,
+        ),
+      },
     );
     shape.update();
 
@@ -1780,6 +1903,16 @@ async function startRender() {
       startedAt: performance.now(),
       lastFrameAt: performance.now(),
       lastUiAt: 0,
+      lastDetailAutoRotateAt: 0,
+      detailSelectionTimer: null,
+      detailSelection: null,
+      detailSelectionUpdates: 0,
+      detailSelectionIndexUploadBytes: 0,
+      detailSelectionGlobalsUploadBytes: 0,
+      centerCacheRevision: 0,
+      linkIndexByKey: new Map(
+        compute.topology.keys.map((key, index) => [key, index]),
+      ),
       camera: {
         yaw: 0,
         pitch: 0,
@@ -1800,6 +1933,8 @@ async function startRender() {
     resetCamera(state.camera, defaultCameraDistance);
     state.cleanupCameraControls = installCameraControls(state);
     renderState = state;
+    resizeCanvas(ui.canvas);
+    refreshMechanicalDetailSelection(state, "initial-camera");
     ui.pauseRender.textContent = "Пауза";
 
     function ensureDepth() {
@@ -1863,6 +1998,17 @@ async function startRender() {
         state.lastFrameAt = now;
         if (ui.autoRotate.checked && !state.centerDrag) {
           state.camera.yaw += frameDeltaSeconds * 0.16;
+          if (
+            now - state.lastDetailAutoRotateAt
+            >= MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS
+          ) {
+            state.lastDetailAutoRotateAt = now;
+            scheduleMechanicalDetailSelection(
+              state,
+              "auto-rotate",
+              0,
+            );
+          }
         }
         const viewProjection = currentViewProjection(state);
 
