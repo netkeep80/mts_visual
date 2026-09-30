@@ -12,6 +12,8 @@ const ui = {
   canvas: $("gpu-canvas"),
   visualizationMode: $("visualization-mode"),
   modeStatus: $("mode-status"),
+  modeHeading: $("mode-heading"),
+  modeDescription: $("mode-description"),
   liveLab: $("live-lab"),
   mechanicalControls: $("mechanical-controls"),
   mechanicalCameraHint: $("mechanical-camera-hint"),
@@ -84,11 +86,11 @@ function log(message) {
 }
 
 const LAB_MODE_UI = Object.freeze({
-  "structural-2d": Object.freeze({ label: "Структурный 2D", issue: 126, ready: false }),
-  "blueprint-2d": Object.freeze({ label: "Blueprint 2D", issue: 127, ready: true }),
-  "document-2d": Object.freeze({ label: "Документный 2D", issue: 123, ready: false }),
-  "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: false }),
-  "mechanical-3d": Object.freeze({ label: "Механический 3D", issue: 129, ready: true }),
+  "structural-2d": Object.freeze({ label: "Структурный 2D", issue: 126, ready: false, description: "структурная карта асети" }),
+  "blueprint-2d": Object.freeze({ label: "Blueprint 2D", issue: 127, ready: true, description: "цельные связи START → CENTER → END · SVG · drag / pan / zoom" }),
+  "document-2d": Object.freeze({ label: "Документный 2D", issue: 123, ready: false, description: "детерминированная публикационная проекция" }),
+  "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: false, description: "центры с взаимным отталкиванием + пружины инцидентности" }),
+  "mechanical-3d": Object.freeze({ label: "Механический 3D", issue: 129, ready: true, description: "монолитная физика связи · WebGPU zero-copy" }),
 });
 
 function labModeUi(modeId) {
@@ -122,7 +124,7 @@ function fixtureDisplayName(name) {
 
 function diagnosticLogText() {
   const header = [
-    "mts_visual — диагностический журнал WebGPU-стенда",
+    "mts_visual — диагностический журнал лаборатории визуализации",
     `версия: ${buildInfo.version}`,
     `SHA сборки: ${buildInfo.mainSha}`,
     `страница: ${location.href}`,
@@ -1940,6 +1942,8 @@ const labLifecycle = core.createVisualLabLifecycle({
     const definition = modeId ? labModeUi(modeId) : null;
     if (state === "mounting") {
       ui.modeStatus.textContent = `${definition?.label ?? modeId} · переключение…`;
+      ui.modeHeading.textContent = definition?.label ?? modeId;
+      ui.modeDescription.textContent = definition?.description ?? "";
     } else if (state === "mounted") {
       ui.modeStatus.textContent = definition?.ready
         ? `${definition.label} · готов`
@@ -2232,5 +2236,6 @@ try {
 }
 
 window.addEventListener("pagehide", () => {
+  void labLifecycle.dispose();
   stopRender();
 });
