@@ -55,20 +55,14 @@ assert(
   "browser self-test must be directly invocable through the page URL",
 );
 assert(
-  app.includes("await activateLabMode(modeId);"),
-  "real cycle must use the production lifecycle activation path",
-);
-assert(
-  app.includes("selectedScene() === scene"),
-  "real cycle must preserve exact input scene identity",
-);
-assert(
-  app.includes("sceneInputManifestText(scene) === originalManifest"),
-  "real cycle must preserve exact input manifest bytes",
-);
-assert(
-  app.includes("selectedVisualKey === originalSelectedKey"),
-  "real cycle must preserve shared selection",
+  app.includes('from "./lab-cycle-selftest-controller.js"')
+    && app.includes("createLabCycleSelfTestController")
+    && app.includes("activateMode: (modeId) => activateLabMode(modeId)")
+    && app.includes("getSelectedScene: () => selectedScene()")
+    && app.includes("sceneManifestText: (scene) => sceneInputManifestText(scene)")
+    && app.includes("getSelectedKey: () => selectedVisualKey")
+    && app.includes("return labCycleSelfTestController.run()"),
+  "browser self-test must delegate behavior to the executable controller while driving production activateLabMode",
 );
 
 assert(
