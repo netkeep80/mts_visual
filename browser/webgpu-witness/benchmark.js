@@ -554,7 +554,16 @@ export async function runMechanicalWebGpuBenchmark({
       };
     }
 
-    return completedEvidence(webgpu, evidence, samples);
+    const result = completedEvidence(webgpu, evidence, samples);
+    if (samples.physics.length < sampleCount) {
+      return {
+        ...result,
+        stoppedEarly: true,
+        status: "RUNTIME_FAILED",
+        error: "USER_STOPPED_BEFORE_REQUESTED_SAMPLE_COUNT",
+      };
+    }
+    return result;
   } catch (error) {
     if (evidence === null) {
       throw error;
