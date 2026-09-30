@@ -3,13 +3,120 @@
 Standalone presentation/visualization authority for MTS link asets, published as the `@mts/visual` package.
 
 
-## Live WebGPU laboratory
+## Five-mode visualization laboratory
 
-**[Open the real-browser WebGPU witness](https://netkeep80.github.io/mts_visual/)**
+**[Open the published mts_visual laboratory](https://netkeep80.github.io/mts_visual/)**
 
-The published laboratory runs CPU ↔ WebGPU differential checks and the live zero-copy octahedral renderer on the browser/GPU that opens the page. It also exposes interactive Link length, spring stiffness, and simulation-speed controls.
+The GitHub Pages laboratory is one shared consumer of `@mts/visual`. One immutable `VisualLinkNetwork` snapshot can be switched between five first-class presentation modes without reparsing or reinterpreting MTS semantics:
 
-This repository owns renderer-neutral visual DTOs, blueprint/3D geometry, presentation state, physics, interaction, and the optional Three.js browser companion. It does **not** own MTS semantic truth, proof semantics, parser semantics, or `@mts/core`.
+| Mode | Purpose |
+| --- | --- |
+| **Structural 2D** | Deterministic topology/debug projection with SCC/depth structure, START/END role arcs and bounded crossing reduction. A displayed center is the presentation point of a Link, not a claim that an MTS Link is ontologically an ordinary graph node. |
+| **Blueprint 2D** | Interactive continuous START → CENTER → END Link geometry with labels, finite self-incidence, CENTER dragging, pan/zoom and SVG export. |
+| **Document 2D** | Deterministic one-shot publication renderer for articles/docs. Each Link has pose `(x,y,theta)`; the two outward CENTER tangents are exactly 180° apart while the oriented cubic path is C1 through CENTER. Small networks use bounded deterministic search to minimize crossings. |
+| **Classic 3D** | Retained `Physics3D` / charge + incidence-spring model. All Link centers repel each other, which helps similar Links remain spatially distinguishable instead of visually collapsing onto one trajectory. |
+| **Mechanical 3D** | Current monolithic Link mechanics with the WebGPU zero-copy renderer, live material/physics controls, wireframe/smooth normals and CENTER/END diagnostic layers. |
+
+Classic 3D and Mechanical 3D are intentionally both supported. They model different questions:
+
+```text
+Classic 3D:
+center repulsion + incidence springs
+=> exploratory graph-like spatial separation
+
+Mechanical 3D:
+one semantic Link = one monolithic semi-rigid body
+=> physical Link-shape behavior
+```
+
+The public UI is Russian by default. Technical identifiers such as `VisualLinkNetwork`, mode IDs, SHA and WebGPU remain unchanged where they are actual API concepts.
+
+### Shared fixtures and JSON input
+
+All five modes use the same renderer-neutral fixture/input path. Built-in fixtures cover basic recursive forms, self-incidence, links-of-links, article examples, Classic separation and hub-heavy stress cases.
+
+The lab accepts pasted or local-file JSON using the versioned input envelope:
+
+```json
+{
+  "schema": "mts-visual-document-input/v1",
+  "links": [
+    {
+      "key": "R",
+      "startKey": "R",
+      "endKey": "R",
+      "label": "ROOT"
+    }
+  ]
+}
+```
+
+Optional `sourceRepository` and exact `sourceSha` fields may be supplied for provenance. Malformed input fails closed. Importing a network creates one normalized snapshot which is then retained while switching renderers.
+
+The common diagnostics panel exposes the active mode, input identity, Link count, selected Link, package version, exact build SHA and mode-specific metrics. The current input manifest and diagnostics can be copied directly from the page.
+
+### Deterministic Document 2D
+
+Document 2D does not run physics and does not stop when a wall-clock convergence condition happens. Seed generation, candidate ordering, optimization budgets, tie-breaking, label placement, coordinate quantization and SVG serialization are deterministic.
+
+For the same normalized network and the same options:
+
+```text
+same input + same options
+=> same layout
+=> byte-identical canonical SVG
+```
+
+The quality order is lexicographic: crossings first, then center overlaps, label overlaps, then path length/compactness. For the basic `R/O/C/L/U` fixture the accepted regression requires zero crossings.
+
+Three output profiles are supported:
+
+```text
+formal | article | debug
+```
+
+Headless rendering uses the same core engine as the browser:
+
+```bash
+mts-visual render-2d \
+  --input input.json \
+  --output article.svg \
+  --manifest article.manifest.json \
+  --profile article \
+  --strategy auto \
+  --root R \
+  --format svg \
+  --renderer-sha <exact-git-sha>
+```
+
+The render manifest records the SHA-256 of the exact input bytes and exact SVG bytes, renderer package version/SHA, requested layout options, selected deterministic seed strategy and final quality metrics. It intentionally contains no current-time field that would make identical renders differ.
+
+### Lifecycle/resource self-test
+
+The page contains a real five-mode lifecycle self-test. It uses the same production `activateLabMode(...)` path as the normal UI and repeatedly executes:
+
+```text
+Structural -> Blueprint -> Document -> Classic -> Mechanical
+           -> Classic -> Document -> Blueprint -> Structural
+```
+
+It checks shared input identity/manifest/selection plus mode-specific ownership of SVG roots, Three renderer resources, RAF/listener scopes and the Mechanical WebGPU canvas. Leaving Mechanical releases its renderer and unconfigures the WebGPU canvas context.
+
+Run it from the UI with **«Проверить цикл 5 режимов»**, or address the shipped browser harness directly:
+
+```text
+https://netkeep80.github.io/mts_visual/?selftest=mode-cycle
+```
+
+The versioned browser/Pages acceptance contract is:
+
+```text
+five-mode-resource-cycle/v1
+```
+
+`build-info.json` carries that contract together with package version and the exact build SHA, and the Pages pipeline verifies the same contract again in the deployed artifact.
+
+This repository owns renderer-neutral visual DTOs, structural/blueprint/document geometry and layout, presentation state, physics, interaction, the WebGPU path and the optional Three.js browser companion. It does **not** own MTS semantic truth, proof semantics, parser semantics, or `@mts/core`.
 
 ## Provenance
 
