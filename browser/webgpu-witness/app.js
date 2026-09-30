@@ -1230,6 +1230,390 @@ function downloadTextFile(text, filename, type) {
   URL.revokeObjectURL(url);
 }
 
+const MECHANICAL_BENCHMARK_SCHEMA =
+  "mts-visual-mechanical-benchmark/v1";
+const MECHANICAL_BENCHMARK_QUERY = "mechanical";
+let benchmarkRunning = false;
+let benchmarkCancelRequested = false;
+let benchmarkEvidence = null;
+
+function benchmarkInteger(element, label, minimum, maximum) {
+  const value = Number(element.value);
+  if (
+    !Number.isSafeInteger(value)
+    || value < minimum
+    || value > maximum
+  ) {
+    throw new Error(
+      `недопустимое значение benchmark «${label}»: ${element.value}`,
+    );
+  }
+  return value;
+}
+
+function selectedBenchmarkConfig() {
+  const linkCount = benchmarkInteger(
+    ui.benchmarkLinks,
+    "Links",
+    1,
+    1_000_000,
+  );
+  const topologyProfile = ui.benchmarkProfile.value;
+  if (
+    ![
+      "chain",
+      "hub-heavy",
+      "mixed",
+      "self-incidence",
+      "branching",
+    ].includes(topologyProfile)
+  ) {
+    throw new Error(
+      `неизвестный benchmark profile: ${topologyProfile}`,
+    );
+  }
+
+  const seed = benchmarkInteger(
+    ui.benchmarkSeed,
+    "seed",
+    -2_147_483_648,
+    4_294_967_295,
+  ) >>> 0;
+  const octahedra = benchmarkInteger(
+    ui.benchmarkOcta,
+    "октаэдры",
+    16,
+    128,
+  );
+  if (![16, 32, 64, 128].includes(octahedra)) {
+    throw new Error(
+      `неподдерживаемая benchmark длина: ${octahedra}`,
+    );
+  }
+
+  const detailRaw = ui.benchmarkDetail.value;
+  const fullDetail = detailRaw === "full";
+  const detailCapacity = fullDetail
+    ? linkCount
+    : Number(detailRaw);
+  if (
+    !fullDetail
+    && ![0, 256, 1024, 4096].includes(detailCapacity)
+  ) {
+    throw new Error(
+      `неподдерживаемый benchmark detail budget: ${detailRaw}`,
+    );
+  }
+
+  const warmupIterations = benchmarkInteger(
+    ui.benchmarkWarmup,
+    "warmup",
+    1,
+    1000,
+  );
+  const sampleCount = benchmarkInteger(
+    ui.benchmarkSamples,
+    "samples",
+    1,
+    1000,
+  );
+  const currentPhysics = selectedPhysics();
+
+  return Object.freeze({
+    linkCount,
+    topologyProfile,
+    seed,
+    octahedra,
+    aspectRatio: Math.SQRT2 * (octahedra / 2),
+    detailMode: fullDetail ? "full" : String(detailCapacity),
+    detailCapacity,
+    requireDetailCapacity: fullDetail,
+    warmupIterations,
+    sampleCount,
+    physics: Object.freeze({
+      stretchStiffness: currentPhysics.longitudinalStiffness,
+      straighteningStiffness: currentPhysics.transverseStiffness,
+      nonlinearity: currentPhysics.nonlinearity,
+      centerMass: currentPhysics.nodeMass,
+      dampingRate: currentPhysics.linearDampingRate,
+      simulationSpeed: currentPhysics.simulationSpeed,
+    }),
+  });
+}
+
+function benchmarkDeviceLimits() {
+  if (!device) return null;
+  return Object.freeze({
+    maxStorageBufferBindingSize:
+      device.limits?.maxStorageBufferBindingSize ?? null,
+    maxBufferSize:
+      device.limits?.maxBufferSize ?? null,
+    maxComputeWorkgroupsPerDimension:
+      device.limits?.maxComputeWorkgroupsPerDimension ?? null,
+    maxStorageBuffersPerShaderStage:
+      device.limits?.maxStorageBuffersPerShaderStage ?? null,
+  });
+}
+
+function benchmarkAdapterInfo() {
+  const info = adapter?.info;
+  return info
+    ? Object.freeze({
+      vendor: info.vendor ?? null,
+      architecture: info.architecture ?? null,
+      device: info.device ?? null,
+      description: info.description ?? null,
+    })
+    : null;
+}
+
+function benchmarkTimestampQuerySupported() {
+  return Boolean(adapter?.features?.has?.("timestamp-query"));
+}
+
+function benchmarkProgressText(progress) {
+  const names = {
+    topology: "топология",
+    "compute-init": "compute init",
+    "shape-init": "shape init",
+    warmup: "warmup",
+    sample: "samples",
+  };
+  return `${names[progress.phase] ?? progress.phase}: `
+    + `${progress.completed}/${progress.total}`;
+}
+
+function updateBenchmarkProgress(progress) {
+  ui.benchmarkProgress.max = Math.max(1, progress.total);
+  ui.benchmarkProgress.value = Math.min(
+    progress.completed,
+    ui.benchmarkProgress.max,
+  );
+  ui.benchmarkStatus.textContent =
+    `выполняется · ${benchmarkProgressText(progress)}`;
+}
+
+function benchmarkEvidenceText() {
+  return benchmarkEvidence === null
+    ? ""
+    : JSON.stringify(benchmarkEvidence, null, 2) + "\n";
+}
+
+function setBenchmarkEvidence(evidence) {
+  benchmarkEvidence = Object.freeze(evidence);
+  ui.benchmarkResult.textContent = benchmarkEvidenceText();
+  ui.benchmarkCopy.disabled = false;
+  ui.benchmarkDownload.disabled = false;
+}
+
+function createMechanicalBenchmarkEvidence(config, result, source) {
+  return {
+    schema: MECHANICAL_BENCHMARK_SCHEMA,
+    createdAt: new Date().toISOString(),
+    source,
+    renderer: {
+      version: buildInfo.version,
+      buildSha: buildInfo.mainSha,
+    },
+    environment: {
+      userAgent: navigator.userAgent,
+      adapter: benchmarkAdapterInfo(),
+      deviceLimits: benchmarkDeviceLimits(),
+      timestampQuery: {
+        supported: benchmarkTimestampQuerySupported(),
+        used: false,
+      },
+    },
+    request: {
+      links: config.linkCount,
+      topologyProfile: config.topologyProfile,
+      seed: config.seed,
+      octahedra: config.octahedra,
+      detailMode: config.detailMode,
+      detailCapacity: config.detailCapacity,
+      requireDetailCapacity: config.requireDetailCapacity,
+      warmupIterations: config.warmupIterations,
+      sampleCount: config.sampleCount,
+      physics: config.physics,
+    },
+    timing: {
+      source: result.timingSource,
+      note:
+        result.timingSource === "host-wall-after-queue-sync"
+          ? "host wall-clock after GPUQueue.onSubmittedWorkDone(); not an exact GPU timestamp"
+          : "host submission wall-clock; queue completion synchronization unavailable",
+      timestampQueryDurations: null,
+    },
+    result,
+    renderMeasurement: {
+      measured: false,
+      reason:
+        "core P3b slice measures production physics + shape; zero-copy render timing is the next #161 slice",
+    },
+  };
+}
+
+async function runMechanicalBenchmarkFromUi(source = "ui") {
+  if (benchmarkRunning) return;
+  if (!device) {
+    ui.benchmarkStatus.textContent = "WebGPU недоступен";
+    return;
+  }
+
+  const config = selectedBenchmarkConfig();
+  const previousMode = labLifecycle.activeMode;
+  benchmarkRunning = true;
+  benchmarkCancelRequested = false;
+  benchmarkEvidence = null;
+  ui.benchmarkRun.disabled = true;
+  ui.benchmarkStop.disabled = false;
+  ui.benchmarkCopy.disabled = true;
+  ui.benchmarkDownload.disabled = true;
+  ui.benchmarkProgress.max = 1;
+  ui.benchmarkProgress.value = 0;
+  ui.benchmarkResult.textContent = "benchmark evidence: выполняется…";
+  ui.benchmarkStatus.textContent =
+    `подготовка · ${config.linkCount.toLocaleString()} Links`;
+
+  try {
+    // The benchmark owns Mechanical GPU resources exclusively. The shared
+    // lifecycle releases any currently mounted renderer and its ledger before
+    // benchmark allocation; the previous visualization mode is restored below.
+    await labLifecycle.dispose();
+
+    const result = await webgpu.runMonolithicLinkWebGpuBenchmark3D(
+      device,
+      {
+        linkCount: config.linkCount,
+        topologyProfile: config.topologyProfile,
+        seed: config.seed,
+        aspectRatio: config.aspectRatio,
+        detailCapacity: config.detailCapacity,
+        requireDetailCapacity: config.requireDetailCapacity,
+        warmupIterations: config.warmupIterations,
+        sampleCount: config.sampleCount,
+        physics: config.physics,
+        shouldCancel: () => benchmarkCancelRequested,
+        onProgress: updateBenchmarkProgress,
+      },
+    );
+
+    const evidence = createMechanicalBenchmarkEvidence(
+      config,
+      result,
+      source,
+    );
+    setBenchmarkEvidence(evidence);
+
+    const statusKind =
+      result.status === "PASS"
+        ? "ok"
+        : result.status === "CANCELLED"
+          ? "warn"
+          : "fail";
+    ui.benchmarkStatus.className =
+      `lab-mode-status ${statusKind}`.trim();
+    ui.benchmarkStatus.textContent =
+      `${result.status} · `
+      + `${result.completedSamples}/${result.sampleCount} samples · `
+      + `detail=${result.effectiveDetailCapacity.toLocaleString()}`;
+    log(
+      `Mechanical benchmark ${result.status}: links=${config.linkCount}, `
+      + `profile=${config.topologyProfile}, detail=${result.effectiveDetailCapacity}, `
+      + `samples=${result.completedSamples}/${result.sampleCount}, `
+      + `timing=${result.timingSource}`,
+    );
+  } catch (error) {
+    ui.benchmarkStatus.className = "lab-mode-status fail";
+    ui.benchmarkStatus.textContent = "RUNTIME_FAILED · ошибка UI runner";
+    ui.benchmarkResult.textContent =
+      error instanceof Error ? error.stack ?? error.message : String(error);
+    log(
+      `ОШИБКА Mechanical benchmark — `
+      + `${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+  } finally {
+    benchmarkRunning = false;
+    ui.benchmarkRun.disabled = false;
+    ui.benchmarkStop.disabled = true;
+    if (previousMode !== null) {
+      try {
+        await activateLabMode(previousMode);
+      } catch (restoreError) {
+        log(
+          `ОШИБКА восстановления режима после benchmark — `
+          + `${restoreError instanceof Error
+            ? restoreError.stack ?? restoreError.message
+            : String(restoreError)}`,
+        );
+      }
+    }
+  }
+}
+
+function applyBenchmarkQueryParameters(params) {
+  if (params.get("benchmark") !== MECHANICAL_BENCHMARK_QUERY) {
+    return false;
+  }
+
+  const setAllowed = (name, element, allowed) => {
+    const value = params.get(name);
+    if (value === null) return;
+    if (!allowed.includes(value)) {
+      throw new Error(
+        `недопустимый URL benchmark параметр ${name}=${value}`,
+      );
+    }
+    element.value = value;
+  };
+
+  setAllowed(
+    "links",
+    ui.benchmarkLinks,
+    ["1000", "10000", "100000", "1000000"],
+  );
+  setAllowed(
+    "profile",
+    ui.benchmarkProfile,
+    ["chain", "hub-heavy", "mixed", "self-incidence", "branching"],
+  );
+  setAllowed(
+    "octa",
+    ui.benchmarkOcta,
+    ["16", "32", "64", "128"],
+  );
+  setAllowed(
+    "detail",
+    ui.benchmarkDetail,
+    ["0", "256", "1024", "4096", "full"],
+  );
+
+  for (const [name, element, min, max] of [
+    ["seed", ui.benchmarkSeed, -2_147_483_648, 4_294_967_295],
+    ["warmup", ui.benchmarkWarmup, 1, 1000],
+    ["samples", ui.benchmarkSamples, 1, 1000],
+  ]) {
+    const raw = params.get(name);
+    if (raw === null) continue;
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value < min || value > max) {
+      throw new Error(
+        `недопустимый URL benchmark параметр ${name}=${raw}`,
+      );
+    }
+    element.value = String(value);
+  }
+
+  if (
+    ui.benchmarkLinks.value === "1000000"
+    && params.get("samples") === null
+  ) {
+    ui.benchmarkSamples.value = "5";
+  }
+  ui.benchmarkPanel.open = true;
+  return true;
+}
+
 populateSceneSelector("root-r");
 syncLabInputPanel();
 
