@@ -365,6 +365,13 @@ same(override.velocityBytes, 16, "velocity override uploads one vec4");
 same(fake.queue.writes[0]!.label, "monolithic-link-centers", "override writes semantic center buffer");
 same(fake.queue.writes[1]!.label, "monolithic-link-velocities", "override writes semantic velocity buffer");
 
+const presentationEquivalentFake = new FakeDevice();
+const presentationEquivalentController =
+  await createMonolithicLinkWebGpuCompute3D(
+    presentationEquivalentFake,
+    basis,
+    options,
+  );
 const compactFake = new FakeDevice();
 const compactController = await createMonolithicLinkWebGpuComputeFromTopology3D(
   compactFake,
@@ -409,17 +416,17 @@ function sameBytes(
 
 sameBytes(
   bufferBytes(compactFake, "monolithic-link-centers"),
-  bufferBytes(fake, "monolithic-link-centers"),
+  bufferBytes(presentationEquivalentFake, "monolithic-link-centers"),
   "compact and presentation adapters seed identical CENTER bytes",
 );
 sameBytes(
   bufferBytes(compactFake, "monolithic-link-velocities"),
-  bufferBytes(fake, "monolithic-link-velocities"),
+  bufferBytes(presentationEquivalentFake, "monolithic-link-velocities"),
   "compact and presentation adapters seed identical velocity bytes",
 );
 sameBytes(
   bufferBytes(compactFake, "monolithic-link-topology"),
-  bufferBytes(fake, "monolithic-link-topology"),
+  bufferBytes(presentationEquivalentFake, "monolithic-link-topology"),
   "compact and presentation adapters pack identical forward/reverse topology",
 );
 compactFake.resetDispatches();
@@ -495,6 +502,7 @@ for (const invalidTopology of [
 }
 
 compactController.destroy();
+presentationEquivalentController.destroy();
 
 const shortController = await createMonolithicLinkWebGpuCompute3D(
   new FakeDevice(),
