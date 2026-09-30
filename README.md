@@ -3,13 +3,60 @@
 Standalone presentation/visualization authority for MTS link asets, published as the `@mts/visual` package.
 
 
-## Live WebGPU laboratory
+## Five-mode visualization laboratory
 
-**[Open the real-browser WebGPU witness](https://netkeep80.github.io/mts_visual/)**
+**[Open the real-browser mts_visual laboratory](https://netkeep80.github.io/mts_visual/)**
 
-The published laboratory runs CPU ↔ WebGPU differential checks and the live zero-copy octahedral renderer on the browser/GPU that opens the page. It also exposes interactive Link length, spring stiffness, and simulation-speed controls.
+The published GitHub Pages laboratory exposes five first-class views over one exact `VisualLinkNetwork` input snapshot:
 
-This repository owns renderer-neutral visual DTOs, blueprint/3D geometry, presentation state, physics, interaction, and the optional Three.js browser companion. It does **not** own MTS semantic truth, proof semantics, parser semantics, or `@mts/core`.
+1. **Structural 2D** — renderer-neutral topology/debug projection with deterministic SCC/depth layers, START/END role arcs and bounded crossing minimization.
+2. **Blueprint 2D** — interactive continuous Link geometry with labels, CENTER drag, pan/zoom and SVG export.
+3. **Document 2D** — deterministic publication renderer. Every Link owns a pose `(x, y, theta)`; its two outward CENTER tangents are exactly antiparallel (180°) while the oriented START→CENTER→END path remains C1. Profiles `formal`, `article` and `debug` produce canonical SVG.
+4. **Classic 3D** — the retained charge + incidence-spring model. Link centers repel one another, so nearby/similar Links tend to remain spatially distinguishable instead of visually collapsing onto the same trajectory.
+5. **Mechanical 3D** — the current monolithic/WebGPU Link mechanics and zero-copy renderer.
+
+Classic 3D and Mechanical 3D intentionally remain separate models: Classic is useful as a force-directed spatial view, while Mechanical models one semantic Link as one monolithic semi-rigid physical object.
+
+All five modes consume the same selected immutable input object. The lab includes built-in renderer-neutral fixtures and accepts pasted or local JSON files using the versioned input envelope:
+
+```json
+{
+  "schema": "mts-visual-document-input/v1",
+  "links": [
+    { "key": "R", "startKey": "R", "endKey": "R", "label": "ROOT" }
+  ]
+}
+```
+
+The page exposes shared diagnostics, build SHA/version, selected-Link presentation state, per-mode metrics, 2D SVG export, Document provenance manifest export, and an in-page **five-mode resource-cycle self-test** that checks renderer ownership while preserving exact input identity.
+
+### Deterministic Document 2D CLI
+
+The same Document engine used by the browser is available headlessly:
+
+```bash
+npm run build
+node bin/mts-visual.mjs render-2d \
+  --input fixtures/document2d/article-root.input.json \
+  --output article.svg \
+  --manifest article.manifest.json \
+  --profile article \
+  --strategy auto \
+  --root R \
+  --format svg \
+  --renderer-sha <exact-git-sha>
+```
+
+The render manifest records the SHA-256 of the exact input bytes and exact SVG bytes together with renderer version/SHA and resolved layout provenance. It deliberately contains no wall-clock timestamp, so identical invocations are byte-stable.
+
+The repository-owned canonical article fixture currently pins:
+
+```text
+SVG SHA-256 = 173ebc20ece915c401eb3647f7b4402ae356ba510046336b4842cc1b4d0f7955
+auto seed   = layered
+```
+
+This repository owns renderer-neutral visual DTOs, Structural/Blueprint/Document geometry and layout, presentation state, Classic/Mechanical physics, interaction, and the optional Three.js browser companion. It does **not** own MTS semantic truth, proof semantics, parser semantics, or `@mts/core`.
 
 ## Provenance
 
