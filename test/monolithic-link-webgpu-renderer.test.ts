@@ -338,8 +338,13 @@ function fakeShape(
     topology.linkCount * (template.octahedronCount + 1) * 16,
     "monolithic-link-section-frames",
   );
+  const detailSelectionControlBuffer = new FakeBuffer(
+    96,
+    "monolithic-link-detail-selection",
+  );
   let destroyed = false;
   let detailCount = topology.linkCount;
+  let selectionMode = "manual" as const | "gpu-partition";
   return {
     compute,
     template,
@@ -347,22 +352,46 @@ function fakeShape(
     gaugeBuffer,
     detailLinkIndexBuffer,
     sectionFrameBuffer,
+    detailSelectionControlBuffer,
     setDetailLinkIndices(indices) {
       detailCount = indices.length;
+      selectionMode = "manual";
       return {
         detailedLinkCount: detailCount,
         detailCapacity: topology.linkCount,
+        selectionMode: "manual" as const,
         indexUploadBytes: indices.length * 4,
         globalsUploadBytes: 32,
+        selectionControlUploadBytes: 0,
+      };
+    },
+    setGpuDetailSelectionView() {
+      detailCount = topology.linkCount;
+      selectionMode = "manual";
+      return {
+        detailedLinkCount: detailCount,
+        detailCapacity: topology.linkCount,
+        selectionMode: "manual" as const,
+        indexUploadBytes: 0,
+        globalsUploadBytes: 32,
+        selectionControlUploadBytes: 0,
       };
     },
     update() {
       return {
         compactDispatches: 1,
+        selectorDispatches: selectionMode === "gpu-partition" ? 1 : 0,
         detailDispatches: detailCount > 0 ? 1 : 0,
-        dispatches: detailCount > 0 ? 2 : 1,
-        computePasses: detailCount > 0 ? 2 : 1,
+        dispatches:
+          1
+          + (selectionMode === "gpu-partition" ? 1 : 0)
+          + (detailCount > 0 ? 1 : 0),
+        computePasses:
+          1
+          + (selectionMode === "gpu-partition" ? 1 : 0)
+          + (detailCount > 0 ? 1 : 0),
         detailedLinkCount: detailCount,
+        selectionMode,
         dynamicStateUploadBytes: 0 as const,
       };
     },
@@ -382,6 +411,8 @@ function fakeShape(
         detailLinkIndexBytes,
         sectionFrameBytes,
         topologyBytes: topology.linkCount * 2 * 4,
+        selectionMode,
+        selectionControlBytes: 96,
         compactDynamicStateBytes: topology.linkCount * 32,
         detailDynamicStateBytes:
           detailLinkIndexBytes + sectionFrameBytes,
@@ -397,6 +428,7 @@ function fakeShape(
       gaugeBuffer.destroy();
       detailLinkIndexBuffer.destroy();
       sectionFrameBuffer.destroy();
+      detailSelectionControlBuffer.destroy();
     },
   };
 }
