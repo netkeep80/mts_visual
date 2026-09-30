@@ -15,6 +15,7 @@ import type {
 
 const WORKGROUP_SIZE = 64;
 const DEFAULT_MAX_WORKGROUPS_PER_DIMENSION = 65_535;
+const DETAIL_SELECTION_CONTROL_BYTES = 96;
 
 const GPU_BUFFER_USAGE = Object.freeze({
   COPY_SRC: 0x0004,
@@ -88,11 +89,166 @@ export interface MonolithicLinkWebGpuShape3D {
   readonly detailSelectionControlBuffer: WebGpuBufferLike;
   setDetailLinkIndices(
     indices: readonly number[],
-  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D;
+  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D {
+    this.assertAlive();
+    const normalized = normalizeDetailLinkIndices(
+      indices,
+      this.compute.topology.linkCount,
+      this.detailCapacityValue,
+    );
+    if (normalized.byteLength > 0) {
+      this.device.queue.writeBuffer(
+        this.detailLinkIndexBuffer,
+        0,
+        normalized,
+      );
+    }
+    const globals = globalsData(
+      this.compute.topology.linkCount,
+      normalized.length,
+      this.template,
+    );
+    this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
+    this.currentDetailLinkIndices = normalized;
+    this.selectionModeValue = "manual";
+    return Object.freeze({
+      detailedLinkCount: normalized.length,
+      detailCapacity: this.detailCapacityValue,
+      selectionMode: "manual" as const,
+      indexUploadBytes: normalized.byteLength,
+      globalsUploadBytes: globals.byteLength,
+      selectionControlUploadBytes: 0,
+    });
+  }
+
   setGpuDetailSelectionView(
     view: MonolithicLinkWebGpuDetailSelectionView3D,
-  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D;
-  update(): MonolithicLinkWebGpuShapeStepStats3D;
+  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D {
+    this.assertAlive();
+    const linkCount = this.compute.topology.linkCount;
+    if (this.detailCapacityValue <= 0 || linkCount <= 0) {
+      this.currentDetailLinkIndices = new Uint32Array(0);
+      this.selectionModeValue = "manual";
+      const globals = globalsData(linkCount, 0, this.template);
+      this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
+      return Object.freeze({
+        detailedLinkCount: 0,
+        detailCapacity: this.detailCapacityValue,
+        selectionMode: "manual" as const,
+        indexUploadBytes: 0,
+        globalsUploadBytes: globals.byteLength,
+        selectionControlUploadBytes: 0,
+      });
+    }
+
+    if (linkCount <= this.detailCapacityValue) {
+      const identity = defaultDetailLinkIndices(linkCount);
+      return this.setDetailLinkIndices(identity);
+    }
+
+    const control = detailSelectionData(
+      linkCount,
+      this.detailCapacityValue,
+      view,
+    );
+    const globals = globalsData(
+      linkCount,
+      this.detailCapacityValue,
+      this.template,
+    );
+    this.device.queue.writeBuffer(
+      this.detailSelectionControlBuffer,
+      0,
+      control,
+    );
+    this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
+    this.currentDetailLinkIndices = defaultDetailLinkIndices(
+      this.detailCapacityValue,
+    );
+    this.selectionModeValue = "gpu-partition";
+    return Object.freeze({
+      detailedLinkCount: this.detailCapacityValue,
+      detailCapacity: this.detailCapacityValue,
+      selectionMode: "gpu-partition" as const,
+      indexUploadBytes: 0,
+      globalsUploadBytes: globals.byteLength,
+      selectionControlUploadBytes: control.byteLength,
+    });
+  }
+
+  update(): MonolithicLinkWebGpuShapeStepStats3D {
+    this.assertAlive();
+    const linkCount = this.compute.topology.linkCount;
+    const detailCount = this.currentDetailLinkIndices.length;
+    if (linkCount === 0) {
+      return Object.freeze({
+        compactDispatches: 0,
+        selectorDispatches: 0,
+        detailDispatches: 0,
+        dispatches: 0,
+        computePasses: 0,
+        detailedLinkCount: 0,
+        selectionMode: this.selectionModeValue,
+        dynamicStateUploadBytes: 0 as const,
+      });
+    }
+
+    const encoder = this.device.createCommandEncoder({
+      label: "monolithic-link-shape-update",
+    });
+
+    const compactGroups = Math.ceil(linkCount / WORKGROUP_SIZE);
+    const compactX = Math.min(compactGroups, this.maxWorkgroups);
+    const compactY = Math.ceil(compactGroups / this.maxWorkgroups);
+    const compactPass = encoder.beginComputePass();
+    compactPass.setPipeline(this.compactPipeline);
+    compactPass.setBindGroup(0, this.bindGroup);
+    compactPass.dispatchWorkgroups(compactX, compactY, 1);
+    compactPass.end();
+
+    let selectorDispatches = 0;
+    if (
+      detailCount > 0
+      && this.selectionModeValue === "gpu-partition"
+    ) {
+      const selectorGroups = Math.ceil(detailCount / WORKGROUP_SIZE);
+      const selectorX = Math.min(selectorGroups, this.maxWorkgroups);
+      const selectorY = Math.ceil(selectorGroups / this.maxWorkgroups);
+      const selectorPass = encoder.beginComputePass();
+      selectorPass.setPipeline(this.selectorPipeline);
+      selectorPass.setBindGroup(0, this.bindGroup);
+      selectorPass.dispatchWorkgroups(selectorX, selectorY, 1);
+      selectorPass.end();
+      selectorDispatches = 1;
+    }
+
+    let detailDispatches = 0;
+    if (detailCount > 0) {
+      const detailGroups = Math.ceil(detailCount / WORKGROUP_SIZE);
+      const detailX = Math.min(detailGroups, this.maxWorkgroups);
+      const detailY = Math.ceil(detailGroups / this.maxWorkgroups);
+      const detailPass = encoder.beginComputePass();
+      detailPass.setPipeline(this.detailPipeline);
+      detailPass.setBindGroup(0, this.bindGroup);
+      detailPass.dispatchWorkgroups(detailX, detailY, 1);
+      detailPass.end();
+      detailDispatches = 1;
+    }
+
+    this.device.queue.submit([encoder.finish()]);
+
+    return Object.freeze({
+      compactDispatches: 1,
+      selectorDispatches,
+      detailDispatches,
+      dispatches: 1 + selectorDispatches + detailDispatches,
+      computePasses: 1 + selectorDispatches + detailDispatches,
+      detailedLinkCount: detailCount,
+      selectionMode: this.selectionModeValue,
+      dynamicStateUploadBytes: 0 as const,
+    });
+  }
+
   snapshot(): MonolithicLinkWebGpuShapeSnapshot3D;
   destroy(): void;
 }
@@ -1107,6 +1263,79 @@ function globalsData(
   return buffer;
 }
 
+function detailSelectionData(
+  linkCount: number,
+  detailCapacity: number,
+  view: MonolithicLinkWebGpuDetailSelectionView3D,
+): ArrayBuffer {
+  const matrix = view.viewProjection;
+  if (matrix.length !== 16) {
+    throw new Error(
+      `invalid monolithic shape detail viewProjection length: ${matrix.length}`,
+    );
+  }
+  const buffer = new ArrayBuffer(DETAIL_SELECTION_CONTROL_BYTES);
+  const f32 = new Float32Array(buffer);
+  const u32 = new Uint32Array(buffer);
+  for (let index = 0; index < 16; index += 1) {
+    const value = matrix[index]!;
+    if (!Number.isFinite(value)) {
+      throw new Error(
+        `non-finite monolithic shape detail viewProjection[${index}]`,
+      );
+    }
+    f32[index] = value;
+  }
+
+  const selected = view.selectedLink;
+  let selectedValue = 0xffff_ffff;
+  if (selected !== undefined && selected !== null && selected !== -1) {
+    if (
+      !Number.isSafeInteger(selected)
+      || selected < 0
+      || selected >= linkCount
+    ) {
+      throw new Error(
+        `invalid monolithic shape detail selectedLink: ${String(selected)}`,
+      );
+    }
+    selectedValue = selected;
+  }
+
+  const margin = view.frustumMargin ?? 0.18;
+  if (!Number.isFinite(margin) || margin < 0 || margin > 4) {
+    throw new Error(
+      `invalid monolithic shape detail frustumMargin: ${String(view.frustumMargin)}`,
+    );
+  }
+
+  u32[16] = linkCount;
+  u32[17] = detailCapacity;
+  u32[18] = selectedValue;
+  u32[19] = 1;
+  f32[20] = margin;
+  f32[21] = 0;
+  f32[22] = 0;
+  f32[23] = 0;
+  return buffer;
+}
+
+function identityDetailSelectionData(
+  linkCount: number,
+  detailCapacity: number,
+): ArrayBuffer {
+  return detailSelectionData(linkCount, detailCapacity, {
+    viewProjection: [
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ],
+    selectedLink: null,
+    frustumMargin: 0.18,
+  });
+}
+
 function requireDetailCapacity(
   value: number,
   linkCount: number,
@@ -1196,6 +1425,7 @@ implements MonolithicLinkWebGpuShape3D {
   readonly gaugeBuffer: WebGpuBufferLike;
   readonly detailLinkIndexBuffer: WebGpuBufferLike;
   readonly sectionFrameBuffer: WebGpuBufferLike;
+  readonly detailSelectionControlBuffer: WebGpuBufferLike;
   readonly template: MonolithicLinkSpringTemplate3D;
 
   private readonly topologyBuffer: WebGpuBufferLike;
@@ -1203,11 +1433,14 @@ implements MonolithicLinkWebGpuShape3D {
   private readonly bindGroup: object;
   private readonly compactPipeline:
     Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
+  private readonly selectorPipeline:
+    Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
   private readonly detailPipeline:
     Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
   private readonly maxWorkgroups: number;
   private readonly detailCapacityValue: number;
   private currentDetailLinkIndices: Uint32Array;
+  private selectionModeValue: MonolithicLinkWebGpuDetailSelectionMode3D = "manual";
   private destroyed = false;
 
   constructor(
@@ -1219,10 +1452,13 @@ implements MonolithicLinkWebGpuShape3D {
       gaugeBuffer: WebGpuBufferLike;
       detailLinkIndexBuffer: WebGpuBufferLike;
       sectionFrameBuffer: WebGpuBufferLike;
+      detailSelectionControlBuffer: WebGpuBufferLike;
       topologyBuffer: WebGpuBufferLike;
       globalsBuffer: WebGpuBufferLike;
       bindGroup: object;
       compactPipeline:
+        Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
+      selectorPipeline:
         Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
       detailPipeline:
         Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
@@ -1235,10 +1471,12 @@ implements MonolithicLinkWebGpuShape3D {
     this.gaugeBuffer = args.gaugeBuffer;
     this.detailLinkIndexBuffer = args.detailLinkIndexBuffer;
     this.sectionFrameBuffer = args.sectionFrameBuffer;
+    this.detailSelectionControlBuffer = args.detailSelectionControlBuffer;
     this.topologyBuffer = args.topologyBuffer;
     this.globalsBuffer = args.globalsBuffer;
     this.bindGroup = args.bindGroup;
     this.compactPipeline = args.compactPipeline;
+    this.selectorPipeline = args.selectorPipeline;
     this.detailPipeline = args.detailPipeline;
     this.detailCapacityValue = args.detailCapacity;
     this.currentDetailLinkIndices = args.detailLinkIndices;
@@ -1359,6 +1597,8 @@ implements MonolithicLinkWebGpuShape3D {
       detailLinkIndexBytes,
       sectionFrameBytes,
       topologyBytes: this.topologyBuffer.size,
+      selectionMode: this.selectionModeValue,
+      selectionControlBytes: DETAIL_SELECTION_CONTROL_BYTES,
       compactDynamicStateBytes,
       detailDynamicStateBytes,
       dynamicStateBytes:
@@ -1373,6 +1613,7 @@ implements MonolithicLinkWebGpuShape3D {
     this.gaugeBuffer.destroy();
     this.detailLinkIndexBuffer.destroy();
     this.sectionFrameBuffer.destroy();
+    this.detailSelectionControlBuffer.destroy();
     this.topologyBuffer.destroy();
     this.globalsBuffer.destroy();
   }
@@ -1449,6 +1690,12 @@ export async function createMonolithicLinkWebGpuShape3D(
     32,
     GPU_BUFFER_USAGE.UNIFORM | GPU_BUFFER_USAGE.COPY_DST,
   );
+  const detailSelectionControlBuffer = createBuffer(
+    device,
+    "monolithic-link-detail-selection",
+    DETAIL_SELECTION_CONTROL_BYTES,
+    GPU_BUFFER_USAGE.UNIFORM | GPU_BUFFER_USAGE.COPY_DST,
+  );
   if (topology.byteLength > 0) {
     device.queue.writeBuffer(topologyBuffer, 0, topology);
   }
@@ -1463,6 +1710,11 @@ export async function createMonolithicLinkWebGpuShape3D(
     globalsBuffer,
     0,
     globalsData(linkCount, initialDetailLinkIndices.length, template),
+  );
+  device.queue.writeBuffer(
+    detailSelectionControlBuffer,
+    0,
+    identityDetailSelectionData(linkCount, detailCapacity),
   );
 
   const shader = device.createShaderModule({
@@ -1491,20 +1743,26 @@ export async function createMonolithicLinkWebGpuShape3D(
       { binding: 1, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
       { binding: 2, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
       { binding: 3, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
-      { binding: 4, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 4, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
       { binding: 5, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
       { binding: 6, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
+      { binding: 7, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
     ],
   });
   const pipelineLayout = device.createPipelineLayout({
     label: "monolithic-link-shape-pipeline-layout",
     bindGroupLayouts: [layout],
   });
-  const [compactPipeline, detailPipeline] = await Promise.all([
+  const [compactPipeline, selectorPipeline, detailPipeline] = await Promise.all([
     device.createComputePipelineAsync({
       label: "monolithic-link-shape-parameter-pipeline",
       layout: pipelineLayout,
       compute: { module: shader as object, entryPoint: "shape_parameter_main" },
+    }),
+    device.createComputePipelineAsync({
+      label: "monolithic-link-shape-detail-selector-pipeline",
+      layout: pipelineLayout,
+      compute: { module: shader as object, entryPoint: "shape_detail_select_main" },
     }),
     device.createComputePipelineAsync({
       label: "monolithic-link-shape-detail-pipeline",
@@ -1523,6 +1781,7 @@ export async function createMonolithicLinkWebGpuShape3D(
       { binding: 4, resource: { buffer: detailLinkIndexBuffer } },
       { binding: 5, resource: { buffer: sectionFrameBuffer } },
       { binding: 6, resource: { buffer: globalsBuffer } },
+      { binding: 7, resource: { buffer: detailSelectionControlBuffer } },
     ],
   });
 
@@ -1535,10 +1794,12 @@ export async function createMonolithicLinkWebGpuShape3D(
       gaugeBuffer,
       detailLinkIndexBuffer,
       sectionFrameBuffer,
+      detailSelectionControlBuffer,
       topologyBuffer,
       globalsBuffer,
       bindGroup,
       compactPipeline,
+      selectorPipeline,
       detailPipeline,
       detailCapacity,
       detailLinkIndices: initialDetailLinkIndices,
