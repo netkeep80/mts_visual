@@ -68,6 +68,8 @@
     .physics-control label { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; margin-bottom: 6px; color: #9fb1c9; }
     .physics-control output { color: #65d98b; font: 600 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
     .physics-control input[type="range"], .physics-control select { width: 100%; accent-color: #65d98b; }
+    .physics-control input[type="number"] { width:100%; background:#172338; color:#e9eef7; border:1px solid #395070; border-radius:8px; padding:8px 10px; }
+    progress { accent-color:#65d98b; }
     .viewport-column { min-width: 0; }
     .viewport-shell { width: 100%; height: clamp(380px, 58vh, 640px); background: #000; border-radius: 10px; overflow: hidden; }
     .viewport-shell:fullscreen { width: 100vw; height: 100vh; border-radius: 0; background: #000; padding: 0; }
@@ -202,6 +204,75 @@
       </div>
       <pre id="lab-resource-audit" style="margin-top:6px; max-height:220px; overflow:auto">resource ledger: ожидание</pre>
     </div>
+
+    <details id="benchmark-panel" class="lab-input-panel" style="margin-bottom:12px">
+      <summary>Benchmark Mechanical WebGPU · #148 / #158</summary>
+      <div class="grid" style="margin-top:12px">
+        <div class="physics-control">
+          <label for="benchmark-links"><span>Семантические Links</span></label>
+          <select id="benchmark-links">
+            <option value="1000">1 000</option>
+            <option value="10000">10 000</option>
+            <option value="100000" selected>100 000</option>
+            <option value="1000000">1 000 000</option>
+          </select>
+        </div>
+        <div class="physics-control">
+          <label for="benchmark-profile"><span>Топология</span></label>
+          <select id="benchmark-profile">
+            <option value="chain">chain</option>
+            <option value="hub-heavy">hub-heavy</option>
+            <option value="mixed" selected>mixed</option>
+            <option value="self-incidence">self-incidence</option>
+            <option value="branching">branching</option>
+          </select>
+        </div>
+        <div class="physics-control">
+          <label for="benchmark-seed"><span>Seed</span></label>
+          <input id="benchmark-seed" type="number" step="1" value="1297371990">
+        </div>
+        <div class="physics-control">
+          <label for="benchmark-octa"><span>Октаэдров / Link</span></label>
+          <select id="benchmark-octa">
+            <option value="16">16</option>
+            <option value="32">32</option>
+            <option value="64" selected>64</option>
+            <option value="128">128</option>
+          </select>
+        </div>
+        <div class="physics-control">
+          <label for="benchmark-detail"><span>Detail slots</span></label>
+          <select id="benchmark-detail">
+            <option value="0">semantic only · 0</option>
+            <option value="256">256</option>
+            <option value="1024">1 024</option>
+            <option value="4096" selected>4 096</option>
+            <option value="full">full-detail, если помещается</option>
+          </select>
+        </div>
+        <div class="physics-control">
+          <label for="benchmark-warmup"><span>Warmup</span></label>
+          <input id="benchmark-warmup" type="number" min="1" max="1000" step="1" value="5">
+        </div>
+        <div class="physics-control">
+          <label for="benchmark-samples"><span>Samples</span></label>
+          <input id="benchmark-samples" type="number" min="1" max="1000" step="1" value="20">
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:12px">
+        <button id="benchmark-run" type="button">Запустить benchmark</button>
+        <button id="benchmark-stop" type="button" disabled>Остановить после текущего sample</button>
+        <button id="benchmark-copy" type="button" disabled>Скопировать JSON</button>
+        <button id="benchmark-download" type="button" disabled>Скачать JSON</button>
+        <span id="benchmark-status" class="lab-mode-status" role="status" aria-live="polite">не запускался</span>
+      </div>
+      <progress id="benchmark-progress" max="1" value="0" style="width:100%"></progress>
+      <div class="camera-hint">
+        Тайминг по умолчанию: host wall-clock после <code>GPUQueue.onSubmittedWorkDone()</code>.
+        Это не выдаётся за точный GPU timestamp. Benchmark использует compact typed topology и не создаёт миллион строковых Links.
+      </div>
+      <pre id="benchmark-result" style="margin-top:8px; max-height:360px; overflow:auto">benchmark evidence: ожидание</pre>
+    </details>
 
     <div id="live-lab" class="live-lab">
       <aside id="mechanical-controls" class="control-sidebar" aria-label="Параметры механического 3D">
