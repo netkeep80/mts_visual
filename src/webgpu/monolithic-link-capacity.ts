@@ -23,6 +23,14 @@ export interface MonolithicLinkWebGpuCapacityLimits3D {
   readonly maxComputeWorkgroupsPerDimension?: number;
 }
 
+export interface MonolithicLinkWebGpuCapacityOptions3D {
+  /**
+   * Requested full-detail slot budget. Omit to use the maximum permitted by
+   * LinkCount and adapter limits. Zero models semantic/compact-only execution.
+   */
+  readonly detailCapacity?: number;
+}
+
 export interface MonolithicLinkWebGpuCapacityBuffer3D {
   readonly name: string;
   readonly allocatedBytes: number;
@@ -32,6 +40,7 @@ export interface MonolithicLinkWebGpuCapacityBuffer3D {
 
 export interface MonolithicLinkWebGpuCapacityPlan3D {
   readonly linkCount: number;
+  readonly requestedDetailCapacity: number | null;
   readonly detailedLinkCount: number;
   readonly detailCapacity: number;
   readonly octahedronCount: number;
@@ -97,6 +106,18 @@ function requireOptionalLimit(
   if (value === undefined) return null;
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`invalid monolithic capacity ${name}: ${String(value)}`);
+  }
+  return value;
+}
+
+function requireOptionalDetailCapacity(
+  value: number | undefined,
+): number | null {
+  if (value === undefined) return null;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(
+      `invalid monolithic capacity detailCapacity: ${String(value)}`,
+    );
   }
   return value;
 }
@@ -171,6 +192,7 @@ function boundedDetailCapacity(
   sectionCount: number,
   storageLimit: number | null,
   bufferLimit: number | null,
+  requestedCapacity: number | null,
 ): {
   readonly capacity: number;
   readonly maximumByBinding: number | null;
@@ -178,16 +200,22 @@ function boundedDetailCapacity(
   const finiteLimits = [storageLimit, bufferLimit].filter(
     (value): value is number => value !== null,
   );
-  if (finiteLimits.length === 0) {
-    return Object.freeze({
-      capacity: linkCount,
-      maximumByBinding: null,
-    });
-  }
-  const limit = Math.min(...finiteLimits);
-  const maximumByBinding = Math.floor(limit / (sectionCount * 16));
+  const maximumByBinding =
+    finiteLimits.length === 0
+      ? null
+      : Math.floor(
+        Math.min(...finiteLimits) / (sectionCount * 16),
+      );
+  const adapterCapacity =
+    maximumByBinding === null
+      ? linkCount
+      : Math.min(linkCount, maximumByBinding);
+  const capacity =
+    requestedCapacity === null
+      ? adapterCapacity
+      : Math.min(adapterCapacity, requestedCapacity);
   return Object.freeze({
-    capacity: Math.min(linkCount, maximumByBinding),
+    capacity,
     maximumByBinding,
   });
 }
@@ -206,6 +234,7 @@ export function planMonolithicLinkWebGpuCapacity3D(
   linkCountValue: number,
   aspectRatio: number,
   adapterLimits: MonolithicLinkWebGpuCapacityLimits3D = {},
+  options: MonolithicLinkWebGpuCapacityOptions3D = {},
 ): MonolithicLinkWebGpuCapacityPlan3D {
   const linkCount = requireLinkCount(linkCountValue);
   const template = getOctahedralLinkTemplate3D(aspectRatio);
@@ -227,11 +256,14 @@ export function planMonolithicLinkWebGpuCapacity3D(
     adapterLimits.maxComputeWorkgroupsPerDimension,
   );
 
+  const requestedDetailCapacity =
+    requireOptionalDetailCapacity(options.detailCapacity);
   const detail = boundedDetailCapacity(
     linkCount,
     sectionCount,
     maxStorageBufferBindingSize,
     maxBufferSize,
+    requestedDetailCapacity,
   );
   const detailCapacity = detail.capacity;
   const detailedLinkCount = detailCapacity;
@@ -386,6 +418,7 @@ export function planMonolithicLinkWebGpuCapacity3D(
 
   return Object.freeze({
     linkCount,
+    requestedDetailCapacity,
     detailedLinkCount,
     detailCapacity,
     octahedronCount,
