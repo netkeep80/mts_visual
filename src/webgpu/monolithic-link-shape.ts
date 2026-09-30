@@ -25,21 +25,41 @@ const GPU_BUFFER_USAGE = Object.freeze({
 const GPU_SHADER_STAGE_COMPUTE = 0x0004;
 
 export interface MonolithicLinkWebGpuShapeStepStats3D {
+  readonly compactDispatches: number;
+  readonly detailDispatches: number;
   readonly dispatches: number;
   readonly computePasses: number;
+  readonly detailedLinkCount: number;
   readonly dynamicStateUploadBytes: 0;
+}
+
+export interface MonolithicLinkWebGpuShapeDetailUpdateStats3D {
+  readonly detailedLinkCount: number;
+  readonly detailCapacity: number;
+  readonly indexUploadBytes: number;
+  readonly globalsUploadBytes: number;
 }
 
 export interface MonolithicLinkWebGpuShapeSnapshot3D {
   readonly status: "available" | "destroyed";
   readonly linkCount: number;
+  readonly detailedLinkCount: number;
+  readonly detailCapacity: number;
   readonly octahedronCount: number;
   readonly sectionCount: number;
   readonly parameterBytes: number;
   readonly gaugeBytes: number;
+  readonly detailLinkIndexBytes: number;
   readonly sectionFrameBytes: number;
   readonly topologyBytes: number;
+  readonly compactDynamicStateBytes: number;
+  readonly detailDynamicStateBytes: number;
   readonly dynamicStateBytes: number;
+}
+
+export interface MonolithicLinkWebGpuShapeOptions3D {
+  readonly detailCapacity?: number;
+  readonly detailLinkIndices?: readonly number[];
 }
 
 export interface MonolithicLinkWebGpuShape3D {
@@ -47,7 +67,11 @@ export interface MonolithicLinkWebGpuShape3D {
   readonly template: MonolithicLinkSpringTemplate3D;
   readonly parameterBuffer: WebGpuBufferLike;
   readonly gaugeBuffer: WebGpuBufferLike;
+  readonly detailLinkIndexBuffer: WebGpuBufferLike;
   readonly sectionFrameBuffer: WebGpuBufferLike;
+  setDetailLinkIndices(
+    indices: readonly number[],
+  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D;
   update(): MonolithicLinkWebGpuShapeStepStats3D;
   snapshot(): MonolithicLinkWebGpuShapeSnapshot3D;
   destroy(): void;
@@ -69,8 +93,9 @@ struct AxisFrame {
 @group(0) @binding(1) var<storage, read> topology_data: array<u32>;
 @group(0) @binding(2) var<storage, read_write> shape_parameters: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> roll_gauge: array<vec4<f32>>;
-@group(0) @binding(4) var<storage, read_write> section_frames: array<vec4<f32>>;
-@group(0) @binding(5) var<uniform> globals: ShapeGlobals;
+@group(0) @binding(4) var<storage, read> detail_link_indices: array<u32>;
+@group(0) @binding(5) var<storage, read_write> section_frames: array<vec4<f32>>;
+@group(0) @binding(6) var<uniform> globals: ShapeGlobals;
 
 fn safe_normalize(value: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
   let n = length(value);
@@ -614,10 +639,57 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     first_self_value,
     second_self_value,
   );
+}
+
+@compute @workgroup_size(64)
+fn shape_detail_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let slot = gid.x + gid.y * 65535u * 64u;
+  if (slot >= globals.counts.w) {
+    return;
+  }
+  let link = detail_link_indices[slot];
+  if (link >= globals.counts.x) {
+    return;
+  }
+
+  let start_index = topology_data[link * 2u];
+  let end_index = topology_data[link * 2u + 1u];
+
+  let s = semantic_centers[start_index].xyz;
+  let c = semantic_centers[link].xyz;
+  let e = semantic_centers[end_index].xyz;
+
+  let first_chord = c - s;
+  let second_chord = e - c;
+  let seed = deterministic_axis(link);
+  let first_direction = safe_normalize(first_chord, seed);
+  let second_direction = safe_normalize(second_chord, first_direction);
+  let overall = safe_normalize(e - s, first_direction);
+
+  let params = shape_parameters[link];
+  let first_amplitude = params.x;
+  let second_amplitude = params.y;
+  let first_self = params.z > 0.5;
+  let second_self = params.w > 0.5;
+
+  var shared_direction = safe_normalize(
+    first_direction + second_direction,
+    overall,
+  );
+  if (first_self && !second_self) {
+    shared_direction = second_direction;
+  } else if (second_self && !first_self) {
+    shared_direction = first_direction;
+  }
+
+  let bend = safe_normalize(
+    roll_gauge[link].xyz,
+    deterministic_perpendicular(overall, link),
+  );
 
   let half_segments = globals.counts.y;
   let section_count = globals.counts.z;
-  let frame_base = link * section_count;
+  let frame_base = slot * section_count;
   let arc_samples = max(256u, half_segments * 8u);
 
   let first_total = curve_polyline_length(
@@ -895,6 +967,7 @@ function packedTopology(compute: MonolithicLinkWebGpuCompute3D): Uint32Array {
 
 function globalsData(
   linkCount: number,
+  detailLinkCount: number,
   template: MonolithicLinkSpringTemplate3D,
 ): ArrayBuffer {
   const buffer = new ArrayBuffer(32);
@@ -903,7 +976,7 @@ function globalsData(
   u32[0] = linkCount;
   u32[1] = template.octahedronCount / 2;
   u32[2] = template.octahedronCount + 1;
-  u32[3] = 0;
+  u32[3] = detailLinkCount;
   f32[4] = template.restLength;
   f32[5] = template.halfRestLength;
   f32[6] = 0;
@@ -911,19 +984,94 @@ function globalsData(
   return buffer;
 }
 
+function requireDetailCapacity(
+  value: number,
+  linkCount: number,
+): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > linkCount) {
+    throw new Error(
+      `invalid monolithic shape detailCapacity: ${String(value)}`,
+    );
+  }
+  return value;
+}
+
+function adapterDetailCapacity(
+  device: WebGpuDeviceLike,
+  linkCount: number,
+  sectionCount: number,
+): number {
+  const limit = device.limits?.maxStorageBufferBindingSize;
+  if (limit === undefined) return linkCount;
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new Error(
+      `invalid monolithic shape maxStorageBufferBindingSize: ${String(limit)}`,
+    );
+  }
+  return Math.min(
+    linkCount,
+    Math.floor(limit / (sectionCount * 16)),
+  );
+}
+
+function normalizeDetailLinkIndices(
+  values: readonly number[],
+  linkCount: number,
+  detailCapacity: number,
+): Uint32Array {
+  if (values.length > detailCapacity) {
+    throw new Error(
+      `monolithic shape detail selection exceeds capacity: ${values.length} > ${detailCapacity}`,
+    );
+  }
+  const seen = new Set<number>();
+  const result = new Uint32Array(values.length);
+  for (let slot = 0; slot < values.length; slot += 1) {
+    const link = values[slot]!;
+    if (!Number.isSafeInteger(link) || link < 0 || link >= linkCount) {
+      throw new Error(
+        `invalid monolithic shape detail link index: ${String(link)}`,
+      );
+    }
+    if (seen.has(link)) {
+      throw new Error(
+        `duplicate monolithic shape detail link index: ${link}`,
+      );
+    }
+    seen.add(link);
+    result[slot] = link;
+  }
+  return result;
+}
+
+function defaultDetailLinkIndices(
+  detailCapacity: number,
+): Uint32Array {
+  const result = new Uint32Array(detailCapacity);
+  for (let index = 0; index < detailCapacity; index += 1) {
+    result[index] = index;
+  }
+  return result;
+}
+
 class MonolithicLinkWebGpuShapeController
 implements MonolithicLinkWebGpuShape3D {
   readonly parameterBuffer: WebGpuBufferLike;
   readonly gaugeBuffer: WebGpuBufferLike;
+  readonly detailLinkIndexBuffer: WebGpuBufferLike;
   readonly sectionFrameBuffer: WebGpuBufferLike;
   readonly template: MonolithicLinkSpringTemplate3D;
 
   private readonly topologyBuffer: WebGpuBufferLike;
   private readonly globalsBuffer: WebGpuBufferLike;
   private readonly bindGroup: object;
-  private readonly pipeline:
+  private readonly compactPipeline:
+    Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
+  private readonly detailPipeline:
     Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
   private readonly maxWorkgroups: number;
+  private readonly detailCapacityValue: number;
+  private currentDetailLinkIndices: Uint32Array;
   private destroyed = false;
 
   constructor(
@@ -933,22 +1081,31 @@ implements MonolithicLinkWebGpuShape3D {
     args: {
       parameterBuffer: WebGpuBufferLike;
       gaugeBuffer: WebGpuBufferLike;
+      detailLinkIndexBuffer: WebGpuBufferLike;
       sectionFrameBuffer: WebGpuBufferLike;
       topologyBuffer: WebGpuBufferLike;
       globalsBuffer: WebGpuBufferLike;
       bindGroup: object;
-      pipeline:
+      compactPipeline:
         Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
+      detailPipeline:
+        Awaited<ReturnType<WebGpuDeviceLike["createComputePipelineAsync"]>>;
+      detailCapacity: number;
+      detailLinkIndices: Uint32Array;
     },
   ) {
     this.template = template;
     this.parameterBuffer = args.parameterBuffer;
     this.gaugeBuffer = args.gaugeBuffer;
+    this.detailLinkIndexBuffer = args.detailLinkIndexBuffer;
     this.sectionFrameBuffer = args.sectionFrameBuffer;
     this.topologyBuffer = args.topologyBuffer;
     this.globalsBuffer = args.globalsBuffer;
     this.bindGroup = args.bindGroup;
-    this.pipeline = args.pipeline;
+    this.compactPipeline = args.compactPipeline;
+    this.detailPipeline = args.detailPipeline;
+    this.detailCapacityValue = args.detailCapacity;
+    this.currentDetailLinkIndices = args.detailLinkIndices;
     this.maxWorkgroups = maximumWorkgroups(device);
   }
 
@@ -961,53 +1118,114 @@ implements MonolithicLinkWebGpuShape3D {
     }
   }
 
+  setDetailLinkIndices(
+    indices: readonly number[],
+  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D {
+    this.assertAlive();
+    const normalized = normalizeDetailLinkIndices(
+      indices,
+      this.compute.topology.linkCount,
+      this.detailCapacityValue,
+    );
+    if (normalized.byteLength > 0) {
+      this.device.queue.writeBuffer(
+        this.detailLinkIndexBuffer,
+        0,
+        normalized,
+      );
+    }
+    const globals = globalsData(
+      this.compute.topology.linkCount,
+      normalized.length,
+      this.template,
+    );
+    this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
+    this.currentDetailLinkIndices = normalized;
+    return Object.freeze({
+      detailedLinkCount: normalized.length,
+      detailCapacity: this.detailCapacityValue,
+      indexUploadBytes: normalized.byteLength,
+      globalsUploadBytes: globals.byteLength,
+    });
+  }
+
   update(): MonolithicLinkWebGpuShapeStepStats3D {
     this.assertAlive();
     const linkCount = this.compute.topology.linkCount;
+    const detailCount = this.currentDetailLinkIndices.length;
     if (linkCount === 0) {
       return Object.freeze({
+        compactDispatches: 0,
+        detailDispatches: 0,
         dispatches: 0,
         computePasses: 0,
+        detailedLinkCount: 0,
         dynamicStateUploadBytes: 0 as const,
       });
     }
 
-    const totalWorkgroups = Math.ceil(linkCount / WORKGROUP_SIZE);
-    const workgroupsX = Math.min(totalWorkgroups, this.maxWorkgroups);
-    const workgroupsY = Math.ceil(totalWorkgroups / this.maxWorkgroups);
-
     const encoder = this.device.createCommandEncoder({
-      label: "monolithic-link-shape-parameter-update",
+      label: "monolithic-link-shape-update",
     });
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
-    pass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
-    pass.end();
+
+    const compactGroups = Math.ceil(linkCount / WORKGROUP_SIZE);
+    const compactX = Math.min(compactGroups, this.maxWorkgroups);
+    const compactY = Math.ceil(compactGroups / this.maxWorkgroups);
+    const compactPass = encoder.beginComputePass();
+    compactPass.setPipeline(this.compactPipeline);
+    compactPass.setBindGroup(0, this.bindGroup);
+    compactPass.dispatchWorkgroups(compactX, compactY, 1);
+    compactPass.end();
+
+    let detailDispatches = 0;
+    if (detailCount > 0) {
+      const detailGroups = Math.ceil(detailCount / WORKGROUP_SIZE);
+      const detailX = Math.min(detailGroups, this.maxWorkgroups);
+      const detailY = Math.ceil(detailGroups / this.maxWorkgroups);
+      const detailPass = encoder.beginComputePass();
+      detailPass.setPipeline(this.detailPipeline);
+      detailPass.setBindGroup(0, this.bindGroup);
+      detailPass.dispatchWorkgroups(detailX, detailY, 1);
+      detailPass.end();
+      detailDispatches = 1;
+    }
+
     this.device.queue.submit([encoder.finish()]);
 
     return Object.freeze({
-      dispatches: 1,
-      computePasses: 1,
+      compactDispatches: 1,
+      detailDispatches,
+      dispatches: 1 + detailDispatches,
+      computePasses: 1 + detailDispatches,
+      detailedLinkCount: detailCount,
       dynamicStateUploadBytes: 0 as const,
     });
   }
 
   snapshot(): MonolithicLinkWebGpuShapeSnapshot3D {
     const linkCount = this.compute.topology.linkCount;
+    const compactDynamicStateBytes = linkCount * 32;
+    const detailDynamicStateBytes =
+      this.currentDetailLinkIndices.length
+      * (this.template.octahedronCount + 1) * 16;
     return Object.freeze({
       status: this.destroyed ? "destroyed" : "available",
       linkCount,
+      detailedLinkCount: this.currentDetailLinkIndices.length,
+      detailCapacity: this.detailCapacityValue,
       octahedronCount: this.template.octahedronCount,
       sectionCount: this.template.octahedronCount + 1,
       parameterBytes: linkCount * 16,
       gaugeBytes: linkCount * 16,
+      detailLinkIndexBytes: this.detailCapacityValue * 4,
       sectionFrameBytes:
-        linkCount * (this.template.octahedronCount + 1) * 16,
+        this.detailCapacityValue
+        * (this.template.octahedronCount + 1) * 16,
       topologyBytes: this.topologyBuffer.size,
+      compactDynamicStateBytes,
+      detailDynamicStateBytes,
       dynamicStateBytes:
-        linkCount * 32
-        + linkCount * (this.template.octahedronCount + 1) * 16,
+        compactDynamicStateBytes + detailDynamicStateBytes,
     });
   }
 
@@ -1016,6 +1234,7 @@ implements MonolithicLinkWebGpuShape3D {
     this.destroyed = true;
     this.parameterBuffer.destroy();
     this.gaugeBuffer.destroy();
+    this.detailLinkIndexBuffer.destroy();
     this.sectionFrameBuffer.destroy();
     this.topologyBuffer.destroy();
     this.globalsBuffer.destroy();
@@ -1026,6 +1245,7 @@ export async function createMonolithicLinkWebGpuShape3D(
   device: WebGpuDeviceLike,
   compute: MonolithicLinkWebGpuCompute3D,
   aspectRatio: number,
+  options: MonolithicLinkWebGpuShapeOptions3D = {},
 ): Promise<MonolithicLinkWebGpuShape3D> {
   const template = getMonolithicLinkSpringTemplate3D(aspectRatio);
   if (Math.abs(template.restLength - compute.restLength) > 1e-5) {
@@ -1034,23 +1254,50 @@ export async function createMonolithicLinkWebGpuShape3D(
     );
   }
 
+  const linkCount = compute.topology.linkCount;
+  const sectionCount = template.octahedronCount + 1;
+  const adapterCapacity = adapterDetailCapacity(
+    device,
+    linkCount,
+    sectionCount,
+  );
+  const detailCapacity = options.detailCapacity === undefined
+    ? adapterCapacity
+    : Math.min(
+      requireDetailCapacity(options.detailCapacity, linkCount),
+      adapterCapacity,
+    );
+  const initialDetailLinkIndices = options.detailLinkIndices === undefined
+    ? defaultDetailLinkIndices(detailCapacity)
+    : normalizeDetailLinkIndices(
+      options.detailLinkIndices,
+      linkCount,
+      detailCapacity,
+    );
+
   const topology = packedTopology(compute);
   const parameterBuffer = createBuffer(
     device,
     "monolithic-link-shape-parameters",
-    compute.topology.linkCount * 16,
+    linkCount * 16,
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC,
   );
   const gaugeBuffer = createBuffer(
     device,
     "monolithic-link-roll-gauge",
-    compute.topology.linkCount * 16,
+    linkCount * 16,
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC,
+  );
+  const detailLinkIndexBuffer = createBuffer(
+    device,
+    "monolithic-link-detail-indices",
+    detailCapacity * 4,
+    GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_DST,
   );
   const sectionFrameBuffer = createBuffer(
     device,
     "monolithic-link-section-frames",
-    compute.topology.linkCount * (template.octahedronCount + 1) * 16,
+    detailCapacity * sectionCount * 16,
     GPU_BUFFER_USAGE.STORAGE | GPU_BUFFER_USAGE.COPY_SRC,
   );
   const topologyBuffer = createBuffer(
@@ -1068,10 +1315,17 @@ export async function createMonolithicLinkWebGpuShape3D(
   if (topology.byteLength > 0) {
     device.queue.writeBuffer(topologyBuffer, 0, topology);
   }
+  if (initialDetailLinkIndices.byteLength > 0) {
+    device.queue.writeBuffer(
+      detailLinkIndexBuffer,
+      0,
+      initialDetailLinkIndices,
+    );
+  }
   device.queue.writeBuffer(
     globalsBuffer,
     0,
-    globalsData(compute.topology.linkCount, template),
+    globalsData(linkCount, initialDetailLinkIndices.length, template),
   );
 
   const shader = device.createShaderModule({
@@ -1096,50 +1350,31 @@ export async function createMonolithicLinkWebGpuShape3D(
   const layout = device.createBindGroupLayout({
     label: "monolithic-link-shape-layout",
     entries: [
-      {
-        binding: 0,
-        visibility: GPU_SHADER_STAGE_COMPUTE,
-        buffer: { type: "read-only-storage" },
-      },
-      {
-        binding: 1,
-        visibility: GPU_SHADER_STAGE_COMPUTE,
-        buffer: { type: "read-only-storage" },
-      },
-      {
-        binding: 2,
-        visibility: GPU_SHADER_STAGE_COMPUTE,
-        buffer: { type: "storage" },
-      },
-      {
-        binding: 3,
-        visibility: GPU_SHADER_STAGE_COMPUTE,
-        buffer: { type: "storage" },
-      },
-      {
-        binding: 4,
-        visibility: GPU_SHADER_STAGE_COMPUTE,
-        buffer: { type: "storage" },
-      },
-      {
-        binding: 5,
-        visibility: GPU_SHADER_STAGE_COMPUTE,
-        buffer: { type: "uniform" },
-      },
+      { binding: 0, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 1, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 2, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
+      { binding: 3, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
+      { binding: 4, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 5, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "storage" } },
+      { binding: 6, visibility: GPU_SHADER_STAGE_COMPUTE, buffer: { type: "uniform" } },
     ],
   });
   const pipelineLayout = device.createPipelineLayout({
     label: "monolithic-link-shape-pipeline-layout",
     bindGroupLayouts: [layout],
   });
-  const pipeline = await device.createComputePipelineAsync({
-    label: "monolithic-link-shape-parameter-pipeline",
-    layout: pipelineLayout,
-    compute: {
-      module: shader as object,
-      entryPoint: "shape_parameter_main",
-    },
-  });
+  const [compactPipeline, detailPipeline] = await Promise.all([
+    device.createComputePipelineAsync({
+      label: "monolithic-link-shape-parameter-pipeline",
+      layout: pipelineLayout,
+      compute: { module: shader as object, entryPoint: "shape_parameter_main" },
+    }),
+    device.createComputePipelineAsync({
+      label: "monolithic-link-shape-detail-pipeline",
+      layout: pipelineLayout,
+      compute: { module: shader as object, entryPoint: "shape_detail_main" },
+    }),
+  ]);
   const bindGroup = device.createBindGroup({
     label: "monolithic-link-shape-bind",
     layout,
@@ -1148,8 +1383,9 @@ export async function createMonolithicLinkWebGpuShape3D(
       { binding: 1, resource: { buffer: topologyBuffer } },
       { binding: 2, resource: { buffer: parameterBuffer } },
       { binding: 3, resource: { buffer: gaugeBuffer } },
-      { binding: 4, resource: { buffer: sectionFrameBuffer } },
-      { binding: 5, resource: { buffer: globalsBuffer } },
+      { binding: 4, resource: { buffer: detailLinkIndexBuffer } },
+      { binding: 5, resource: { buffer: sectionFrameBuffer } },
+      { binding: 6, resource: { buffer: globalsBuffer } },
     ],
   });
 
@@ -1160,11 +1396,15 @@ export async function createMonolithicLinkWebGpuShape3D(
     {
       parameterBuffer,
       gaugeBuffer,
+      detailLinkIndexBuffer,
       sectionFrameBuffer,
       topologyBuffer,
       globalsBuffer,
       bindGroup,
-      pipeline,
+      compactPipeline,
+      detailPipeline,
+      detailCapacity,
+      detailLinkIndices: initialDetailLinkIndices,
     },
   );
 }
