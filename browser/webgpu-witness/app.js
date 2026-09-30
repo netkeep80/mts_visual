@@ -1000,7 +1000,7 @@ function setSelectedVisualKey(key) {
 }
 
 function structuralDiagnosticDetail() {
-  if (!structuralState?.layout) return null;
+  if (!structuralState?.layout || structuralState.scene !== selectedScene()) return null;
   const maxDepth = structuralState.layout.positions.reduce(
     (maximum, position) => Math.max(maximum, position.depth),
     0,
@@ -1017,7 +1017,7 @@ function structuralDiagnosticDetail() {
 }
 
 function blueprintDiagnosticDetail() {
-  if (!blueprintState?.svgScene) return null;
+  if (!blueprintState?.svgScene || blueprintState.scene !== selectedScene()) return null;
   return {
     positions: blueprintState.positions.length,
     bounds: blueprintState.svgScene.bounds,
@@ -1026,7 +1026,7 @@ function blueprintDiagnosticDetail() {
 }
 
 function documentDiagnosticDetail() {
-  if (!document2dState?.layout) return null;
+  if (!document2dState?.layout || document2dState.scene !== selectedScene()) return null;
   const quality = document2dState.layout.metrics.qualityAfter;
   return {
     profile: document2dState.layout.profile,
@@ -1044,7 +1044,7 @@ function documentDiagnosticDetail() {
 }
 
 function classicDiagnosticDetail() {
-  if (!classicState) return null;
+  if (!classicState || classicState.scene !== selectedScene()) return null;
   const snapshot = core.snapshotLivePhysics3D(classicState.controller);
   const linkCount = classicState.controller.model.keys.length;
   return {
@@ -1058,7 +1058,7 @@ function classicDiagnosticDetail() {
 }
 
 function mechanicalDiagnosticDetail() {
-  if (!renderState) return null;
+  if (!renderState || renderState.scene !== selectedScene()) return null;
   const compute = renderState.compute.snapshot();
   const shape = renderState.shape.snapshot();
   const renderer = renderState.renderer.snapshot();
