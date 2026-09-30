@@ -115,14 +115,24 @@ for (const plan of ladder) {
     `${plan.octahedronCount}: 2 physics + 1 compact shape invocation per semantic Link`,
   );
   same(
+    plan.selectorInvocationsPerStep,
+    plan.detailCapacity,
+    `${plan.octahedronCount}: GPU selector dispatches one invocation per bounded detail slot`,
+  );
+  same(
+    plan.selectorCandidateVisitsPerStep,
+    1_000_000,
+    `${plan.octahedronCount}: partition selector visits every live semantic CENTER exactly once`,
+  );
+  same(
     plan.detailInvocationsPerStep,
     plan.detailCapacity,
     `${plan.octahedronCount}: expensive detail solve scales only with detail slots`,
   );
   same(
     plan.computePassesPerStep,
-    4,
-    `${plan.octahedronCount}: 2 physics + compact shape + bounded detail pass`,
+    5,
+    `${plan.octahedronCount}: 2 physics + compact shape + GPU selector + bounded detail pass`,
   );
   assert(
     plan.compactPersistentGpuBytes >= 148_000_000,
@@ -199,6 +209,29 @@ same(
   noLimit.surfaceVertexInvocations,
   noLimit.surfaceVerticesPerLink * 1_000,
   "renderer work follows detailed Link count",
+);
+same(
+  noLimit.selectorInvocationsPerStep,
+  0,
+  "full-detail small network requires no GPU selector pass",
+);
+same(
+  noLimit.selectorCandidateVisitsPerStep,
+  0,
+  "full-detail small network performs no selector scan",
+);
+same(
+  noLimit.computePassesPerStep,
+  4,
+  "full-detail small network remains 2 physics + compact + detail passes",
+);
+assert(
+  noLimit.buffers.some(
+    (buffer) =>
+      buffer.name === "shape.detailSelection"
+      && buffer.allocatedBytes === 96,
+  ),
+  "capacity model includes the fixed 96-byte GPU selector uniform",
 );
 
 for (const invalid of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
