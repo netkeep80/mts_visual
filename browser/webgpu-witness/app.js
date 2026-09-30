@@ -1899,15 +1899,25 @@ function updateModePlaceholder(modeId) {
 
 async function mountLabMode(modeId) {
   const mechanical = modeId === "mechanical-3d";
+  const blueprint = modeId === "blueprint-2d";
+  const hasSideControls = mechanical || blueprint;
+
   ui.mechanicalControls.hidden = !mechanical;
+  ui.blueprintControls.hidden = !blueprint;
   ui.canvas.hidden = !mechanical;
-  ui.modePlaceholder.hidden = mechanical;
-  ui.liveLab.classList.toggle("placeholder-mode", !mechanical);
+  ui.blueprintViewport.hidden = !blueprint;
+  ui.modePlaceholder.hidden = mechanical || blueprint;
+  ui.mechanicalCameraHint.hidden = !mechanical;
+  ui.mechanicalRenderDiagnostics.hidden = !mechanical;
+  ui.mechanicalGeometryPanel.hidden = !mechanical;
+  ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
 
   if (mechanical) {
     await startRender();
     return () => stopRender();
   }
+
+  if (blueprint) return mountBlueprint();
 
   updateModePlaceholder(modeId);
   log(`режим ${modeId} выбран; renderer будет подключён отдельным этапом roadmap`);
@@ -1984,8 +1994,15 @@ ui.rerun.addEventListener("click", () => {
 
 ui.scene.addEventListener("change", () => {
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
+  const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
+  if (activeMode === "blueprint-2d") {
+    activateLabMode("blueprint-2d").catch((error) => {
+      log(`ОШИБКА перезапуска Blueprint 2D — ${error.stack ?? error}`);
+    });
+    return;
+  }
   if (!mechanicalModeIsActive()) {
-    updateModePlaceholder(labLifecycle.activeMode ?? ui.visualizationMode.value);
+    updateModePlaceholder(activeMode);
     return;
   }
   startRender().catch((error) => {
@@ -1995,6 +2012,43 @@ ui.scene.addEventListener("change", () => {
     log(`ОШИБКА перезапуска сцены — ${error.stack ?? error}`);
     updateOverall();
   });
+});
+
+for (const control of [
+  ui.blueprintSpacing,
+  ui.blueprintLoopRadius,
+  ui.blueprintClearance,
+]) {
+  control.addEventListener("input", () => {
+    refreshBlueprintControlLabels();
+    if (!blueprintState) return;
+
+    if (control === ui.blueprintSpacing) {
+      blueprintState.positions = core.createBlueprintInitialPositions(
+        blueprintState.sourceNetwork,
+        { spacing: selectedBlueprintOptions().spacing },
+      );
+      renderBlueprintState(blueprintState, { fit: true });
+    } else {
+      renderBlueprintState(blueprintState);
+    }
+  });
+}
+
+ui.blueprintLabels.addEventListener("change", () => {
+  if (blueprintState) renderBlueprintState(blueprintState);
+});
+
+ui.blueprintFit.addEventListener("click", () => {
+  if (blueprintState) fitBlueprintState(blueprintState);
+});
+
+ui.blueprintReset.addEventListener("click", () => {
+  if (blueprintState) resetBlueprintPositions(blueprintState);
+});
+
+ui.blueprintExport.addEventListener("click", () => {
+  downloadBlueprintSvg();
 });
 
 ui.inspectGeometry.addEventListener("click", () => {
