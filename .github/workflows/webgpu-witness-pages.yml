@@ -53,6 +53,7 @@ jobs:
 
           cp browser/webgpu-witness/index.html _site/index.html
           cp browser/webgpu-witness/app.js _site/app.js
+          cp browser/webgpu-witness/benchmark.js _site/benchmark.js
           touch _site/.nojekyll
 
           npx --yes esbuild@0.24.2             src/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-core.bundle.js
@@ -88,8 +89,13 @@ jobs:
         run: |
           set -euo pipefail
           node --check browser/webgpu-witness/app.js
+          node --check browser/webgpu-witness/benchmark.js
+          test -s _site/benchmark.js
 
           grep -F 'src="./app.js"' _site/index.html
+          grep -F 'from "./benchmark.js"' _site/app.js
+          grep -F 'queue.onSubmittedWorkDone()' _site/benchmark.js
+          grep -F 'createMonolithicLinkWebGpuComputeFromTopology3D' _site/benchmark.js
           grep -F './vendor/mts-visual-core.bundle.js' _site/app.js
           grep -F './vendor/mts-visual-webgpu.bundle.js' _site/app.js
           grep -F './vendor/mts-visual-three.bundle.js' _site/app.js
