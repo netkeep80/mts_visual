@@ -92,8 +92,13 @@ assert(
   "Mechanical actual renderer state must be checked",
 );
 assert(
-  app.includes("releaseLabResources(modeId);"),
-  "every renderer cleanup must release the lab-owned resource ledger",
+  app.includes('from "./lab-mode-mount-controller.js"')
+    && app.includes("createLabModeMountController")
+    && app.includes("claimResources: claimLabResources")
+    && app.includes("releaseResources: releaseLabResources")
+    && app.includes("return labModeMountController.mount(modeId)")
+    && app.includes("mount: mountLabMode"),
+  "production lifecycle must delegate mode mounting and resource cleanup to the executable mount controller",
 );
 
 console.log("web lab real resource-cycle source contract: PASS");
