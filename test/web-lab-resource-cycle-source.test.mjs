@@ -53,6 +53,18 @@ assert(
 );
 
 assert(
+  app.includes('LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"'),
+  "browser self-test contract version must be explicit",
+);
+assert(
+  app.includes('LAB_SELF_TEST_QUERY = "mode-cycle"'),
+  "browser self-test query token must be explicit",
+);
+assert(
+  app.includes('new URLSearchParams(window.location.search).get("selftest")'),
+  "browser self-test must be directly invocable through the page URL",
+);
+assert(
   app.includes("await activateLabMode(modeId);"),
   "real cycle must use the production lifecycle activation path",
 );
