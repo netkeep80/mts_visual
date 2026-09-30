@@ -181,6 +181,22 @@
       <span id="lab-input-status" class="lab-input-status" role="status" aria-live="polite">Используется встроенный fixture.</span>
     </details>
 
+    <div class="card" id="lab-shared-diagnostics" style="margin-bottom:12px">
+      <div class="toolbar">
+        <h2 style="margin-right:auto">Сводка лаборатории</h2>
+        <button id="lab-copy-diagnostics" type="button">Скопировать диагностику</button>
+      </div>
+      <div class="grid">
+        <div><span class="muted">Режим</span><div id="lab-diagnostic-mode" class="value">—</div></div>
+        <div><span class="muted">Вход</span><div id="lab-diagnostic-input" class="value">—</div></div>
+        <div><span class="muted">Links</span><div id="lab-diagnostic-links" class="value">0</div></div>
+        <div><span class="muted">Выбрана связь</span><div id="lab-diagnostic-selected" class="value">—</div></div>
+        <div><span class="muted">Версия</span><div id="lab-diagnostic-version" class="value">—</div></div>
+        <div><span class="muted">Build SHA</span><div id="lab-diagnostic-sha" class="value">—</div></div>
+      </div>
+      <pre id="lab-diagnostic-detail" style="margin-top:10px; max-height:180px; overflow:auto"></pre>
+    </div>
+
     <div id="live-lab" class="live-lab">
       <aside id="mechanical-controls" class="control-sidebar" aria-label="Параметры механического 3D">
         <div class="physics-control">
@@ -383,6 +399,7 @@
           <button id="document-fit" type="button">Вписать</button>
           <button id="document-reset" type="button">Пересчитать</button>
           <button id="document-export" type="button">Скачать SVG</button>
+          <button id="document-manifest" type="button">Скачать manifest</button>
         </div>
         <div class="physics-control">
           <div class="muted">Публикационный режим</div>
@@ -449,6 +466,7 @@
           <div><span class="muted">Пересечения</span><div id="document-crossings" class="value">0 → 0</div></div>
           <div><span class="muted">Наложения</span><div id="document-overlaps" class="value">0 / 0</div></div>
           <div><span class="muted">Оптимизатор</span><div id="document-optimizer" class="value">0</div></div>
+          <div><span class="muted">SVG SHA-256</span><div id="document-digest" class="value">—</div></div>
         </div>
         <div id="classic-render-diagnostics" class="grid" style="margin-top:12px" hidden>
           <div><span class="muted">Шаг / состояние</span><div id="classic-tick" class="value">0</div></div>
