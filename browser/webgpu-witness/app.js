@@ -498,7 +498,7 @@ let renderState = null;
 const MECHANICAL_DETAIL_SLOT_BUDGET = 4096;
 const MECHANICAL_DETAIL_FRUSTUM_MARGIN = 0.18;
 const MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS = 70;
-const MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS = 1000;
+const MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS = 250;
 
 function differentialIsCurrent() {
   return monolithicDifferentialAllPass
@@ -1087,7 +1087,13 @@ function mechanicalDiagnosticDetail() {
     velocityBytes: compute.velocityBytes,
     octahedraPerLink: shape.octahedronCount,
     detail: {
-      policy: "cached-frustum-priority/v1",
+      policy:
+        renderState.detailSelection?.policy
+        ?? (
+          shape.detailCapacity < renderState.compute.topology.linkCount
+            ? "gpu-partition-frustum/v1"
+            : "full-detail-identity/v1"
+        ),
       slotBudget: MECHANICAL_DETAIL_SLOT_BUDGET,
       detailedLinkCount: shape.detailedLinkCount,
       detailCapacity: shape.detailCapacity,
@@ -1103,11 +1109,19 @@ function mechanicalDiagnosticDetail() {
       selectionReason:
         renderState.detailSelection?.reason ?? "initial-prefix",
       selectionUpdates: renderState.detailSelectionUpdates,
+      liveCenterSource:
+        shape.selectionMode === "gpu-partition"
+          ? "semantic-center-buffer"
+          : "full-detail-identity",
       centerCacheRevision: renderState.centerCacheRevision,
       selectionCenterRevision:
         renderState.detailSelection?.centerCacheRevision ?? null,
+      selectionMode: shape.selectionMode,
+      selectorControlBytes: shape.selectionControlBytes,
       indexUploadBytes: renderState.detailSelectionIndexUploadBytes,
       globalsUploadBytes: renderState.detailSelectionGlobalsUploadBytes,
+      selectionControlUploadBytes:
+        renderState.detailSelectionControlUploadBytes,
       compactDynamicStateBytes: shape.compactDynamicStateBytes,
       detailDynamicStateBytes: shape.detailDynamicStateBytes,
       sectionFrameBytes: shape.sectionFrameBytes,
@@ -1281,45 +1295,94 @@ function currentViewProjection(state) {
   return multiply4(projection, view);
 }
 
-function sameDetailIndices(left, right) {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
-}
-
 function selectedMechanicalLinkIndex(state) {
   if (selectedVisualKey === null) return -1;
   return state.linkIndexByKey.get(selectedVisualKey) ?? -1;
 }
 
+function sameMechanicalGpuSelectionView(previous, matrix, priorityLink) {
+  if (
+    previous === null
+    || previous.priorityLink !== priorityLink
+    || previous.viewProjection.length !== matrix.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < matrix.length; index += 1) {
+    if (previous.viewProjection[index] !== matrix[index]) return false;
+  }
+  return true;
+}
+
 function refreshMechanicalDetailSelection(state, reason) {
   if (renderState !== state) return null;
   const shapeSnapshot = state.shape.snapshot();
-  const selection = webgpu.selectMonolithicLinkDetail3D({
-    linkCount: state.compute.topology.linkCount,
-    detailCapacity: shapeSnapshot.detailCapacity,
-    viewProjection: currentViewProjection(state),
-    centerAt: (linkIndex) => state.semanticCenterCache[linkIndex],
-    selectedLink: selectedMechanicalLinkIndex(state),
-    hoveredLink: state.hoveredCenterLink,
-    frustumMargin: MECHANICAL_DETAIL_FRUSTUM_MARGIN,
-  });
+  const linkCount = state.compute.topology.linkCount;
+  const selectedLink = selectedMechanicalLinkIndex(state);
+  const hoveredLink = state.hoveredCenterLink;
+  const bounded = shapeSnapshot.detailCapacity < linkCount;
 
-  const previous = state.detailSelection?.indices ?? [];
-  let updateStats = null;
-  if (!sameDetailIndices(previous, selection.indices)) {
-    updateStats = state.shape.setDetailLinkIndices(selection.indices);
-    state.detailSelectionUpdates += 1;
-    state.detailSelectionIndexUploadBytes += updateStats.indexUploadBytes;
-    state.detailSelectionGlobalsUploadBytes += updateStats.globalsUploadBytes;
+  if (!bounded) {
+    state.detailSelectionView = null;
+    state.detailSelection = {
+      policy: "full-detail-identity/v1",
+      reason,
+      detailedLinkCount: shapeSnapshot.detailedLinkCount,
+      culledLinkCount: 0,
+      visibleCandidateCount: null,
+      selectedPinned: false,
+      hoveredPinned: false,
+      centerCacheRevision: null,
+    };
+    updateSharedDiagnostics();
+    return null;
   }
 
+  const priorityLink = selectedLink >= 0
+    ? selectedLink
+    : hoveredLink;
+  const viewProjection = currentViewProjection(state);
+  if (
+    sameMechanicalGpuSelectionView(
+      state.detailSelectionView,
+      viewProjection,
+      priorityLink,
+    )
+  ) {
+    state.detailSelection = {
+      ...state.detailSelection,
+      reason,
+    };
+    updateSharedDiagnostics();
+    return null;
+  }
+
+  const updateStats = state.shape.setGpuDetailSelectionView({
+    viewProjection,
+    selectedLink: priorityLink,
+    frustumMargin: MECHANICAL_DETAIL_FRUSTUM_MARGIN,
+  });
+  state.detailSelectionUpdates += 1;
+  state.detailSelectionIndexUploadBytes += updateStats.indexUploadBytes;
+  state.detailSelectionGlobalsUploadBytes += updateStats.globalsUploadBytes;
+  state.detailSelectionControlUploadBytes +=
+    updateStats.selectionControlUploadBytes;
+  state.detailSelectionView = {
+    priorityLink,
+    viewProjection: Array.from(viewProjection),
+  };
   state.detailSelection = {
-    ...selection,
+    policy: "gpu-partition-frustum/v1",
     reason,
-    centerCacheRevision: state.centerCacheRevision,
+    detailedLinkCount: updateStats.detailedLinkCount,
+    culledLinkCount: Math.max(
+      0,
+      linkCount - updateStats.detailedLinkCount,
+    ),
+    visibleCandidateCount: null,
+    selectedPinned: selectedLink >= 0,
+    hoveredPinned: selectedLink < 0 && hoveredLink >= 0,
+    centerCacheRevision: null,
   };
   updateSharedDiagnostics();
   return updateStats;
@@ -1857,7 +1920,7 @@ async function startRender() {
     const shapeSnapshot = shape.snapshot();
     setStatus(
       ui.renderCompute,
-      `ДОСТУПНО · 2 прохода физики + 1 компактный проход формы + 1 детальный проход`,
+      `ДОСТУПНО · 2 прохода физики + compact shape + bounded detail pipeline`,
       "ok",
     );
     setStatus(
@@ -1906,9 +1969,11 @@ async function startRender() {
       lastDetailAutoRotateAt: 0,
       detailSelectionTimer: null,
       detailSelection: null,
+      detailSelectionView: null,
       detailSelectionUpdates: 0,
       detailSelectionIndexUploadBytes: 0,
       detailSelectionGlobalsUploadBytes: 0,
+      detailSelectionControlUploadBytes: 0,
       centerCacheRevision: 0,
       linkIndexByKey: new Map(
         compute.topology.keys.map((key, index) => [key, index]),
@@ -1975,18 +2040,25 @@ async function startRender() {
         }
 
         const shapeStats = state.shape.update();
-        const expectedShapePasses =
-          shapeStats.detailedLinkCount > 0 ? 2 : 1;
         const expectedDetailDispatches =
           shapeStats.detailedLinkCount > 0 ? 1 : 0;
+        const expectedSelectorDispatches =
+          shapeStats.selectionMode === "gpu-partition"
+          && shapeStats.detailedLinkCount > 0
+            ? 1
+            : 0;
+        const expectedShapePasses =
+          1 + expectedSelectorDispatches + expectedDetailDispatches;
         if (
           shapeStats.compactDispatches !== 1
+          || shapeStats.selectorDispatches
+            !== expectedSelectorDispatches
           || shapeStats.detailDispatches !== expectedDetailDispatches
           || shapeStats.computePasses !== expectedShapePasses
           || shapeStats.dynamicStateUploadBytes !== 0
         ) {
           throw new Error(
-            `нарушен инвариант производной геометрии: compact=${shapeStats.compactDispatches}, detail=${shapeStats.detailDispatches}, проходы=${shapeStats.computePasses}/${expectedShapePasses}, detailLinks=${shapeStats.detailedLinkCount}, загрузка=${shapeStats.dynamicStateUploadBytes}`,
+            `нарушен инвариант производной геометрии: compact=${shapeStats.compactDispatches}, selector=${shapeStats.selectorDispatches}/${expectedSelectorDispatches}, detail=${shapeStats.detailDispatches}, проходы=${shapeStats.computePasses}/${expectedShapePasses}, detailLinks=${shapeStats.detailedLinkCount}, режим=${shapeStats.selectionMode}, загрузка=${shapeStats.dynamicStateUploadBytes}`,
           );
         }
         state.shapeUpdates += 1;
@@ -2073,7 +2145,7 @@ async function startRender() {
 
     state.raf = requestAnimationFrame(frame);
     log(
-      `монолитный рендер v0.6 запущен: сцена=${scene.label}, ${linkCount} связей, detail=${shape.snapshot().detailedLinkCount}/${shape.snapshot().detailCapacity}, ${shape.template.octahedronCount} октаэдров/связь, массаCENTER=${physics.nodeMass.toFixed(2)}, растяжение=${physics.longitudinalStiffness.toFixed(2)}, выпрямление=${physics.transverseStiffness.toFixed(2)}, нелинейность=${physics.nonlinearity.toFixed(2)}, демпфирование=${physics.linearDampingRate.toFixed(2)}, скорость=${physics.simulationSpeed.toFixed(2)}x`,
+      `монолитный рендер v0.6 запущен: сцена=${scene.label}, ${linkCount} связей, detail=${shape.snapshot().detailedLinkCount}/${shape.snapshot().detailCapacity}, selector=${shape.snapshot().selectionMode}, ${shape.template.octahedronCount} октаэдров/связь, массаCENTER=${physics.nodeMass.toFixed(2)}, растяжение=${physics.longitudinalStiffness.toFixed(2)}, выпрямление=${physics.transverseStiffness.toFixed(2)}, нелинейность=${physics.nonlinearity.toFixed(2)}, демпфирование=${physics.linearDampingRate.toFixed(2)}, скорость=${physics.simulationSpeed.toFixed(2)}x`,
     );
   } catch (error) {
     try { renderer?.destroy(); } catch {}
