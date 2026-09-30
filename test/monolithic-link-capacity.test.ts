@@ -202,9 +202,14 @@ const semanticOnly = planMonolithicLinkWebGpuCapacity3D(
     maxStorageBufferBindingSize: storage128MiB,
     maxBufferSize: 256 * MIB,
   },
-  { detailCapacity: 0 },
+  { detailCapacity: 0, includeRenderer: false },
 );
 same(semanticOnly.detailCapacity, 0, "semantic benchmark preflight allocates no detail cache");
+same(semanticOnly.persistentBytesPerLink, 140, "compute+shape benchmark excludes 8 B/Link renderer topology");
+assert(
+  !semanticOnly.buffers.some((buffer) => buffer.name.startsWith("renderer.")),
+  "compute-only benchmark preflight excludes renderer buffers",
+);
 same(semanticOnly.detailCacheBytes, 8, "zero-detail buffers keep only 4-byte minimum allocations");
 same(semanticOnly.sectionFrameBytes, 0, "semantic benchmark has zero logical section-frame bytes");
 same(semanticOnly.selectorInvocationsPerStep, 0, "semantic benchmark has no selector work");
@@ -218,9 +223,10 @@ const detail4096 = planMonolithicLinkWebGpuCapacity3D(
     maxStorageBufferBindingSize: storage128MiB,
     maxBufferSize: 256 * MIB,
   },
-  { detailCapacity: 4096 },
+  { detailCapacity: 4096, includeRenderer: false },
 );
 same(detail4096.detailCapacity, 4096, "benchmark preflight honors requested 4096 detail slots");
+same(detail4096.persistentBytesPerLink, 140, "detail compute-only benchmark excludes renderer topology");
 same(
   detail4096.sectionFrameBytes,
   4096 * 129 * 16,
