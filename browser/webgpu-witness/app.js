@@ -1940,6 +1940,111 @@ function mountBlueprint() {
   };
 }
 
+let classicState = null;
+
+function selectedClassicOptions() {
+  return Object.freeze({
+    charge: controlNumber(ui.classicCharge, "отталкивание центров", 0, 3),
+    restLength: controlNumber(ui.classicRestLength, "длина покоя Classic", 0.25, 8),
+    springStiffness: controlNumber(ui.classicStiffness, "жёсткость пружин Classic", 0, 0.30),
+    damping: controlNumber(ui.classicDamping, "затухание Classic", 0.50, 0.99),
+    timeStep: controlNumber(ui.classicTimeStep, "шаг времени Classic", 0.02, 0.50),
+  });
+}
+
+function refreshClassicControlLabels() {
+  const options = selectedClassicOptions();
+  ui.classicChargeValue.value = options.charge.toFixed(2);
+  ui.classicRestLengthValue.value = options.restLength.toFixed(2);
+  ui.classicStiffnessValue.value = options.springStiffness.toFixed(3);
+  ui.classicDampingValue.value = options.damping.toFixed(2);
+  ui.classicTimeStepValue.value = options.timeStep.toFixed(2);
+}
+
+function classicPresentationNetwork(network) {
+  return {
+    links: network.links.map((link) => {
+      const copy = { ...link };
+      if (ui.classicLabels.checked) copy.label = link.label ?? link.key;
+      else delete copy.label;
+      return copy;
+    }),
+  };
+}
+
+function updateClassicDiagnostics(state) {
+  const snapshot = core.snapshotLivePhysics3D(state.controller);
+  const linkCount = state.controller.model.keys.length;
+  const chargePairs = linkCount * (linkCount - 1) / 2;
+  ui.classicTick.textContent = `${snapshot.tick} · ${snapshot.awake ? "активен" : "покой"}`;
+  ui.classicEvaluations.textContent =
+    `${state.controller.model.springs.length} / ${chargePairs}`;
+  ui.classicMaxVelocity.textContent = fmt(snapshot.maxVelocity);
+  ui.classicPinned.textContent = String(snapshot.pinnedKeys.length);
+}
+
+function applyClassicPhysicsControls() {
+  refreshClassicControlLabels();
+  if (!classicState) return;
+  const options = selectedClassicOptions();
+  classicState.options = options;
+  core.setLivePhysics3DOptions(classicState.controller, options);
+  if (!classicState.paused) {
+    threeVisual.setVisualThreeLivePaused(ui.classicViewport, false);
+  }
+  updateClassicDiagnostics(classicState);
+}
+
+function mountClassic3D() {
+  const scene = selectedScene();
+  const network = classicPresentationNetwork(scene.network);
+  const options = selectedClassicOptions();
+  const controller = core.createLivePhysics3D(
+    network,
+    core.createInitialPhysics3DState(network, { radius: 3 }),
+    options,
+  );
+  const state = {
+    scene,
+    network,
+    controller,
+    options,
+    paused: false,
+    diagnosticsTimer: null,
+  };
+  classicState = state;
+  refreshClassicControlLabels();
+  ui.classicPause.textContent = "Пауза";
+
+  const renderer = threeVisual.createVisualThreeLiveRenderer(
+    ui.classicViewport,
+    network,
+    controller,
+    {
+      samples: 18,
+      nodeRadius: 0.13,
+      onActivateKey: (key) => {
+        log(`Classic 3D: выбрана связь ${key}`);
+      },
+    },
+  );
+  state.diagnosticsTimer = window.setInterval(() => {
+    if (classicState === state) updateClassicDiagnostics(state);
+  }, 200);
+  updateClassicDiagnostics(state);
+
+  log(
+    `Classic 3D запущен: сцена=${scene.label}, связей=${network.links.length}, пружин=${controller.model.springs.length}, пар отталкивания=${network.links.length * (network.links.length - 1) / 2}`,
+  );
+
+  return () => {
+    if (state.diagnosticsTimer !== null) window.clearInterval(state.diagnosticsTimer);
+    threeVisual.destroyVisualThreeRenderer(ui.classicViewport);
+    ui.classicViewport.replaceChildren();
+    if (classicState === state) classicState = null;
+  };
+}
+
 function updateModePlaceholder(modeId) {
   const definition = labModeUi(modeId);
   const scene = selectedScene();
