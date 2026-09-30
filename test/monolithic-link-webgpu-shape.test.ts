@@ -278,17 +278,20 @@ function fakeCompute(
 
 for (const needle of [
   "fn shape_parameter_main",
+  "fn shape_detail_main",
   "fn solve_amplitude",
   "fn half_arc_length",
   "buckling_basis_derivative",
   "for (var iteration = 0u; iteration < 24u;",
   "shape_parameters[link] = vec4<f32>(",
   "var<storage, read_write> roll_gauge",
+  "var<storage, read> detail_link_indices",
   "var<storage, read_write> section_frames",
   "fn update_roll_gauge",
   "fn curve_polyline_length",
   "fn transport_x",
   "let arc_samples = max(256u, half_segments * 8u);",
+  "let frame_base = slot * section_count;",
   "if (dot(geometric, previous) < 0.0)",
   "let raw_weight = (bend_sine - 0.015) / (0.08 - 0.015);",
   "let hinge_opening = 3.141592653589793 * t * (1.0 - t);",
@@ -306,8 +309,8 @@ for (const needle of [
 }
 same(
   [...MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL.matchAll(/var<storage/g)].length,
-  5,
-  "shape solve needs centers, topology, compact parameters, roll gauge and derived section frames",
+  6,
+  "shape solve exposes four global buffers plus detail index/frame cache",
 );
 assert(
   !/velocity|mass|damping|integrate/i.test(MONOLITHIC_LINK_SHAPE_PARAMETER_WGSL),
@@ -337,35 +340,53 @@ const shape = await createMonolithicLinkWebGpuShape3D(
 const snapshot = shape.snapshot();
 
 same(snapshot.linkCount, 5, "shape owns one compact parameter record per Link");
+same(snapshot.detailedLinkCount, 5, "small scene defaults to full detail");
+same(snapshot.detailCapacity, 5, "small scene detail cache covers every Link");
 same(snapshot.octahedronCount, 32, "shape template resolves requested octahedra");
 same(snapshot.sectionCount, 33, "derived presentation has N+1 connecting triangles");
 same(snapshot.parameterBytes, 5 * 16, "one vec4 shape parameter record per Link");
 same(snapshot.gaugeBytes, 5 * 16, "one vec4 persistent roll gauge per Link");
+same(snapshot.detailLinkIndexBytes, 5 * 4, "detail mapping stores one u32 per cache slot");
 same(
   snapshot.sectionFrameBytes,
   5 * 33 * 16,
-  "one vec4 transported frame/arc parameter per derived section",
+  "full-detail small scene retains one transported frame per derived section",
+);
+same(
+  snapshot.compactDynamicStateBytes,
+  5 * 32,
+  "global shape state is exactly params + roll gauge",
+);
+same(
+  snapshot.detailDynamicStateBytes,
+  5 * 4 + 5 * 33 * 16,
+  "detail cache state is mapping + bounded section frames",
 );
 same(
   snapshot.dynamicStateBytes,
-  5 * 32 + 5 * 33 * 16,
-  "derived GPU state is compact per-Link data plus section presentation frames",
+  5 * 32 + 5 * 4 + 5 * 33 * 16,
+  "shape dynamic state reports compact plus allocated detail cache",
 );
 same(shape.gaugeBuffer.size, 5 * 16, "gauge buffer is exactly one vec4 per Link");
+same(shape.detailLinkIndexBuffer.size, 5 * 4, "detail mapping buffer covers all small-scene Links");
 same(
   shape.sectionFrameBuffer.size,
   5 * 33 * 16,
-  "section frame buffer has exact derived-section extent",
+  "small-scene section frame cache retains exact legacy extent",
 );
 
 const setupWriteCount = device.queue.writes.length;
 const step = shape.update();
-same(step.dispatches, 1, "shape update is one monolithic dispatch");
-same(step.computePasses, 1, "shape update is exactly one compute pass");
+same(step.compactDispatches, 1, "shape update has one compact all-Link dispatch");
+same(step.detailDispatches, 1, "shape update has one bounded detail dispatch");
+same(step.dispatches, 2, "shape update is split into compact + detail dispatches");
+same(step.computePasses, 2, "shape update is exactly two compute passes with detail active");
+same(step.detailedLinkCount, 5, "shape step reports active detail slots");
 same(step.dynamicStateUploadBytes, 0, "shape update uploads no CPU dynamic state");
 same(device.queue.writes.length, setupWriteCount, "ordinary shape update performs no queue.writeBuffer");
-same(device.dispatches.length, 1, "device sees one shape dispatch");
-same(device.dispatches[0]!.entryPoint, "shape_parameter_main", "shape parameter kernel is dispatched");
+same(device.dispatches.length, 2, "device sees compact and detail shape dispatches");
+same(device.dispatches[0]!.entryPoint, "shape_parameter_main", "compact parameter kernel is first");
+same(device.dispatches[1]!.entryPoint, "shape_detail_main", "detail frame kernel is second");
 
 shape.destroy();
 same(shape.snapshot().status, "destroyed", "shape destroy updates status");
@@ -378,13 +399,14 @@ const largeShape = await createMonolithicLinkWebGpuShape3D(
   aspect32,
 );
 largeShape.update();
-same(largeDevice.dispatches.length, 1, "1000 Links still use one shape dispatch");
-same(largeDevice.dispatches[0]!.x, 16, "1000 Links require 16 workgroups at 64 threads");
-same(largeDevice.dispatches[0]!.y, 1, "1000-Link shape remains one dispatch row");
+same(largeDevice.dispatches.length, 2, "1000 Links use compact and detail dispatches");
+same(largeDevice.dispatches[0]!.x, 16, "1000 compact Links require 16 workgroups");
+same(largeDevice.dispatches[0]!.y, 1, "1000-Link compact shape remains one dispatch row");
+same(largeDevice.dispatches[1]!.x, 16, "1000 detail slots require 16 workgroups when fully detailed");
 same(
   largeShape.snapshot().parameterBytes,
   1000 * 16,
-  "1000-Link shape parameter state is 16 kB",
+  "1000-Link compact parameter state is 16 kB",
 );
 same(
   largeShape.snapshot().gaugeBytes,
@@ -394,15 +416,82 @@ same(
 same(
   largeShape.snapshot().sectionFrameBytes,
   1000 * 33 * 16,
-  "1000-Link derived section-frame state is explicit and resolution-linear",
-);
-same(
-  largeShape.snapshot().dynamicStateBytes,
-  1000 * 32 + 1000 * 33 * 16,
-  "1000-Link total derived state includes compact Link state plus presentation frames",
+  "small enough scene still defaults to full detail",
 );
 largeShape.destroy();
 
+const boundedDevice = new FakeDevice();
+const boundedCompute = fakeCompute(
+  boundedDevice,
+  networkOfSize(1000),
+  rest32,
+);
+const boundedShape = await createMonolithicLinkWebGpuShape3D(
+  boundedDevice,
+  boundedCompute,
+  aspect32,
+  {
+    detailCapacity: 7,
+    detailLinkIndices: [999, 500, 0],
+  },
+);
+const boundedSnapshot = boundedShape.snapshot();
+same(boundedSnapshot.linkCount, 1000, "bounded shape retains all semantic Links");
+same(boundedSnapshot.detailCapacity, 7, "detail cache capacity is independent of total Link count");
+same(boundedSnapshot.detailedLinkCount, 3, "only explicit initial detail selection is active");
+same(
+  boundedSnapshot.sectionFrameBytes,
+  7 * 33 * 16,
+  "section-frame allocation follows detail capacity, not 1000 Links",
+);
+same(
+  boundedSnapshot.compactDynamicStateBytes,
+  1000 * 32,
+  "global shape state remains O(LinkCount)",
+);
+const boundedStep = boundedShape.update();
+same(boundedStep.compactDispatches, 1, "bounded shape still updates every compact Link");
+same(boundedStep.detailDispatches, 1, "bounded shape updates selected detail slots");
+same(boundedStep.detailedLinkCount, 3, "bounded step reports selected detail slots");
+same(boundedDevice.dispatches[0]!.x, 16, "bounded compact pass covers all 1000 Links");
+same(boundedDevice.dispatches[1]!.x, 1, "three detailed Links need one workgroup");
+
+const writesBeforeSelection = boundedDevice.queue.writes.length;
+const selection = boundedShape.setDetailLinkIndices([2, 4]);
+same(selection.detailedLinkCount, 2, "detail selection can be changed without remount");
+same(selection.detailCapacity, 7, "selection does not resize cache");
+same(selection.indexUploadBytes, 2 * 4, "selection uploads only semantic Link indices");
+same(selection.globalsUploadBytes, 32, "selection updates only shape globals");
+same(
+  boundedDevice.queue.writes.length,
+  writesBeforeSelection + 2,
+  "detail selection performs one index write and one globals write",
+);
+boundedDevice.dispatches.length = 0;
+const selectedStep = boundedShape.update();
+same(selectedStep.detailedLinkCount, 2, "next detail pass follows new selection");
+same(boundedDevice.dispatches.length, 2, "compact + detail dispatch remain serialized");
+same(boundedDevice.dispatches[1]!.x, 1, "two detail slots remain one workgroup");
+
+for (const invalid of [
+  [1, 1],
+  [-1],
+  [1000],
+]) {
+  try {
+    boundedShape.setDetailLinkIndices(invalid);
+    throw new Error(`invalid detail selection accepted: ${invalid.join(",")}`);
+  } catch (error) {
+    assert(
+      String(error).includes("monolithic shape detail"),
+      `invalid detail selection fails closed: ${invalid.join(",")}`,
+    );
+  }
+}
+
+boundedShape.destroy();
+
 console.log(
-  `[v0.5 #102 monolithic GPU carrier] PASS links=${snapshot.linkCount} params=${snapshot.parameterBytes}B gauge=${snapshot.gaugeBytes}B sectionFrames=${snapshot.sectionFrameBytes}B`,
+  `[v0.6 #153 bounded GPU carrier] PASS links=${snapshot.linkCount} `
+  + `compact=${snapshot.compactDynamicStateBytes}B detail=${snapshot.detailDynamicStateBytes}B`,
 );
