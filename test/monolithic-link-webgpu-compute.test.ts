@@ -610,6 +610,71 @@ assert(
   "bounded runtime benchmark executes production detail kernel",
 );
 
+let cancelClock = 0;
+let cancelRequested = false;
+const cancelled = await runMonolithicLinkWebGpuBenchmark3D(
+  new FakeDevice(),
+  {
+    linkCount: 16,
+    topologyProfile: "chain",
+    aspectRatio: 8 * Math.SQRT2,
+    detailCapacity: 4,
+    warmupIterations: 1,
+    sampleCount: 4,
+    physics: {
+      stretchStiffness: 5,
+      straighteningStiffness: 2,
+    },
+    now: () => cancelClock++,
+    shouldCancel: () => cancelRequested,
+    onProgress(progress) {
+      if (progress.phase === "sample" && progress.completed === 1) {
+        cancelRequested = true;
+      }
+    },
+  },
+);
+same(cancelled.status, "CANCELLED", "benchmark stops only after completed sample");
+same(cancelled.completedWarmupIterations, 1, "cancelled benchmark completed warmup");
+same(cancelled.completedSamples, 1, "cancelled benchmark preserves completed sample count");
+same(cancelled.stages.physics?.samples, 1, "cancelled benchmark keeps partial physics statistics");
+same(cancelled.stages.shape?.samples, 1, "cancelled benchmark keeps partial shape statistics");
+same(cancelled.error, null, "user cancellation is not reported as runtime failure");
+
+const fullDetailBlockedDevice = new FakeDevice();
+const fullDetailBlocked = await runMonolithicLinkWebGpuBenchmark3D(
+  fullDetailBlockedDevice,
+  {
+    linkCount: 200_000,
+    topologyProfile: "chain",
+    aspectRatio: 64 * Math.SQRT2,
+    detailCapacity: 200_000,
+    requireDetailCapacity: true,
+    warmupIterations: 1,
+    sampleCount: 1,
+    physics: {
+      stretchStiffness: 5,
+      straighteningStiffness: 2,
+    },
+    now: () => cancelClock++,
+  },
+);
+same(
+  fullDetailBlocked.status,
+  "CAPACITY_BLOCKED",
+  "required full-detail benchmark fails before clamping into another profile",
+);
+same(
+  fullDetailBlocked.blockReason,
+  "detailCapacity",
+  "full-detail capacity failure identifies the requested detail budget",
+);
+same(
+  fullDetailBlockedDevice.buffers.length,
+  0,
+  "full-detail preflight failure allocates no GPU buffers",
+);
+
 const blockedDevice = new FakeDevice();
 blockedDevice.limits.maxStorageBufferBindingSize = 64;
 const blocked = await runMonolithicLinkWebGpuBenchmark3D(
