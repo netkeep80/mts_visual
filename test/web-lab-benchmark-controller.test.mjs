@@ -102,6 +102,12 @@ function controllerFixture({
     events.push("runtime");
     assert.equal(controller.isRunning(), true);
     assert.equal(options.shouldStop(), false);
+    assert.equal(
+      options.config.resourceIsolation,
+      mechanicalMounted
+        ? "separate-device+interactive-mechanical-suspended"
+        : "separate-device",
+    );
     options.onProgress({ phase: "samples", completed: 3, total: 20 });
     return passEvidence();
   });
