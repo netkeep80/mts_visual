@@ -1,4 +1,10 @@
 import { runMechanicalWebGpuBenchmark } from "./benchmark.js";
+import {
+  benchmarkEvidenceFileName,
+  createBenchmarkConfig,
+  parseMechanicalBenchmarkQuery,
+  serializeBenchmarkEvidence,
+} from "./benchmark-ui-model.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -521,122 +527,20 @@ const MECHANICAL_DETAIL_FRUSTUM_MARGIN = 0.18;
 const MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS = 70;
 const MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS = 250;
 
-const BENCHMARK_LINK_COUNTS = Object.freeze([
-  1_000,
-  10_000,
-  100_000,
-  1_000_000,
-]);
-const BENCHMARK_OCTAHEDRA = Object.freeze([16, 32, 64, 128]);
-const BENCHMARK_TOPOLOGY_PROFILES = Object.freeze([
-  "chain",
-  "hub-heavy",
-  "mixed",
-  "self-incidence",
-  "branching",
-]);
-const BENCHMARK_DETAIL_PROFILES = Object.freeze([
-  "semantic",
-  "detail-256",
-  "detail-1024",
-  "detail-4096",
-  "full-detail",
-]);
-
-function benchmarkInteger(element, label, minimum, maximum) {
-  const value = Number(element.value);
-  if (
-    !Number.isSafeInteger(value)
-    || value < minimum
-    || value > maximum
-  ) {
-    throw new Error(
-      `недопустимое значение benchmark «${label}»: ${element.value}`,
-    );
-  }
-  return value;
-}
-
 function selectedBenchmarkConfig() {
-  const linkCount = benchmarkInteger(
-    ui.benchmarkLinks,
-    "число Links",
-    1,
-    1_000_000,
+  return createBenchmarkConfig(
+    {
+      linkCount: ui.benchmarkLinks.value,
+      topologyProfile: ui.benchmarkProfile.value,
+      seed: ui.benchmarkSeed.value,
+      octahedra: ui.benchmarkOcta.value,
+      detailProfile: ui.benchmarkDetail.value,
+      warmupCount: ui.benchmarkWarmup.value,
+      sampleCount: ui.benchmarkSamples.value,
+      renderEnabled: ui.benchmarkRender.checked,
+    },
+    selectedPhysics(),
   );
-  if (!BENCHMARK_LINK_COUNTS.includes(linkCount)) {
-    throw new Error(
-      `неподдерживаемое число Links benchmark: ${linkCount}`,
-    );
-  }
-
-  const topologyProfile = ui.benchmarkProfile.value;
-  if (!BENCHMARK_TOPOLOGY_PROFILES.includes(topologyProfile)) {
-    throw new Error(
-      `неподдерживаемый профиль topology: ${topologyProfile}`,
-    );
-  }
-
-  const octahedra = benchmarkInteger(
-    ui.benchmarkOcta,
-    "октаэдры",
-    2,
-    128,
-  );
-  if (!BENCHMARK_OCTAHEDRA.includes(octahedra)) {
-    throw new Error(
-      `неподдерживаемое число октаэдров benchmark: ${octahedra}`,
-    );
-  }
-
-  const detailProfile = ui.benchmarkDetail.value;
-  if (!BENCHMARK_DETAIL_PROFILES.includes(detailProfile)) {
-    throw new Error(
-      `неподдерживаемый detail profile: ${detailProfile}`,
-    );
-  }
-
-  const warmupCount = benchmarkInteger(
-    ui.benchmarkWarmup,
-    "warmup",
-    5,
-    100,
-  );
-  const minimumSamples = linkCount <= 100_000 ? 20 : 1;
-  const sampleCount = benchmarkInteger(
-    ui.benchmarkSamples,
-    "samples",
-    minimumSamples,
-    200,
-  );
-  const seed = benchmarkInteger(
-    ui.benchmarkSeed,
-    "seed",
-    0,
-    0xffff_ffff,
-  );
-
-  const physics = selectedPhysics();
-  return Object.freeze({
-    linkCount,
-    topologyProfile,
-    seed,
-    octahedra,
-    detailProfile,
-    warmupCount,
-    sampleCount,
-    renderEnabled:
-      ui.benchmarkRender.checked
-      && detailProfile !== "semantic",
-    physics: Object.freeze({
-      stretchStiffness: physics.longitudinalStiffness,
-      straighteningStiffness: physics.transverseStiffness,
-      nonlinearity: physics.nonlinearity,
-      centerMass: physics.nodeMass,
-      dampingRate: physics.linearDampingRate,
-      simulationSpeed: physics.simulationSpeed,
-    }),
-  });
 }
 
 function benchmarkProgress(event) {
@@ -656,13 +560,6 @@ function benchmarkProgress(event) {
   ui.benchmarkProgress.value = Math.min(total, completed);
   ui.benchmarkStatus.textContent =
     `${labels[event.phase] ?? event.phase} · ${completed}/${total}`;
-}
-
-function benchmarkEvidenceText() {
-  if (!benchmarkEvidence) {
-    throw new Error("benchmark evidence ещё не создан");
-  }
-  return JSON.stringify(benchmarkEvidence, null, 2);
 }
 
 function renderBenchmarkEvidence(evidence) {
@@ -749,76 +646,54 @@ async function runBenchmarkFromUi() {
 }
 
 function downloadBenchmarkEvidence() {
-  const text = benchmarkEvidenceText();
+  const text = serializeBenchmarkEvidence(benchmarkEvidence);
   const blob = new Blob(
     [text],
     { type: "application/json;charset=utf-8" },
   );
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   anchor.href = url;
-  anchor.download =
-    `mts-visual-mechanical-benchmark-${benchmarkEvidence.linkCount}-${String(buildInfo.mainSha).slice(0, 12)}-${stamp}.json`;
+  anchor.download = benchmarkEvidenceFileName(
+    benchmarkEvidence,
+    buildInfo.mainSha,
+  );
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
 }
 
-function normalizeBenchmarkDetailQuery(value) {
-  if (value === null) return null;
-  if (BENCHMARK_DETAIL_PROFILES.includes(value)) return value;
-  const aliases = {
-    "0": "semantic",
-    "256": "detail-256",
-    "1024": "detail-1024",
-    "4096": "detail-4096",
-    "full": "full-detail",
-  };
-  return aliases[value] ?? null;
-}
-
 function applyBenchmarkQuery(params) {
-  if (params.get("benchmark") !== "mechanical") return false;
+  const query = parseMechanicalBenchmarkQuery(
+    params,
+    ui.benchmarkLinks.value,
+  );
+  if (!query.requested) return false;
 
-  const links = Number(params.get("links"));
-  if (BENCHMARK_LINK_COUNTS.includes(links)) {
-    ui.benchmarkLinks.value = String(links);
+  const values = query.values;
+  if (values.linkCount !== undefined) {
+    ui.benchmarkLinks.value = String(values.linkCount);
   }
-  const profile = params.get("profile");
-  if (BENCHMARK_TOPOLOGY_PROFILES.includes(profile)) {
-    ui.benchmarkProfile.value = profile;
+  if (values.topologyProfile !== undefined) {
+    ui.benchmarkProfile.value = values.topologyProfile;
   }
-  const detail = normalizeBenchmarkDetailQuery(params.get("detail"));
-  if (detail !== null) {
-    ui.benchmarkDetail.value = detail;
+  if (values.detailProfile !== undefined) {
+    ui.benchmarkDetail.value = values.detailProfile;
   }
-  const octa = Number(params.get("octa"));
-  if (BENCHMARK_OCTAHEDRA.includes(octa)) {
-    ui.benchmarkOcta.value = String(octa);
+  if (values.octahedra !== undefined) {
+    ui.benchmarkOcta.value = String(values.octahedra);
   }
-  const seed = Number(params.get("seed"));
-  if (Number.isSafeInteger(seed) && seed >= 0 && seed <= 0xffff_ffff) {
-    ui.benchmarkSeed.value = String(seed);
+  if (values.seed !== undefined) {
+    ui.benchmarkSeed.value = String(values.seed);
   }
-  const warmup = Number(params.get("warmup"));
-  if (Number.isSafeInteger(warmup) && warmup >= 5 && warmup <= 100) {
-    ui.benchmarkWarmup.value = String(warmup);
+  if (values.warmupCount !== undefined) {
+    ui.benchmarkWarmup.value = String(values.warmupCount);
   }
-  const samples = Number(params.get("samples"));
-  const selectedLinks = Number(ui.benchmarkLinks.value);
-  const minimumSamples = selectedLinks <= 100_000 ? 20 : 1;
-  if (
-    Number.isSafeInteger(samples)
-    && samples >= minimumSamples
-    && samples <= 200
-  ) {
-    ui.benchmarkSamples.value = String(samples);
+  if (values.sampleCount !== undefined) {
+    ui.benchmarkSamples.value = String(values.sampleCount);
   }
-  ui.benchmarkRender.checked =
-    params.get("render") === "1"
-    || params.get("render") === "true";
+  ui.benchmarkRender.checked = values.renderEnabled;
   return true;
 }
 
@@ -3843,7 +3718,7 @@ ui.benchmarkStop.addEventListener("click", () => {
 });
 
 ui.benchmarkCopy.addEventListener("click", () => {
-  copyText(benchmarkEvidenceText()).then(() => {
+  copyText(serializeBenchmarkEvidence(benchmarkEvidence)).then(() => {
     ui.benchmarkStatus.textContent =
       `${benchmarkEvidence.status} · JSON скопирован`;
   }).catch((error) => {
