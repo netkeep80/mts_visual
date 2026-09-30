@@ -2830,6 +2830,8 @@ function updateModePlaceholder(modeId) {
     + `Подключение renderer: issue #${definition.issue}.</div>`;
 }
 
+const LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1";
+const LAB_SELF_TEST_QUERY = "mode-cycle";
 const LAB_REAL_CYCLE = Object.freeze([
   "structural-2d",
   "blueprint-2d",
@@ -3613,6 +3615,12 @@ try {
   await acquireDevice();
   if (device) await runDifferentials();
   await activateLabMode(ui.visualizationMode.value);
+
+  const requestedSelfTest = new URLSearchParams(window.location.search).get("selftest");
+  if (requestedSelfTest === LAB_SELF_TEST_QUERY) {
+    log(`запрошен browser self-test ${LAB_SELF_TEST_CONTRACT} через URL`);
+    await runLabModeCycleSelfTest();
+  }
 } catch (error) {
   setStatus(ui.overall, "ОШИБКА — см. диагностический журнал", "fail");
   log(error.stack ?? String(error));
