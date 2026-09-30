@@ -12,6 +12,14 @@ const ui = {
   canvas: $("gpu-canvas"),
   visualizationMode: $("visualization-mode"),
   modeStatus: $("mode-status"),
+  labCopyDiagnostics: $("lab-copy-diagnostics"),
+  labDiagnosticMode: $("lab-diagnostic-mode"),
+  labDiagnosticInput: $("lab-diagnostic-input"),
+  labDiagnosticLinks: $("lab-diagnostic-links"),
+  labDiagnosticSelected: $("lab-diagnostic-selected"),
+  labDiagnosticVersion: $("lab-diagnostic-version"),
+  labDiagnosticSha: $("lab-diagnostic-sha"),
+  labDiagnosticDetail: $("lab-diagnostic-detail"),
   modeHeading: $("mode-heading"),
   modeDescription: $("mode-description"),
   liveLab: $("live-lab"),
@@ -55,11 +63,13 @@ const ui = {
   documentFit: $("document-fit"),
   documentReset: $("document-reset"),
   documentExport: $("document-export"),
+  documentManifest: $("document-manifest"),
   documentRenderDiagnostics: $("document-render-diagnostics"),
   documentSeed: $("document-seed"),
   documentCrossings: $("document-crossings"),
   documentOverlaps: $("document-overlaps"),
   documentOptimizer: $("document-optimizer"),
+  documentDigest: $("document-digest"),
   classicControls: $("classic-controls"),
   classicViewport: $("classic-viewport"),
   classicCharge: $("classic-charge"),
@@ -968,6 +978,182 @@ async function copyText(text) {
   if (!copied) throw new Error("не удалось скопировать текст в буфер обмена");
 }
 
+let selectedVisualKey = null;
+let currentLabModeId = ui.visualizationMode.value;
+
+function reconcileSelectedVisualKey(scene = selectedScene()) {
+  if (
+    selectedVisualKey !== null
+    && !scene.network.links.some((link) => link.key === selectedVisualKey)
+  ) {
+    selectedVisualKey = null;
+  }
+}
+
+function setSelectedVisualKey(key) {
+  const scene = selectedScene();
+  if (key !== null && !scene.network.links.some((link) => link.key === key)) {
+    throw new Error(`неизвестная выбранная связь: ${key}`);
+  }
+  selectedVisualKey = key;
+  updateSharedDiagnostics();
+}
+
+function structuralDiagnosticDetail() {
+  if (!structuralState?.layout || structuralState.scene !== selectedScene()) return null;
+  const maxDepth = structuralState.layout.positions.reduce(
+    (maximum, position) => Math.max(maximum, position.depth),
+    0,
+  );
+  return {
+    scc: structuralState.layout.components.length,
+    layers: maxDepth + 1,
+    crossingsBefore: structuralState.layout.metrics.crossingsBefore,
+    crossingsAfter: structuralState.layout.metrics.crossingsAfter,
+    evaluations: structuralState.layout.metrics.evaluations,
+    passes: structuralState.layout.metrics.passes,
+    bounds: structuralState.layout.bounds,
+  };
+}
+
+function blueprintDiagnosticDetail() {
+  if (!blueprintState?.svgScene || blueprintState.scene !== selectedScene()) return null;
+  return {
+    positions: blueprintState.positions.length,
+    bounds: blueprintState.svgScene.bounds,
+    viewport: blueprintState.viewport,
+  };
+}
+
+function documentDiagnosticDetail() {
+  if (!document2dState?.layout || document2dState.scene !== selectedScene()) return null;
+  const quality = document2dState.layout.metrics.qualityAfter;
+  return {
+    profile: document2dState.layout.profile,
+    requestedStrategy: document2dState.options?.strategy ?? null,
+    seedStrategy: document2dState.layout.metrics.seedStrategy,
+    seedCandidates: document2dState.layout.metrics.seedCandidates,
+    crossings: quality.crossings,
+    centerOverlaps: quality.centerOverlaps,
+    labelOverlaps: quality.labelOverlaps,
+    evaluations: document2dState.layout.metrics.optimizerEvaluations,
+    passes: document2dState.layout.metrics.optimizerPasses,
+    svgSha256: document2dState.outputDigest ?? null,
+    bounds: document2dState.layout.bounds,
+  };
+}
+
+function classicDiagnosticDetail() {
+  if (!classicState || classicState.scene !== selectedScene()) return null;
+  const snapshot = core.snapshotLivePhysics3D(classicState.controller);
+  const linkCount = classicState.controller.model.keys.length;
+  return {
+    tick: snapshot.tick,
+    awake: snapshot.awake,
+    maxVelocity: snapshot.maxVelocity,
+    pinnedKeys: snapshot.pinnedKeys,
+    springs: classicState.controller.model.springs.length,
+    chargePairs: linkCount * (linkCount - 1) / 2,
+  };
+}
+
+function mechanicalDiagnosticDetail() {
+  if (!renderState || renderState.scene !== selectedScene()) return null;
+  const compute = renderState.compute.snapshot();
+  const shape = renderState.shape.snapshot();
+  const renderer = renderState.renderer.snapshot();
+  return {
+    frames: renderState.frames,
+    steps: renderState.steps,
+    shapeUpdates: renderState.shapeUpdates,
+    paused: renderState.paused,
+    linkCount: renderState.compute.topology.linkCount,
+    centerBytes: compute.centerBytes,
+    velocityBytes: compute.velocityBytes,
+    octahedraPerLink: shape.octahedronCount,
+    zeroCopy: {
+      sharedSemanticCenterBuffer: renderer.sharedSemanticCenterBuffer,
+      sharedShapeParameterBuffer: renderer.sharedShapeParameterBuffer,
+      dynamicStateUploadBytesPerFrame: renderer.dynamicStateUploadBytesPerFrame,
+      rendererDynamicStateBytes: renderer.rendererDynamicStateBytes,
+    },
+  };
+}
+
+function activeModeDiagnosticDetail() {
+  switch (currentLabModeId) {
+    case "structural-2d": return structuralDiagnosticDetail();
+    case "blueprint-2d": return blueprintDiagnosticDetail();
+    case "document-2d": return documentDiagnosticDetail();
+    case "classic-3d": return classicDiagnosticDetail();
+    case "mechanical-3d": return mechanicalDiagnosticDetail();
+    default: return null;
+  }
+}
+
+function sharedDiagnosticSnapshot() {
+  const scene = selectedScene();
+  const definition = labModeUi(currentLabModeId);
+  return {
+    mode: currentLabModeId,
+    modeLabel: definition?.label ?? currentLabModeId,
+    input: {
+      id: scene.id,
+      label: scene.label,
+      sourceKind: scene.sourceKind,
+      links: scene.network.links.length,
+      ...(scene.sourceRepository === undefined
+        ? {}
+        : { sourceRepository: scene.sourceRepository }),
+      ...(scene.sourceSha === undefined ? {} : { sourceSha: scene.sourceSha }),
+    },
+    selectedKey: selectedVisualKey,
+    renderer: {
+      version: buildInfo.version,
+      buildSha: buildInfo.mainSha,
+    },
+    detail: activeModeDiagnosticDetail(),
+  };
+}
+
+function updateSharedDiagnostics() {
+  const snapshot = sharedDiagnosticSnapshot();
+  ui.labDiagnosticMode.textContent = `${snapshot.modeLabel} · ${snapshot.mode}`;
+  ui.labDiagnosticInput.textContent = `${snapshot.input.label} · ${snapshot.input.sourceKind}`;
+  ui.labDiagnosticLinks.textContent = String(snapshot.input.links);
+  ui.labDiagnosticSelected.textContent = snapshot.selectedKey ?? "—";
+  ui.labDiagnosticVersion.textContent = String(snapshot.renderer.version);
+  ui.labDiagnosticSha.textContent = String(snapshot.renderer.buildSha).slice(0, 12);
+  ui.labDiagnosticDetail.textContent = JSON.stringify(snapshot.detail ?? {}, null, 2);
+}
+
+function sharedDiagnosticText() {
+  return JSON.stringify(sharedDiagnosticSnapshot(), null, 2) + "\n";
+}
+
+async function sha256Text(text) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Web Crypto SHA-256 недоступен в этом браузере");
+  }
+  const bytes = new TextEncoder().encode(text);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function downloadTextFile(text, filename, type) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 populateSceneSelector("root-r");
 syncLabInputPanel();
 
@@ -1305,6 +1491,7 @@ function installCameraControls(state) {
     };
     state.semanticCenterCache[selected] = [...center];
     setHoveredCenter(selected);
+    setSelectedVisualKey(state.centerDrag.key);
     mode = "center";
     log(
       `выбран CENTER для перетаскивания: ${state.centerDrag.key} · источник=${source} · один семантический CENTER`,
@@ -1698,6 +1885,7 @@ async function startRender() {
           state.lastUiAt = now;
           ui.renderFrames.textContent =
             `${state.frames.toLocaleString()} / ${state.steps.toLocaleString()}`;
+          updateSharedDiagnostics();
         }
       } catch (error) {
         renderPass = false;
@@ -1909,6 +2097,7 @@ function updateStructuralDiagnostics(state) {
   ui.structuralOptimizer.textContent =
     `${state.layout.metrics.evaluations} проверок · ${state.layout.metrics.passes} проходов`;
   ui.structuralLinkCount.textContent = String(state.network.links.length);
+  updateSharedDiagnostics();
 }
 
 function renderStructuralState(state, { fit = false } = {}) {
@@ -1978,6 +2167,9 @@ function mountStructural2D() {
   const signal = abortController.signal;
   ui.structuralViewport.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
+    const node = event.target.closest?.('[data-role="structural-node"]');
+    const key = node?.getAttribute("data-link-key");
+    if (key) setSelectedVisualKey(key);
     state.pointerId = event.pointerId;
     state.panPointer = { x: event.clientX, y: event.clientY };
     ui.structuralViewport.setPointerCapture?.(event.pointerId);
@@ -2111,6 +2303,7 @@ function renderBlueprintState(state, { fit = false } = {}) {
 
   if (fit || !state.viewport) fitBlueprintState(state);
   else applyBlueprintViewport(state);
+  updateSharedDiagnostics();
 }
 
 function resetBlueprintPositions(state) {
@@ -2175,6 +2368,7 @@ function mountBlueprint() {
 
     if (center) {
       state.dragKey = center.getAttribute("data-link-key");
+      if (state.dragKey) setSelectedVisualKey(state.dragKey);
       state.panPointer = null;
     } else {
       state.dragKey = null;
@@ -2320,15 +2514,23 @@ function updateDocumentDiagnostics(state) {
     `центры ${after.centerOverlaps} · подписи ${after.labelOverlaps}`;
   ui.documentOptimizer.textContent =
     `${state.layout.metrics.optimizerEvaluations} проверок · ${state.layout.metrics.optimizerPasses} проходов`;
+  ui.documentDigest.textContent = state.outputDigest
+    ? state.outputDigest.slice(0, 16) + "…"
+    : state.digestError
+      ? "недоступен"
+      : "вычисляется…";
+  updateSharedDiagnostics();
 }
 
 function renderDocumentState(state, { fit = false } = {}) {
   state.options = selectedDocumentOptions();
   state.layout = core.layoutDocument2D(state.network, state.options);
-  ui.documentViewport.innerHTML = core.serializeDocument2DSvg(
-    state.network,
-    state.layout,
-  );
+  state.svgText = core.serializeDocument2DSvg(state.network, state.layout);
+  state.outputDigest = null;
+  state.digestError = null;
+  state.digestGeneration += 1;
+  const digestGeneration = state.digestGeneration;
+  ui.documentViewport.innerHTML = state.svgText;
 
   const svg = ui.documentViewport.querySelector("svg");
   if (!svg) throw new Error("Document 2D renderer не создал SVG");
@@ -2340,6 +2542,19 @@ function renderDocumentState(state, { fit = false } = {}) {
   updateDocumentDiagnostics(state);
   if (fit || !state.viewport) fitDocumentState(state);
   else applyDocumentViewport(state);
+
+  sha256Text(state.svgText).then((digest) => {
+    if (document2dState !== state || state.digestGeneration !== digestGeneration) return;
+    state.outputDigest = digest;
+    state.digestError = null;
+    updateDocumentDiagnostics(state);
+  }).catch((error) => {
+    if (document2dState !== state || state.digestGeneration !== digestGeneration) return;
+    state.outputDigest = null;
+    state.digestError = error;
+    updateDocumentDiagnostics(state);
+    log(`ОШИБКА SHA-256 Document SVG — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
 }
 
 function documentPointerPoint(event) {
@@ -2350,25 +2565,68 @@ function documentPointerPoint(event) {
   };
 }
 
+function documentSvgFilename(state) {
+  return `mts-visual-document-${state.scene.id}-${state.layout.profile}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
+}
+
 function downloadDocumentSvg() {
-  if (!document2dState?.layout) return;
-  const text = core.serializeDocument2DSvg(
-    document2dState.network,
-    document2dState.layout,
+  if (!document2dState?.layout || !document2dState.svgText) return;
+  downloadTextFile(
+    document2dState.svgText,
+    documentSvgFilename(document2dState),
+    "image/svg+xml;charset=utf-8",
   );
-  const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download =
-    `mts-visual-document-${document2dState.scene.id}-${document2dState.layout.profile}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
 
   log(
     `Document SVG сохранён: сцена=${document2dState.scene.label}, профиль=${document2dState.layout.profile}, seed=${document2dState.layout.metrics.seedStrategy}, качество=${document2dState.layout.metrics.qualityAfter.score}`,
+  );
+}
+
+async function documentBrowserManifest(state) {
+  if (!state.layout || !state.svgText) {
+    throw new Error("Document 2D ещё не отрендерен");
+  }
+  const inputText = sceneInputManifestText(state.scene);
+  const inputDigest = await sha256Text(inputText);
+  const outputDigest = state.outputDigest ?? await sha256Text(state.svgText);
+  state.outputDigest = outputDigest;
+  state.digestError = null;
+  updateDocumentDiagnostics(state);
+
+  return core.createDocument2DRenderManifest({
+    inputPath: `browser:${state.scene.id}.json`,
+    inputDigest,
+    ...(state.scene.sourceRepository === undefined
+      ? {}
+      : { sourceRepository: state.scene.sourceRepository }),
+    ...(state.scene.sourceSha === undefined
+      ? {}
+      : { sourceSha: state.scene.sourceSha }),
+    rendererVersion: String(buildInfo.version),
+    rendererSha: String(buildInfo.mainSha),
+    profile: state.layout.profile,
+    layoutOptions: {
+      strategy: state.options.strategy,
+      rootKey: state.options.rootKey ?? null,
+    },
+    seedStrategy: state.layout.metrics.seedStrategy,
+    quality: state.layout.metrics.qualityAfter,
+    outputPath: `browser:${documentSvgFilename(state)}`,
+    outputDigest,
+  });
+}
+
+async function downloadDocumentManifest() {
+  if (!document2dState) return;
+  const manifest = await documentBrowserManifest(document2dState);
+  const text = JSON.stringify(manifest, null, 2) + "\n";
+  downloadTextFile(
+    text,
+    documentSvgFilename(document2dState).replace(/\.svg$/, ".manifest.json"),
+    "application/json;charset=utf-8",
+  );
+  log(
+    `Document manifest сохранён: outputDigest=${manifest.outputDigest}, renderer=${manifest.rendererSha.slice(0, 12)}`,
   );
 }
 
@@ -2383,6 +2641,10 @@ function mountDocument2D() {
     network: scene.network,
     options: null,
     layout: null,
+    svgText: null,
+    outputDigest: null,
+    digestError: null,
+    digestGeneration: 0,
     viewport: null,
     pointerId: null,
     panPointer: null,
@@ -2394,6 +2656,9 @@ function mountDocument2D() {
   const signal = abortController.signal;
   ui.documentViewport.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
+    const linkGroup = event.target.closest?.('[data-role="document-link"]');
+    const key = linkGroup?.getAttribute("data-link-key");
+    if (key) setSelectedVisualKey(key);
     state.pointerId = event.pointerId;
     state.panPointer = { x: event.clientX, y: event.clientY };
     ui.documentViewport.setPointerCapture?.(event.pointerId);
@@ -2485,6 +2750,7 @@ function updateClassicDiagnostics(state) {
     `${state.controller.model.springs.length} / ${chargePairs}`;
   ui.classicMaxVelocity.textContent = fmt(snapshot.maxVelocity);
   ui.classicPinned.textContent = String(snapshot.pinnedKeys.length);
+  updateSharedDiagnostics();
 }
 
 function applyClassicPhysicsControls() {
@@ -2528,6 +2794,7 @@ function mountClassic3D() {
       samples: 18,
       nodeRadius: 0.13,
       onActivateKey: (key) => {
+        setSelectedVisualKey(key);
         log(`Classic 3D: выбрана связь ${key}`);
       },
     },
@@ -2616,6 +2883,7 @@ const labLifecycle = core.createVisualLabLifecycle({
   mount: mountLabMode,
   onStateChange: ({ state, modeId, error }) => {
     const definition = modeId ? labModeUi(modeId) : null;
+    if (modeId) currentLabModeId = modeId;
     if (state === "mounting") {
       ui.modeStatus.textContent = `${definition?.label ?? modeId} · переключение…`;
       ui.modeHeading.textContent = definition?.label ?? modeId;
@@ -2630,6 +2898,7 @@ const labLifecycle = core.createVisualLabLifecycle({
     } else if (state === "disposed") {
       ui.modeStatus.textContent = "renderer освобождён";
     }
+    updateSharedDiagnostics();
   },
 });
 
@@ -2705,6 +2974,14 @@ ui.labInputCopy.addEventListener("click", () => {
   });
 });
 
+ui.labCopyDiagnostics.addEventListener("click", () => {
+  copyText(sharedDiagnosticText()).then(() => {
+    ui.modeStatus.textContent = `${labModeUi(currentLabModeId)?.label ?? currentLabModeId} · диагностика скопирована`;
+  }).catch((error) => {
+    log(`ОШИБКА копирования общей диагностики — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
+});
+
 ui.copyLog.addEventListener("click", () => {
   copyDiagnosticLog().catch((error) => {
     log(`ОШИБКА копирования диагностического журнала — ${error.stack ?? error}`);
@@ -2732,6 +3009,8 @@ ui.rerun.addEventListener("click", () => {
 
 ui.scene.addEventListener("change", () => {
   syncLabInputPanel();
+  reconcileSelectedVisualKey();
+  updateSharedDiagnostics();
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
   if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "document-2d" || activeMode === "classic-3d") {
@@ -2834,6 +3113,13 @@ ui.documentReset.addEventListener("click", () => {
 
 ui.documentExport.addEventListener("click", () => {
   downloadDocumentSvg();
+});
+
+ui.documentManifest.addEventListener("click", () => {
+  downloadDocumentManifest().catch((error) => {
+    ui.documentDigest.textContent = "ошибка";
+    log(`ОШИБКА экспорта Document manifest — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
 });
 
 for (const control of [
