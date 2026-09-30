@@ -1,8 +1,7 @@
 import {
-  VISUAL_LAB_MODE_DEFINITIONS,
+  VISUAL_LAB_MODE_IDS,
   assertVisualLabModeId,
   createVisualLabLifecycle,
-  visualLabModeDefinition,
 } from "../src/lab-lifecycle.js";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -10,12 +9,10 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 assert(
-  VISUAL_LAB_MODE_DEFINITIONS.map((mode) => mode.id).join(",")
+  VISUAL_LAB_MODE_IDS.join(",")
     === "structural-2d,blueprint-2d,document-2d,classic-3d,mechanical-3d",
   "primary mode order must remain stable",
 );
-assert(visualLabModeDefinition("classic-3d")?.issue === 128, "Classic 3D issue binding");
-assert(visualLabModeDefinition("mechanical-3d")?.ready === true, "Mechanical 3D ready baseline");
 
 let unknownRejected = false;
 try {
@@ -57,3 +54,27 @@ const expected = [
   "state:disposed:-",
 ];
 assert(events.join("|") === expected.join("|"), "dispose-before-mount ordering");
+
+let failOnce = true;
+const recovery = createVisualLabLifecycle<void>({
+  mount: async (modeId) => {
+    if (modeId === "document-2d" && failOnce) {
+      failOnce = false;
+      throw new Error("synthetic mount failure");
+    }
+    return () => {};
+  },
+});
+
+let mountRejected = false;
+try {
+  await recovery.activate("document-2d", undefined);
+} catch {
+  mountRejected = true;
+}
+assert(mountRejected, "failed mount must reject its activation");
+await recovery.activate("structural-2d", undefined);
+assert(
+  recovery.snapshot().activeMode === "structural-2d",
+  "later activation must recover after a failed mount",
+);
