@@ -159,6 +159,7 @@ function baseEvidence({
     compactTopologyBytes: null,
     renderRequested: Boolean(config.renderEnabled),
     renderEnabled,
+    resourceIsolation: "separate-device",
     timingSource: webgpu.MONOLITHIC_WEBGPU_BENCHMARK_TIMING_SOURCE,
     timestampQuerySupported:
       adapter?.features?.has?.("timestamp-query") === true,
