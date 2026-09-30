@@ -2188,6 +2188,7 @@ function mountStructural2D() {
     pointerId: null,
     panPointer: null,
     abortController,
+    resourceRegistered: false,
   };
   structuralState = state;
   renderStructuralState(state, { fit: true });
@@ -2236,12 +2237,19 @@ function mountStructural2D() {
     event.preventDefault();
   }, { passive: false, signal });
 
+  addLabResource("activeAbortScopes");
+  state.resourceRegistered = true;
+
   log(
     `Structural 2D запущен: сцена=${scene.label}, SCC=${state.layout.components.length}, пересечения=${state.layout.metrics.crossingsBefore}→${state.layout.metrics.crossingsAfter}`,
   );
 
   return () => {
     abortController.abort();
+    if (state.resourceRegistered) {
+      removeLabResource("activeAbortScopes");
+      state.resourceRegistered = false;
+    }
     ui.structuralViewport.classList.remove("dragging");
     ui.structuralViewport.replaceChildren();
     if (structuralState === state) structuralState = null;
@@ -2381,6 +2389,7 @@ function mountBlueprint() {
     panPointer: null,
     pointerId: null,
     abortController,
+    resourceRegistered: false,
   };
   blueprintState = state;
   refreshBlueprintControlLabels();
@@ -2454,10 +2463,17 @@ function mountBlueprint() {
     event.preventDefault();
   }, { passive: false, signal });
 
+  addLabResource("activeAbortScopes");
+  state.resourceRegistered = true;
+
   log(`Blueprint 2D запущен: сцена=${scene.label}, связей=${scene.network.links.length}`);
 
   return () => {
     abortController.abort();
+    if (state.resourceRegistered) {
+      removeLabResource("activeAbortScopes");
+      state.resourceRegistered = false;
+    }
     ui.blueprintViewport.classList.remove("dragging");
     ui.blueprintViewport.replaceChildren();
     if (blueprintState === state) blueprintState = null;
@@ -2677,6 +2693,7 @@ function mountDocument2D() {
     pointerId: null,
     panPointer: null,
     abortController,
+    resourceRegistered: false,
   };
   document2dState = state;
   renderDocumentState(state, { fit: true });
@@ -2725,12 +2742,19 @@ function mountDocument2D() {
     event.preventDefault();
   }, { passive: false, signal });
 
+  addLabResource("activeAbortScopes");
+  state.resourceRegistered = true;
+
   log(
     `Document 2D запущен: сцена=${scene.label}, профиль=${state.layout.profile}, seed=${state.layout.metrics.seedStrategy}, пересечения=${state.layout.metrics.qualityBefore.crossings}→${state.layout.metrics.qualityAfter.crossings}`,
   );
 
   return () => {
     abortController.abort();
+    if (state.resourceRegistered) {
+      removeLabResource("activeAbortScopes");
+      state.resourceRegistered = false;
+    }
     ui.documentViewport.classList.remove("dragging");
     ui.documentViewport.replaceChildren();
     if (document2dState === state) document2dState = null;
@@ -2809,6 +2833,7 @@ function mountClassic3D() {
     options,
     paused: false,
     diagnosticsTimer: null,
+    resourceRegistered: false,
   };
   classicState = state;
   refreshClassicControlLabels();
@@ -2827,6 +2852,9 @@ function mountClassic3D() {
       },
     },
   );
+  addLabResource("activeClassicRenderers");
+  addLabResource("activeRafOwners");
+  state.resourceRegistered = true;
   state.diagnosticsTimer = window.setInterval(() => {
     if (classicState === state) updateClassicDiagnostics(state);
   }, 200);
@@ -2838,7 +2866,15 @@ function mountClassic3D() {
 
   return () => {
     if (state.diagnosticsTimer !== null) window.clearInterval(state.diagnosticsTimer);
-    threeVisual.destroyVisualThreeRenderer(ui.classicViewport);
+    try {
+      threeVisual.destroyVisualThreeRenderer(ui.classicViewport);
+    } finally {
+      if (state.resourceRegistered) {
+        removeLabResource("activeClassicRenderers");
+        removeLabResource("activeRafOwners");
+        state.resourceRegistered = false;
+      }
+    }
     ui.classicViewport.replaceChildren();
     if (classicState === state) classicState = null;
   };
