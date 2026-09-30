@@ -78,3 +78,61 @@ assert(
   recovery.snapshot().activeMode === "structural-2d",
   "later activation must recover after a failed mount",
 );
+
+
+const cycleEvents: string[] = [];
+let activeMounts = 0;
+let maximumActiveMounts = 0;
+const mountCounts = new Map<string, number>();
+const disposeCounts = new Map<string, number>();
+
+const cycleLifecycle = createVisualLabLifecycle<void>({
+  mount: async (modeId) => {
+    activeMounts += 1;
+    maximumActiveMounts = Math.max(maximumActiveMounts, activeMounts);
+    mountCounts.set(modeId, (mountCounts.get(modeId) ?? 0) + 1);
+    cycleEvents.push(`mount:${modeId}`);
+    return () => {
+      activeMounts -= 1;
+      disposeCounts.set(modeId, (disposeCounts.get(modeId) ?? 0) + 1);
+      cycleEvents.push(`dispose:${modeId}`);
+    };
+  },
+});
+
+const fullCycle = [
+  "structural-2d",
+  "blueprint-2d",
+  "document-2d",
+  "classic-3d",
+  "mechanical-3d",
+  "classic-3d",
+  "document-2d",
+  "blueprint-2d",
+  "structural-2d",
+] as const;
+
+for (let iteration = 0; iteration < 3; iteration += 1) {
+  for (const modeId of fullCycle) {
+    await cycleLifecycle.activate(modeId, undefined);
+    assert(cycleLifecycle.snapshot().activeMode === modeId, `cycle active mode ${modeId}`);
+    assert(activeMounts === 1, `exactly one active renderer after ${modeId}`);
+  }
+}
+await cycleLifecycle.dispose();
+
+assert(maximumActiveMounts === 1, "mode cycling never overlaps mounted renderers");
+assert(activeMounts === 0, "final lifecycle dispose releases the active renderer");
+
+const totalMounts = [...mountCounts.values()].reduce((sum, value) => sum + value, 0);
+const totalDisposes = [...disposeCounts.values()].reduce((sum, value) => sum + value, 0);
+assert(totalMounts === fullCycle.length * 3, "all requested mode mounts executed");
+assert(totalDisposes === totalMounts, "every mounted renderer was disposed exactly once");
+
+for (let index = 1; index < cycleEvents.length; index += 1) {
+  if (!cycleEvents[index]!.startsWith("mount:")) continue;
+  assert(
+    cycleEvents[index - 1]!.startsWith("dispose:"),
+    `mount at event ${index} must be immediately preceded by disposal`,
+  );
+}
