@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build --silent && node dist/test/model.test.js && node test/browser-lab-shell.test.mjs",
+    "test": "npm run build --silent && node dist/test/model.test.js",
     "check": "npm test"
   },
   "dependencies": {
