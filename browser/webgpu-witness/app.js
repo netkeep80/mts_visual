@@ -223,6 +223,17 @@ for (const exportName of [
   }
 }
 
+for (const exportName of [
+  "createVisualThreeLiveRenderer",
+  "destroyVisualThreeRenderer",
+  "fitVisualThreeRenderer",
+  "setVisualThreeLivePaused",
+]) {
+  if (typeof threeVisual[exportName] !== "function") {
+    throw new Error(`опубликованный Three-пакет не содержит экспорт: ${exportName}`);
+  }
+}
+
 /**
  * Compatibility witness retained while the public bundle still exports the
  * legacy v0.4 renderer. The live laboratory below no longer uses this path.
@@ -798,6 +809,23 @@ async function runDifferentials() {
   updateOverall();
 }
 
+function classicSeparationNetwork() {
+  return {
+    links: [
+      { key: "R", startKey: "R", endKey: "R" },
+      { key: "O", startKey: "O", endKey: "R" },
+      { key: "C", startKey: "R", endKey: "C" },
+      { key: "L", startKey: "O", endKey: "C" },
+      { key: "U", startKey: "C", endKey: "O" },
+      { key: "A", startKey: "L", endKey: "U" },
+      { key: "B", startKey: "L", endKey: "A" },
+      { key: "D", startKey: "B", endKey: "U" },
+      { key: "E", startKey: "A", endKey: "D" },
+      { key: "F", startKey: "B", endKey: "E" },
+    ],
+  };
+}
+
 function selectedScene() {
   switch (ui.scene.value) {
     case "root-r": return Object.freeze({ id: "root-r", label: "только R", network: rootBasisNetwork(1) });
@@ -805,6 +833,7 @@ function selectedScene() {
     case "root-roc": return Object.freeze({ id: "root-roc", label: "R + O + C", network: rootBasisNetwork(3) });
     case "root-rocl": return Object.freeze({ id: "root-rocl", label: "R + O + C + L", network: rootBasisNetwork(4) });
     case "root-roclu": return Object.freeze({ id: "root-roclu", label: "R + O + C + L + U", network: rootBasisNetwork(5) });
+    case "classic-separation": return Object.freeze({ id: "classic-separation", label: "Classic · разведение похожих связей", network: classicSeparationNetwork() });
     case "hub-64": return Object.freeze({ id: "hub-64", label: "нагрузка 64", network: hubHeavyNetwork(64) });
     case "hub-333": return Object.freeze({ id: "hub-333", label: "нагрузка 333", network: hubHeavyNetwork(333) });
     case "hub-1000": return Object.freeze({ id: "hub-1000", label: "нагрузка 1000", network: hubHeavyNetwork(1000) });
