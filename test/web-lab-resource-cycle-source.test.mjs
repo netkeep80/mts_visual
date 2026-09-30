@@ -103,7 +103,7 @@ assert(
   "Mechanical actual renderer state must be checked",
 );
 assert(
-  app.includes("labResourceLedger.webgpuConfigured === 0"),
+  app.includes("audit.ledger.webgpuConfigured === 0"),
   "leaving Mechanical must assert configured-WebGPU ownership is zero",
 );
 assert(
