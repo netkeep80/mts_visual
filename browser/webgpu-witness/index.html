@@ -31,6 +31,12 @@
     .lab-mode-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:12px 0; padding:10px; background:#0d1521; border:1px solid #25334a; border-radius:10px; }
     .lab-mode-bar label { color:#9fb1c9; }
     .lab-mode-status { margin-left:auto; font-size:12px; color:#98a7bd; }
+    .lab-input-panel { margin:-4px 0 12px; padding:10px; background:#0d1521; border:1px solid #25334a; border-radius:10px; }
+    .lab-input-panel summary { cursor:pointer; color:#cbd7e8; font-weight:600; }
+    .lab-input-grid { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; margin-top:10px; align-items:start; }
+    .lab-input-grid textarea { width:100%; min-height:130px; resize:vertical; box-sizing:border-box; background:#070b11; color:#e9eef7; border:1px solid #395070; border-radius:8px; padding:10px; font:12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .lab-input-actions { display:grid; gap:8px; min-width:170px; }
+    .lab-input-status { display:block; margin-top:8px; font-size:12px; color:#98a7bd; }
     .live-lab { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
     .live-lab.placeholder-mode { grid-template-columns: minmax(0, 1fr); }
     .mode-placeholder { height:100%; min-height:320px; display:grid; place-items:center; text-align:center; padding:32px; color:#98a7bd; background:radial-gradient(circle at 50% 40%, #172338 0, #090d14 60%); }
@@ -149,17 +155,7 @@
 
     <div class="lab-mode-bar" aria-label="Общие параметры лаборатории">
       <label for="scene">Асеть</label>
-      <select id="scene">
-        <option value="root-r" selected>1 · только R</option>
-        <option value="root-ro">2 · R + O</option>
-        <option value="root-roc">3 · R + O + C</option>
-        <option value="root-rocl">4 · R + O + C + L</option>
-        <option value="root-roclu">5 · R + O + C + L + U</option>
-        <option value="classic-separation">Classic · разведение похожих связей</option>
-        <option value="hub-64">нагрузка · 64 связи</option>
-        <option value="hub-333">нагрузка · 333 связи</option>
-        <option value="hub-1000">нагрузка · 1 000 связей</option>
-      </select>
+      <select id="scene" aria-label="Общий fixture / импортированная асеть"></select>
       <label for="visualization-mode">Режим</label>
       <select id="visualization-mode">
         <option value="structural-2d">Структурный 2D</option>
@@ -170,6 +166,20 @@
       </select>
       <span id="mode-status" class="lab-mode-status" role="status" aria-live="polite">Механический 3D · готов</span>
     </div>
+
+    <details class="lab-input-panel">
+      <summary>Ввод / JSON manifest</summary>
+      <div class="lab-input-grid">
+        <textarea id="lab-input-json" spellcheck="false" aria-label="JSON manifest асети" placeholder='{"schema":"mts-visual-document-input/v1","links":[...]}'></textarea>
+        <div class="lab-input-actions">
+          <button id="lab-input-apply" type="button">Применить JSON</button>
+          <button id="lab-input-file-button" type="button">Загрузить файл</button>
+          <button id="lab-input-copy" type="button">Скопировать текущий JSON</button>
+          <input id="lab-input-file" type="file" accept=".json,application/json" hidden>
+        </div>
+      </div>
+      <span id="lab-input-status" class="lab-input-status" role="status" aria-live="polite">Используется встроенный fixture.</span>
+    </details>
 
     <div id="live-lab" class="live-lab">
       <aside id="mechanical-controls" class="control-sidebar" aria-label="Параметры механического 3D">
