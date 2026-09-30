@@ -35,7 +35,9 @@
     .live-lab.placeholder-mode { grid-template-columns: minmax(0, 1fr); }
     .mode-placeholder { height:100%; min-height:320px; display:grid; place-items:center; text-align:center; padding:32px; color:#98a7bd; background:radial-gradient(circle at 50% 40%, #172338 0, #090d14 60%); }
     .mode-placeholder strong { display:block; color:#e9eef7; font-size:20px; margin-bottom:8px; }
-    .blueprint-viewport { width:100%; height:100%; background:#070b11; overflow:hidden; touch-action:none; user-select:none; cursor:grab; }
+    .blueprint-viewport, .classic-viewport { width:100%; height:100%; background:#070b11; overflow:hidden; touch-action:none; user-select:none; }
+    .blueprint-viewport { cursor:grab; }
+    .classic-viewport { position:relative; }
     .blueprint-viewport.dragging { cursor:grabbing; }
     .blueprint-viewport svg { width:100%; height:100%; display:block; }
     .blueprint-viewport [data-role="blueprint-link-path"] { stroke-width:2; vector-effect:non-scaling-stroke; }
@@ -142,6 +144,7 @@
         <option value="root-roc">3 · R + O + C</option>
         <option value="root-rocl">4 · R + O + C + L</option>
         <option value="root-roclu">5 · R + O + C + L + U</option>
+        <option value="classic-separation">Classic · разведение похожих связей</option>
         <option value="hub-64">нагрузка · 64 связи</option>
         <option value="hub-333">нагрузка · 333 связи</option>
         <option value="hub-1000">нагрузка · 1 000 связей</option>
@@ -300,13 +303,58 @@
         </div>
       </aside>
 
+      <aside id="classic-controls" class="control-sidebar" aria-label="Параметры классического 3D" hidden>
+        <div class="physics-control">
+          <label for="classic-charge"><span>Отталкивание центров</span><output id="classic-charge-value">1.00</output></label>
+          <input id="classic-charge" type="range" min="0" max="3" step="0.05" value="1">
+        </div>
+        <div class="physics-control">
+          <label for="classic-rest-length"><span>Длина покоя</span><output id="classic-rest-length-value">2.00</output></label>
+          <input id="classic-rest-length" type="range" min="0.25" max="8" step="0.05" value="2">
+        </div>
+        <div class="physics-control">
+          <label for="classic-stiffness"><span>Жёсткость пружин</span><output id="classic-stiffness-value">0.055</output></label>
+          <input id="classic-stiffness" type="range" min="0" max="0.30" step="0.005" value="0.055">
+        </div>
+        <div class="physics-control">
+          <label for="classic-damping"><span>Затухание</span><output id="classic-damping-value">0.86</output></label>
+          <input id="classic-damping" type="range" min="0.50" max="0.99" step="0.01" value="0.86">
+        </div>
+        <div class="physics-control">
+          <label for="classic-time-step"><span>Шаг времени</span><output id="classic-time-step-value">0.20</output></label>
+          <input id="classic-time-step" type="range" min="0.02" max="0.50" step="0.01" value="0.20">
+        </div>
+        <div class="physics-control">
+          <div class="inline-checks">
+            <label><input id="classic-labels" type="checkbox" checked> Подписи связей</label>
+          </div>
+        </div>
+        <div class="control-actions">
+          <button id="classic-pause" type="button">Пауза</button>
+          <button id="classic-reset" type="button">Сбросить</button>
+          <button id="classic-fit" type="button">Вписать</button>
+          <button id="classic-fullscreen" type="button">На весь экран</button>
+        </div>
+        <div class="physics-control">
+          <div class="muted">Особенность режима</div>
+          <div class="camera-hint">Центры всех связей взаимно отталкиваются, поэтому близкие и похожие связи визуально разводятся в пространстве.</div>
+        </div>
+      </aside>
+
       <div class="viewport-column">
         <div id="viewport-shell" class="viewport-shell">
           <div id="mode-placeholder" class="mode-placeholder" hidden></div>
           <div id="blueprint-viewport" class="blueprint-viewport" role="application" aria-label="Интерактивная Blueprint 2D визуализация асети" hidden></div>
+          <div id="classic-viewport" class="classic-viewport" role="application" aria-label="Классический 3D: отталкивание центров и пружины" hidden></div>
           <canvas id="gpu-canvas"></canvas>
         </div>
         <div id="mechanical-camera-hint" class="camera-hint">Мышь: наведите на два центральных октаэдра, чтобы показать зелёный каркасный икосаэдр L2 · перетаскивание ЛКМ за маркер = перемещение семантического CENTER · ЛКМ в другом месте = вращение камеры · колесо = масштаб · ПКМ или Shift+ЛКМ = панорамирование</div>
+        <div id="classic-render-diagnostics" class="grid" style="margin-top:12px" hidden>
+          <div><span class="muted">Шаг / состояние</span><div id="classic-tick" class="value">0</div></div>
+          <div><span class="muted">Пружины / пары заряда</span><div id="classic-evaluations" class="value">0 / 0</div></div>
+          <div><span class="muted">Макс. скорость</span><div id="classic-max-velocity" class="value">0</div></div>
+          <div><span class="muted">Закреплено</span><div id="classic-pinned" class="value">0</div></div>
+        </div>
         <div id="mechanical-render-diagnostics" class="grid" style="margin-top:12px">
           <div><span class="muted">Вычисление</span><div id="render-compute" class="value">ожидание</div></div>
           <div><span class="muted">Топология</span><div id="render-topology" class="value">ожидание</div></div>
