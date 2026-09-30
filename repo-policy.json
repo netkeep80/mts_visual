@@ -24,7 +24,7 @@
         "role": "repo_guard_pr_gate",
         "expect": {
           "events": ["pull_request"],
-          "event_types": ["opened", "synchronize", "reopened", "ready_for_review"],
+          "event_types": ["opened", "edited", "synchronize", "reopened", "ready_for_review"],
           "action": {
             "uses": "netkeep80/repo-guard",
             "ref": "921582f085b0dffab22d847889893cda70fc3f2b",
