@@ -24,20 +24,34 @@ const GPU_BUFFER_USAGE = Object.freeze({
 });
 const GPU_SHADER_STAGE_COMPUTE = 0x0004;
 
+export type MonolithicLinkWebGpuDetailSelectionMode3D =
+  | "manual"
+  | "gpu-partition";
+
 export interface MonolithicLinkWebGpuShapeStepStats3D {
   readonly compactDispatches: number;
+  readonly selectorDispatches: number;
   readonly detailDispatches: number;
   readonly dispatches: number;
   readonly computePasses: number;
   readonly detailedLinkCount: number;
+  readonly selectionMode: MonolithicLinkWebGpuDetailSelectionMode3D;
   readonly dynamicStateUploadBytes: 0;
 }
 
 export interface MonolithicLinkWebGpuShapeDetailUpdateStats3D {
   readonly detailedLinkCount: number;
   readonly detailCapacity: number;
+  readonly selectionMode: MonolithicLinkWebGpuDetailSelectionMode3D;
   readonly indexUploadBytes: number;
   readonly globalsUploadBytes: number;
+  readonly selectionControlUploadBytes: number;
+}
+
+export interface MonolithicLinkWebGpuDetailSelectionView3D {
+  readonly viewProjection: readonly number[] | Float32Array;
+  readonly selectedLink?: number | null;
+  readonly frustumMargin?: number;
 }
 
 export interface MonolithicLinkWebGpuShapeSnapshot3D {
@@ -52,6 +66,8 @@ export interface MonolithicLinkWebGpuShapeSnapshot3D {
   readonly detailLinkIndexBytes: number;
   readonly sectionFrameBytes: number;
   readonly topologyBytes: number;
+  readonly selectionMode: MonolithicLinkWebGpuDetailSelectionMode3D;
+  readonly selectionControlBytes: number;
   readonly compactDynamicStateBytes: number;
   readonly detailDynamicStateBytes: number;
   readonly dynamicStateBytes: number;
@@ -69,8 +85,12 @@ export interface MonolithicLinkWebGpuShape3D {
   readonly gaugeBuffer: WebGpuBufferLike;
   readonly detailLinkIndexBuffer: WebGpuBufferLike;
   readonly sectionFrameBuffer: WebGpuBufferLike;
+  readonly detailSelectionControlBuffer: WebGpuBufferLike;
   setDetailLinkIndices(
     indices: readonly number[],
+  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D;
+  setGpuDetailSelectionView(
+    view: MonolithicLinkWebGpuDetailSelectionView3D,
   ): MonolithicLinkWebGpuShapeDetailUpdateStats3D;
   update(): MonolithicLinkWebGpuShapeStepStats3D;
   snapshot(): MonolithicLinkWebGpuShapeSnapshot3D;
@@ -83,6 +103,12 @@ struct ShapeGlobals {
   geometry: vec4<f32>,
 };
 
+struct DetailSelectionGlobals {
+  view_projection: mat4x4<f32>,
+  counts: vec4<u32>,
+  options: vec4<f32>,
+};
+
 struct AxisFrame {
   x: vec3<f32>,
   y: vec3<f32>,
@@ -93,9 +119,10 @@ struct AxisFrame {
 @group(0) @binding(1) var<storage, read> topology_data: array<u32>;
 @group(0) @binding(2) var<storage, read_write> shape_parameters: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> roll_gauge: array<vec4<f32>>;
-@group(0) @binding(4) var<storage, read> detail_link_indices: array<u32>;
+@group(0) @binding(4) var<storage, read_write> detail_link_indices: array<u32>;
 @group(0) @binding(5) var<storage, read_write> section_frames: array<vec4<f32>>;
 @group(0) @binding(6) var<uniform> globals: ShapeGlobals;
+@group(0) @binding(7) var<uniform> detail_selection: DetailSelectionGlobals;
 
 fn safe_normalize(value: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
   let n = length(value);
@@ -639,6 +666,102 @@ fn shape_parameter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     first_self_value,
     second_self_value,
   );
+}
+
+fn detail_candidate_better(
+  candidate_visible: bool,
+  candidate_radius: f32,
+  candidate_depth: f32,
+  candidate_link: u32,
+  best_visible: bool,
+  best_radius: f32,
+  best_depth: f32,
+  best_link: u32,
+) -> bool {
+  if (candidate_visible != best_visible) {
+    return candidate_visible;
+  }
+  if (candidate_radius != best_radius) {
+    return candidate_radius < best_radius;
+  }
+  if (candidate_depth != best_depth) {
+    return candidate_depth < best_depth;
+  }
+  return candidate_link < best_link;
+}
+
+@compute @workgroup_size(64)
+fn shape_detail_select_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let slot = gid.x + gid.y * 65535u * 64u;
+  let link_count = detail_selection.counts.x;
+  let detail_count = detail_selection.counts.y;
+  if (slot >= detail_count || detail_count == 0u) {
+    return;
+  }
+
+  let selected_link = detail_selection.counts.z;
+  if (
+    selected_link < link_count
+    && selected_link % detail_count == slot
+  ) {
+    detail_link_indices[slot] = selected_link;
+    return;
+  }
+
+  let margin = detail_selection.options.x;
+  var best_link = slot;
+  var best_visible = false;
+  var best_radius = 1e30;
+  var best_depth = 1e30;
+
+  var candidate = slot;
+  loop {
+    if (candidate >= link_count) {
+      break;
+    }
+
+    let center = semantic_centers[candidate].xyz;
+    let clip = detail_selection.view_projection
+      * vec4<f32>(center, 1.0);
+
+    var visible = false;
+    var radius = 1e30;
+    var depth = 1e30;
+    if (clip.w > 1e-6) {
+      let ndc = clip.xyz / clip.w;
+      visible =
+        abs(ndc.x) <= 1.0 + margin
+        && abs(ndc.y) <= 1.0 + margin
+        && ndc.z >= -1.0 - margin
+        && ndc.z <= 1.0 + margin;
+      if (visible) {
+        radius = dot(ndc.xy, ndc.xy);
+        depth = clip.w;
+      }
+    }
+
+    if (
+      detail_candidate_better(
+        visible,
+        radius,
+        depth,
+        candidate,
+        best_visible,
+        best_radius,
+        best_depth,
+        best_link,
+      )
+    ) {
+      best_link = candidate;
+      best_visible = visible;
+      best_radius = radius;
+      best_depth = depth;
+    }
+
+    candidate = candidate + detail_count;
+  }
+
+  detail_link_indices[slot] = best_link;
 }
 
 @compute @workgroup_size(64)
