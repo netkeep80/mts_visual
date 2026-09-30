@@ -171,6 +171,7 @@ function baseEvidence({
     sampleCountCompleted: 0,
     stoppedEarly: false,
     initializationMs: {
+      deviceCreation: null,
       topologyGeneration: null,
       computeCreation: null,
       shapeCreation: null,
