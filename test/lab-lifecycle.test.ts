@@ -39,11 +39,11 @@ const lifecycle = createVisualLabLifecycle<void>({
 });
 
 await lifecycle.activate("mechanical-3d", undefined);
-assert(lifecycle.activeMode === "mechanical-3d", "mechanical activation");
+assert(lifecycle.snapshot().activeMode === "mechanical-3d", "mechanical activation");
 await lifecycle.activate("classic-3d", undefined);
-assert(lifecycle.activeMode === "classic-3d", "classic activation");
+assert(lifecycle.snapshot().activeMode === "classic-3d", "classic activation");
 await lifecycle.dispose();
-assert(lifecycle.activeMode === null, "dispose clears active mode");
+assert(lifecycle.snapshot().activeMode === null, "dispose clears active mode");
 
 const expected = [
   "state:mounting:mechanical-3d",
