@@ -16,6 +16,22 @@ const ui = {
   modeDescription: $("mode-description"),
   liveLab: $("live-lab"),
   mechanicalControls: $("mechanical-controls"),
+  structuralControls: $("structural-controls"),
+  structuralViewport: $("structural-viewport"),
+  structuralRoot: $("structural-root"),
+  structuralSpacing: $("structural-spacing"),
+  structuralSpacingValue: $("structural-spacing-value"),
+  structuralNodeSpacing: $("structural-node-spacing"),
+  structuralNodeSpacingValue: $("structural-node-spacing-value"),
+  structuralOptimize: $("structural-optimize"),
+  structuralFit: $("structural-fit"),
+  structuralReset: $("structural-reset"),
+  structuralExport: $("structural-export"),
+  structuralRenderDiagnostics: $("structural-render-diagnostics"),
+  structuralComponents: $("structural-components"),
+  structuralCrossings: $("structural-crossings"),
+  structuralOptimizer: $("structural-optimizer"),
+  structuralLinkCount: $("structural-link-count"),
   mechanicalCameraHint: $("mechanical-camera-hint"),
   mechanicalRenderDiagnostics: $("mechanical-render-diagnostics"),
   mechanicalGeometryPanel: $("mechanical-geometry-panel"),
@@ -108,7 +124,7 @@ function log(message) {
 }
 
 const LAB_MODE_UI = Object.freeze({
-  "structural-2d": Object.freeze({ label: "Структурный 2D", issue: 126, ready: false, description: "структурная карта асети" }),
+  "structural-2d": Object.freeze({ label: "Структурный 2D", issue: 126, ready: true, description: "SCC + структурные слои · START/END incidence · детерминированная минимизация пересечений" }),
   "blueprint-2d": Object.freeze({ label: "Blueprint 2D", issue: 127, ready: true, description: "цельные связи START → CENTER → END · SVG · drag / pan / zoom" }),
   "document-2d": Object.freeze({ label: "Документный 2D", issue: 123, ready: false, description: "детерминированная публикационная проекция" }),
   "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: true, description: "центры с взаимным отталкиванием + пружины инцидентности" }),
@@ -1726,6 +1742,207 @@ async function inspectGeometry() {
   }
 }
 
+let structuralState = null;
+
+function selectedStructuralOptions() {
+  const rootKey = ui.structuralRoot.value || undefined;
+  return Object.freeze({
+    ...(rootKey === undefined ? {} : { rootKey }),
+    layerSpacing: controlNumber(ui.structuralSpacing, "шаг структурных слоёв", 64, 240),
+    minimumNodeSpacing: controlNumber(ui.structuralNodeSpacing, "минимальное расстояние Structural", 36, 160),
+    optimizeCrossings: ui.structuralOptimize.checked,
+    crossingPasses: 5,
+    crossingEvaluations: 240,
+  });
+}
+
+function refreshStructuralControlLabels() {
+  const options = selectedStructuralOptions();
+  ui.structuralSpacingValue.value = options.layerSpacing.toFixed(0);
+  ui.structuralNodeSpacingValue.value = options.minimumNodeSpacing.toFixed(0);
+}
+
+function refreshStructuralRootOptions(network) {
+  const previous = ui.structuralRoot.value;
+  ui.structuralRoot.replaceChildren();
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "Без явного корня";
+  ui.structuralRoot.appendChild(none);
+  for (const link of [...network.links].sort((left, right) => left.key.localeCompare(right.key))) {
+    const option = document.createElement("option");
+    option.value = link.key;
+    option.textContent = link.key;
+    ui.structuralRoot.appendChild(option);
+  }
+  ui.structuralRoot.value = network.links.some((link) => link.key === previous) ? previous : "";
+}
+
+function structuralViewportSize() {
+  return {
+    width: Math.max(1, ui.structuralViewport.clientWidth),
+    height: Math.max(1, ui.structuralViewport.clientHeight),
+  };
+}
+
+function applyStructuralViewport(state) {
+  const svg = ui.structuralViewport.querySelector("svg");
+  if (!svg || !state.viewport) return;
+  const { width, height } = structuralViewportSize();
+  const { scale, panX, panY } = state.viewport;
+  svg.setAttribute(
+    "viewBox",
+    [
+      -panX / scale,
+      -panY / scale,
+      width / scale,
+      height / scale,
+    ].map((value) => Number(value.toFixed(9))).join(" "),
+  );
+  svg.setAttribute("preserveAspectRatio", "none");
+}
+
+function fitStructuralState(state) {
+  const { width, height } = structuralViewportSize();
+  state.viewport = core.fitBlueprintViewport(
+    state.layout.bounds,
+    width,
+    height,
+    { padding: 30, minScale: 0.05, maxScale: 16 },
+  );
+  applyStructuralViewport(state);
+}
+
+function updateStructuralDiagnostics(state) {
+  const maxDepth = state.layout.positions.reduce(
+    (maximum, position) => Math.max(maximum, position.depth),
+    0,
+  );
+  ui.structuralComponents.textContent =
+    `${state.layout.components.length} / ${maxDepth + 1}`;
+  ui.structuralCrossings.textContent =
+    `${state.layout.metrics.crossingsBefore} → ${state.layout.metrics.crossingsAfter}`;
+  ui.structuralOptimizer.textContent =
+    `${state.layout.metrics.evaluations} проверок · ${state.layout.metrics.passes} проходов`;
+  ui.structuralLinkCount.textContent = String(state.network.links.length);
+}
+
+function renderStructuralState(state, { fit = false } = {}) {
+  state.options = selectedStructuralOptions();
+  state.layout = core.layoutStructural2D(state.network, state.options);
+  ui.structuralViewport.innerHTML = core.serializeStructural2DSvg(
+    state.network,
+    state.layout,
+  );
+  const svg = ui.structuralViewport.querySelector("svg");
+  if (!svg) throw new Error("Structural 2D renderer не создал SVG");
+  svg.setAttribute("aria-label", `Structural 2D: ${state.scene.label}`);
+  updateStructuralDiagnostics(state);
+  if (fit || !state.viewport) fitStructuralState(state);
+  else applyStructuralViewport(state);
+}
+
+function structuralPointerPoint(event) {
+  const rect = ui.structuralViewport.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+}
+
+function downloadStructuralSvg() {
+  if (!structuralState?.layout) return;
+  const text = core.serializeStructural2DSvg(
+    structuralState.network,
+    structuralState.layout,
+  );
+  const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download =
+    `mts-visual-structural-${structuralState.scene.id}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  log(
+    `Structural SVG сохранён: сцена=${structuralState.scene.label}, пересечения=${structuralState.layout.metrics.crossingsAfter}`,
+  );
+}
+
+function mountStructural2D() {
+  const scene = selectedScene();
+  const abortController = new AbortController();
+  refreshStructuralRootOptions(scene.network);
+  refreshStructuralControlLabels();
+
+  const state = {
+    scene,
+    network: scene.network,
+    options: null,
+    layout: null,
+    viewport: null,
+    pointerId: null,
+    panPointer: null,
+    abortController,
+  };
+  structuralState = state;
+  renderStructuralState(state, { fit: true });
+
+  const signal = abortController.signal;
+  ui.structuralViewport.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    state.pointerId = event.pointerId;
+    state.panPointer = { x: event.clientX, y: event.clientY };
+    ui.structuralViewport.setPointerCapture?.(event.pointerId);
+    ui.structuralViewport.classList.add("dragging");
+    event.preventDefault();
+  }, { signal });
+
+  ui.structuralViewport.addEventListener("pointermove", (event) => {
+    if (state.pointerId !== event.pointerId || !state.panPointer) return;
+    const dx = event.clientX - state.panPointer.x;
+    const dy = event.clientY - state.panPointer.y;
+    state.panPointer = { x: event.clientX, y: event.clientY };
+    state.viewport = core.panBlueprintViewport(state.viewport, dx, dy);
+    applyStructuralViewport(state);
+    event.preventDefault();
+  }, { signal });
+
+  const finishPointer = (event) => {
+    if (state.pointerId !== event.pointerId) return;
+    state.pointerId = null;
+    state.panPointer = null;
+    ui.structuralViewport.classList.remove("dragging");
+  };
+  ui.structuralViewport.addEventListener("pointerup", finishPointer, { signal });
+  ui.structuralViewport.addEventListener("pointercancel", finishPointer, { signal });
+
+  ui.structuralViewport.addEventListener("wheel", (event) => {
+    const factor = Math.exp(-event.deltaY * 0.001);
+    state.viewport = core.zoomBlueprintViewport(
+      state.viewport,
+      factor,
+      structuralPointerPoint(event),
+      { minScale: 0.05, maxScale: 24 },
+    );
+    applyStructuralViewport(state);
+    event.preventDefault();
+  }, { passive: false, signal });
+
+  log(
+    `Structural 2D запущен: сцена=${scene.label}, SCC=${state.layout.components.length}, пересечения=${state.layout.metrics.crossingsBefore}→${state.layout.metrics.crossingsAfter}`,
+  );
+
+  return () => {
+    abortController.abort();
+    ui.structuralViewport.classList.remove("dragging");
+    ui.structuralViewport.replaceChildren();
+    if (structuralState === state) structuralState = null;
+  };
+}
+
 let blueprintState = null;
 
 function selectedBlueprintOptions() {
@@ -2058,19 +2275,23 @@ function updateModePlaceholder(modeId) {
 
 async function mountLabMode(modeId) {
   const mechanical = modeId === "mechanical-3d";
+  const structural = modeId === "structural-2d";
   const blueprint = modeId === "blueprint-2d";
   const classic = modeId === "classic-3d";
-  const hasSideControls = mechanical || blueprint || classic;
+  const hasSideControls = mechanical || structural || blueprint || classic;
 
   ui.mechanicalControls.hidden = !mechanical;
+  ui.structuralControls.hidden = !structural;
   ui.blueprintControls.hidden = !blueprint;
   ui.classicControls.hidden = !classic;
   ui.canvas.hidden = !mechanical;
+  ui.structuralViewport.hidden = !structural;
   ui.blueprintViewport.hidden = !blueprint;
   ui.classicViewport.hidden = !classic;
-  ui.modePlaceholder.hidden = mechanical || blueprint || classic;
+  ui.modePlaceholder.hidden = mechanical || structural || blueprint || classic;
   ui.mechanicalCameraHint.hidden = !mechanical;
   ui.mechanicalRenderDiagnostics.hidden = !mechanical;
+  ui.structuralRenderDiagnostics.hidden = !structural;
   ui.classicRenderDiagnostics.hidden = !classic;
   ui.mechanicalGeometryPanel.hidden = !mechanical;
   ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
@@ -2080,6 +2301,7 @@ async function mountLabMode(modeId) {
     return () => stopRender();
   }
 
+  if (structural) return mountStructural2D();
   if (blueprint) return mountBlueprint();
   if (classic) return mountClassic3D();
 
@@ -2161,7 +2383,7 @@ ui.rerun.addEventListener("click", () => {
 ui.scene.addEventListener("change", () => {
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
-  if (activeMode === "blueprint-2d" || activeMode === "classic-3d") {
+  if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "classic-3d") {
     activateLabMode(activeMode).catch((error) => {
       log(`ОШИБКА перезапуска режима ${activeMode} — ${error.stack ?? error}`);
     });
@@ -2178,6 +2400,36 @@ ui.scene.addEventListener("change", () => {
     log(`ОШИБКА перезапуска сцены — ${error.stack ?? error}`);
     updateOverall();
   });
+});
+
+for (const control of [
+  ui.structuralSpacing,
+  ui.structuralNodeSpacing,
+]) {
+  control.addEventListener("input", () => {
+    refreshStructuralControlLabels();
+    if (structuralState) renderStructuralState(structuralState, { fit: true });
+  });
+}
+
+ui.structuralRoot.addEventListener("change", () => {
+  if (structuralState) renderStructuralState(structuralState, { fit: true });
+});
+
+ui.structuralOptimize.addEventListener("change", () => {
+  if (structuralState) renderStructuralState(structuralState, { fit: true });
+});
+
+ui.structuralFit.addEventListener("click", () => {
+  if (structuralState) fitStructuralState(structuralState);
+});
+
+ui.structuralReset.addEventListener("click", () => {
+  if (structuralState) renderStructuralState(structuralState, { fit: true });
+});
+
+ui.structuralExport.addEventListener("click", () => {
+  downloadStructuralSvg();
 });
 
 for (const control of [
@@ -2433,6 +2685,8 @@ document.addEventListener("fullscreenchange", () => {
   if (classicState) {
     requestAnimationFrame(() => threeVisual.fitVisualThreeRenderer(ui.classicViewport));
   }
+  if (structuralState) requestAnimationFrame(() => fitStructuralState(structuralState));
+  if (blueprintState) requestAnimationFrame(() => fitBlueprintState(blueprintState));
 });
 
 try {
