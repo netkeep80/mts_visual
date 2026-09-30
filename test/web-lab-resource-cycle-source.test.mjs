@@ -61,7 +61,8 @@ assert(
   "browser self-test query token must be explicit",
 );
 assert(
-  app.includes('new URLSearchParams(window.location.search).get("selftest")'),
+  app.includes("const startupParams = new URLSearchParams(window.location.search)")
+    && app.includes('startupParams.get("selftest")'),
   "browser self-test must be directly invocable through the page URL",
 );
 assert(
