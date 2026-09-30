@@ -1362,14 +1362,17 @@ function resizeCanvas(canvas) {
 
 function stopRender() {
   if (!renderState) return;
-  cancelAnimationFrame(renderState.raf);
-  try { renderState.renderer.destroy(); } catch {}
-  try { renderState.shape.destroy(); } catch {}
-  try { renderState.compute.destroy(); } catch {}
-  try { renderState.depthTexture?.destroy(); } catch {}
-  try { renderState.cleanupCameraControls?.(); } catch {}
+  const state = renderState;
   renderState = null;
   renderPass = false;
+
+  cancelAnimationFrame(state.raf);
+  try { state.cleanupCameraControls?.(); } catch {}
+  try { state.renderer.destroy(); } catch {}
+  try { state.depthTexture?.destroy(); } catch {}
+  try { state.context.unconfigure?.(); } catch {}
+  try { state.shape.destroy(); } catch {}
+  try { state.compute.destroy(); } catch {}
 }
 
 async function startRender() {
@@ -1404,6 +1407,7 @@ async function startRender() {
 
   let shape = null;
   let renderer = null;
+  let context = null;
   try {
     shape = await webgpu.createMonolithicLinkWebGpuShape3D(
       device,
@@ -1418,7 +1422,7 @@ async function startRender() {
       );
     }
 
-    const context = ui.canvas.getContext("webgpu");
+    context = ui.canvas.getContext("webgpu");
     if (!context) {
       throw new Error("canvas.getContext('webgpu') вернул null");
     }
@@ -1636,6 +1640,7 @@ async function startRender() {
         setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
         log(`ОШИБКА монолитного рендера — ${error.stack ?? error}`);
         updateOverall();
+        stopRender();
         return;
       }
 
@@ -1648,6 +1653,7 @@ async function startRender() {
     );
   } catch (error) {
     try { renderer?.destroy(); } catch {}
+    try { context?.unconfigure?.(); } catch {}
     try { shape?.destroy(); } catch {}
     try { compute.destroy(); } catch {}
     throw error;
@@ -2568,6 +2574,17 @@ function mechanicalModeIsActive() {
   return labLifecycle.activeMode === "mechanical-3d";
 }
 
+function remountMechanical(reason) {
+  if (!mechanicalModeIsActive()) return Promise.resolve();
+  return activateLabMode("mechanical-3d").catch((error) => {
+    renderPass = false;
+    setStatus(ui.renderCompute, UI_STATUS.error, "fail");
+    setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
+    log(`ОШИБКА Mechanical 3D (${reason}) — ${error.stack ?? error}`);
+    updateOverall();
+  });
+}
+
 ui.visualizationMode.addEventListener("change", () => {
   activateLabMode(ui.visualizationMode.value).catch((error) => {
     log(`ОШИБКА активации режима — ${error.stack ?? error}`);
@@ -2612,13 +2629,7 @@ ui.scene.addEventListener("change", () => {
     updateModePlaceholder(activeMode);
     return;
   }
-  startRender().catch((error) => {
-    renderPass = false;
-    setStatus(ui.renderCompute, UI_STATUS.error, "fail");
-    setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
-    log(`ОШИБКА перезапуска сцены — ${error.stack ?? error}`);
-    updateOverall();
-  });
+  void remountMechanical("смена сцены");
 });
 
 for (const control of [
@@ -2760,13 +2771,7 @@ ui.inspectGeometry.addEventListener("click", () => {
 });
 
 ui.restartRender.addEventListener("click", () => {
-  startRender().catch((error) => {
-    renderPass = false;
-    setStatus(ui.renderCompute, UI_STATUS.error, "fail");
-    setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
-    log(`ОШИБКА настройки рендера — ${error.stack ?? error}`);
-    updateOverall();
-  });
+  void remountMechanical("ручной перезапуск");
 });
 
 ui.resetView.addEventListener("click", () => {
@@ -2818,13 +2823,7 @@ ui.lengthOcta.addEventListener("change", () => {
   markDifferentialStale();
   renderPass = false;
   updateOverall();
-  startRender().catch((error) => {
-    renderPass = false;
-    setStatus(ui.renderCompute, UI_STATUS.error, "fail");
-    setStatus(ui.renderZeroCopy, "НЕ ПРОЙДЕНО — см. журнал", "fail");
-    log(`ОШИБКА перезапуска после изменения длины — ${error.stack ?? error}`);
-    updateOverall();
-  });
+  void remountMechanical("изменение длины связи");
 });
 
 function applyLivePhysicsControls() {
