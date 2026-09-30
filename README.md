@@ -116,6 +116,18 @@ five-mode-resource-cycle/v1
 
 `build-info.json` carries that contract together with package version and the exact build SHA, and the Pages pipeline verifies the same contract again in the deployed artifact.
 
+### WGSL validation in CI
+
+Every production WGSL module exported by `src/webgpu/index.ts` is validated from the exact compiled JavaScript shader string with pinned `naga-wasi-cli@0.1.0`.
+
+```bash
+npm run validate:wgsl
+```
+
+The validator gate is also part of `npm run check`, so both ordinary PR CI and the Pages build fail before deployment if Naga rejects a shipped shader. The test enumerates the complete exported `*_WGSL` set and includes an invalid-shader negative control so the external validator cannot silently become a no-op.
+
+This catches portable WGSL parsing/type/validation failures before the browser. Device/adapter-specific behavior still belongs to the live WebGPU witness and `GPUShaderModule.getCompilationInfo()`; static Naga validation does not replace real-device execution.
+
 This repository owns renderer-neutral visual DTOs, structural/blueprint/document geometry and layout, presentation state, physics, interaction, the WebGPU path and the optional Three.js browser companion. It does **not** own MTS semantic truth, proof semantics, parser semantics, or `@mts/core`.
 
 ## Provenance
