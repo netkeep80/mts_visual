@@ -78,6 +78,7 @@ jobs:
             version: pkg.version,
             mainSha: process.env.BUILD_SHA,
             builtAt: new Date().toISOString(),
+            labSelfTestContract: "five-mode-resource-cycle/v1",
           };
           await writeFile("_site/build-info.json", JSON.stringify(info, null, 2) + "\n");
           console.log(info);
@@ -95,6 +96,11 @@ jobs:
           grep -F 'runOctahedralWebGpuDifferentialWitness3D' _site/app.js
           grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' _site/app.js
           grep -F 'renderer.positionBuffer === compute.positionBuffer' _site/app.js
+          grep -F 'id="lab-run-cycle-test"' _site/index.html
+          grep -F 'id="lab-resource-audit"' _site/index.html
+          grep -F 'LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"' _site/app.js
+          grep -F 'LAB_SELF_TEST_QUERY = "mode-cycle"' _site/app.js
+          grep -F 'runLabModeCycleSelfTest' _site/app.js
 
           cp _site/vendor/mts-visual-core.bundle.js /tmp/mts-visual-core.bundle.mjs
           cp _site/vendor/mts-visual-webgpu.bundle.js /tmp/mts-visual-webgpu.bundle.mjs
@@ -135,6 +141,9 @@ jobs:
           const pkg = JSON.parse(await readFile("package.json", "utf8"));
           if (info.version !== pkg.version) throw new Error("build-info package version mismatch");
           if (!/^[0-9a-f]{40}$/.test(info.mainSha)) throw new Error("build-info SHA is not exact");
+          if (info.labSelfTestContract !== "five-mode-resource-cycle/v1") {
+            throw new Error("build-info laboratory self-test contract mismatch");
+          }
           NODE
 
       - name: Upload build artifact for PR diagnostics
@@ -192,9 +201,16 @@ jobs:
           fetch "vendor/mts-visual-three.bundle.js" /tmp/mts-visual-pages-smoke/three.js
 
           jq -e --arg sha "${EXPECTED_SHA}" '.mainSha == $sha'             /tmp/mts-visual-pages-smoke/build-info.json >/dev/null
+          jq -e '.labSelfTestContract == "five-mode-resource-cycle/v1"'             /tmp/mts-visual-pages-smoke/build-info.json >/dev/null
           grep -F '<html lang="ru">' /tmp/mts-visual-pages-smoke/index.html
           grep -F 'id="gpu-canvas"' /tmp/mts-visual-pages-smoke/index.html
+          grep -F 'id="lab-run-cycle-test"' /tmp/mts-visual-pages-smoke/index.html
+          grep -F 'id="lab-resource-audit"' /tmp/mts-visual-pages-smoke/index.html
           grep -F 'runOctahedralWebGpuDifferentialWitness3D' /tmp/mts-visual-pages-smoke/app.js
           grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' /tmp/mts-visual-pages-smoke/app.js
+          grep -F 'LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"' /tmp/mts-visual-pages-smoke/app.js
+          grep -F 'LAB_SELF_TEST_QUERY = "mode-cycle"' /tmp/mts-visual-pages-smoke/app.js
+          grep -F 'runLabModeCycleSelfTest' /tmp/mts-visual-pages-smoke/app.js
 
           echo "Published WebGPU witness PASS: ${base}"
+          echo "Browser self-test entrypoint: ${base}?selftest=mode-cycle"
