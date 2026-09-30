@@ -1,6 +1,7 @@
 import {
   MONOLITHIC_LINK_WEBGPU_WGSL,
   createMonolithicLinkWebGpuCompute3D,
+  createMonolithicLinkWebGpuComputeFromTopology3D,
   runMonolithicLinkWebGpuDifferential3D,
   type WebGpuBufferLike,
   type WebGpuDeviceLike,
@@ -363,6 +364,137 @@ same(override.centerBytes, 16, "CENTER override uploads one vec4");
 same(override.velocityBytes, 16, "velocity override uploads one vec4");
 same(fake.queue.writes[0]!.label, "monolithic-link-centers", "override writes semantic center buffer");
 same(fake.queue.writes[1]!.label, "monolithic-link-velocities", "override writes semantic velocity buffer");
+
+const compactFake = new FakeDevice();
+const compactController = await createMonolithicLinkWebGpuComputeFromTopology3D(
+  compactFake,
+  {
+    linkCount: 5,
+    startIndices: new Uint32Array([3, 2, 2, 3, 0]),
+    endIndices: new Uint32Array([0, 0, 3, 3, 2]),
+  },
+  options,
+);
+same(
+  compactController.snapshot().linkCount,
+  controller.snapshot().linkCount,
+  "compact topology path preserves semantic Link count",
+);
+same(
+  compactController.snapshot().restLength,
+  controller.snapshot().restLength,
+  "compact topology path uses the same monolithic template",
+);
+
+function bufferBytes(device: FakeDevice, label: string): Uint8Array {
+  const buffer = device.buffers.find((candidate) => candidate.label === label);
+  assert(buffer !== undefined, `missing fake buffer ${label}`);
+  return new Uint8Array(buffer.bytes);
+}
+
+function sameBytes(
+  actual: Uint8Array,
+  expected: Uint8Array,
+  message: string,
+): void {
+  same(actual.length, expected.length, `${message} length`);
+  for (let index = 0; index < actual.length; index += 1) {
+    if (actual[index] !== expected[index]) {
+      throw new Error(
+        `@mts/visual v0.6/#159 compact compute: ${message}[${index}] ${actual[index]} !== ${expected[index]}`,
+      );
+    }
+  }
+}
+
+sameBytes(
+  bufferBytes(compactFake, "monolithic-link-centers"),
+  bufferBytes(fake, "monolithic-link-centers"),
+  "compact and presentation adapters seed identical CENTER bytes",
+);
+sameBytes(
+  bufferBytes(compactFake, "monolithic-link-velocities"),
+  bufferBytes(fake, "monolithic-link-velocities"),
+  "compact and presentation adapters seed identical velocity bytes",
+);
+sameBytes(
+  bufferBytes(compactFake, "monolithic-link-topology"),
+  bufferBytes(fake, "monolithic-link-topology"),
+  "compact and presentation adapters pack identical forward/reverse topology",
+);
+compactFake.resetDispatches();
+const compactStep = compactController.step();
+same(compactStep.computePasses, 2, "compact path executes the same two physical passes");
+same(compactFake.dispatches[0]!.entryPoint, "link_force_main", "compact path uses production force WGSL");
+same(compactFake.dispatches[1]!.entryPoint, "gather_integrate_main", "compact path uses production gather WGSL");
+
+const customSeedFake = new FakeDevice();
+const customSeed = new Float32Array([
+  1, 2, 3,
+  4, 5, 6,
+]);
+const customVelocity = new Float32Array([
+  0.1, 0.2, 0.3,
+  -0.1, -0.2, -0.3,
+]);
+const customSeedController =
+  await createMonolithicLinkWebGpuComputeFromTopology3D(
+    customSeedFake,
+    {
+      linkCount: 2,
+      startIndices: new Uint32Array([0, 0]),
+      endIndices: new Uint32Array([1, 1]),
+    },
+    options,
+    {
+      centers: customSeed,
+      velocities: customVelocity,
+    },
+  );
+const centerWords = new Float32Array(
+  bufferBytes(customSeedFake, "monolithic-link-centers").buffer,
+);
+same(centerWords[0], 1, "custom compact seed CENTER x");
+same(centerWords[1], 2, "custom compact seed CENTER y");
+same(centerWords[2], 3, "custom compact seed CENTER z");
+same(centerWords[4], 4, "custom compact seed second CENTER x");
+const velocityWords = new Float32Array(
+  bufferBytes(customSeedFake, "monolithic-link-velocities").buffer,
+);
+assert(
+  Math.abs(velocityWords[0]! - Math.fround(0.1)) < 1e-7,
+  "custom compact seed velocity x",
+);
+customSeedController.destroy();
+
+for (const invalidTopology of [
+  {
+    linkCount: 2,
+    startIndices: new Uint32Array([0]),
+    endIndices: new Uint32Array([0, 1]),
+  },
+  {
+    linkCount: 2,
+    startIndices: new Uint32Array([0, 2]),
+    endIndices: new Uint32Array([0, 1]),
+  },
+]) {
+  try {
+    await createMonolithicLinkWebGpuComputeFromTopology3D(
+      new FakeDevice(),
+      invalidTopology,
+      options,
+    );
+    throw new Error("invalid compact topology accepted");
+  } catch (error) {
+    assert(
+      String(error).includes("invalid monolithic WebGPU topology"),
+      "invalid compact topology fails closed",
+    );
+  }
+}
+
+compactController.destroy();
 
 const shortController = await createMonolithicLinkWebGpuCompute3D(
   new FakeDevice(),
