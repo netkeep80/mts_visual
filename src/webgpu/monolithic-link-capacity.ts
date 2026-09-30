@@ -245,21 +245,27 @@ export function planMonolithicLinkWebGpuCapacity3D(
     adapterLimits.maxComputeWorkgroupsPerDimension,
   );
 
-  const staticStorageBuffers = storageBuffers.filter((candidate) =>
-    candidate.name === "renderer.surfaceIndices"
+  const fixedBuffers = buffers.filter((candidate) =>
+    candidate.name === "compute.globals"
+    || candidate.name === "shape.globals"
+    || candidate.name === "renderer.surfaceIndices"
     || candidate.name === "renderer.wireframeIndices"
     || candidate.name === "renderer.gradient"
+    || candidate.name === "renderer.uniforms"
+  );
+  const fixedStorageBuffers = fixedBuffers.filter(
+    (candidate) => candidate.storageBinding,
   );
 
   const maximumLinksByStorageBinding = maximumByPerLinkBuffer(
     maxStorageBufferBindingSize,
     sectionCount,
-    staticStorageBuffers,
+    fixedStorageBuffers,
   );
   const maximumLinksByBufferSize = maximumByPerLinkBuffer(
     maxBufferSize,
     sectionCount,
-    staticStorageBuffers,
+    fixedBuffers,
   );
   const maximumLinksByDispatch = safeMultiply(
     safeMultiply(
