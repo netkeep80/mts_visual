@@ -1468,6 +1468,7 @@ function installCameraControls(state) {
     };
     state.semanticCenterCache[selected] = [...center];
     setHoveredCenter(selected);
+    setSelectedVisualKey(state.centerDrag.key);
     mode = "center";
     log(
       `выбран CENTER для перетаскивания: ${state.centerDrag.key} · источник=${source} · один семантический CENTER`,
@@ -1861,6 +1862,7 @@ async function startRender() {
           state.lastUiAt = now;
           ui.renderFrames.textContent =
             `${state.frames.toLocaleString()} / ${state.steps.toLocaleString()}`;
+          updateSharedDiagnostics();
         }
       } catch (error) {
         renderPass = false;
@@ -2072,6 +2074,7 @@ function updateStructuralDiagnostics(state) {
   ui.structuralOptimizer.textContent =
     `${state.layout.metrics.evaluations} проверок · ${state.layout.metrics.passes} проходов`;
   ui.structuralLinkCount.textContent = String(state.network.links.length);
+  updateSharedDiagnostics();
 }
 
 function renderStructuralState(state, { fit = false } = {}) {
@@ -2141,6 +2144,9 @@ function mountStructural2D() {
   const signal = abortController.signal;
   ui.structuralViewport.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
+    const node = event.target.closest?.('[data-role="structural-node"]');
+    const key = node?.getAttribute("data-link-key");
+    if (key) setSelectedVisualKey(key);
     state.pointerId = event.pointerId;
     state.panPointer = { x: event.clientX, y: event.clientY };
     ui.structuralViewport.setPointerCapture?.(event.pointerId);
@@ -2274,6 +2280,7 @@ function renderBlueprintState(state, { fit = false } = {}) {
 
   if (fit || !state.viewport) fitBlueprintState(state);
   else applyBlueprintViewport(state);
+  updateSharedDiagnostics();
 }
 
 function resetBlueprintPositions(state) {
@@ -2338,6 +2345,7 @@ function mountBlueprint() {
 
     if (center) {
       state.dragKey = center.getAttribute("data-link-key");
+      if (state.dragKey) setSelectedVisualKey(state.dragKey);
       state.panPointer = null;
     } else {
       state.dragKey = null;
@@ -2557,6 +2565,9 @@ function mountDocument2D() {
   const signal = abortController.signal;
   ui.documentViewport.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
+    const linkGroup = event.target.closest?.('[data-role="document-link"]');
+    const key = linkGroup?.getAttribute("data-link-key");
+    if (key) setSelectedVisualKey(key);
     state.pointerId = event.pointerId;
     state.panPointer = { x: event.clientX, y: event.clientY };
     ui.documentViewport.setPointerCapture?.(event.pointerId);
@@ -2648,6 +2659,7 @@ function updateClassicDiagnostics(state) {
     `${state.controller.model.springs.length} / ${chargePairs}`;
   ui.classicMaxVelocity.textContent = fmt(snapshot.maxVelocity);
   ui.classicPinned.textContent = String(snapshot.pinnedKeys.length);
+  updateSharedDiagnostics();
 }
 
 function applyClassicPhysicsControls() {
@@ -2691,6 +2703,7 @@ function mountClassic3D() {
       samples: 18,
       nodeRadius: 0.13,
       onActivateKey: (key) => {
+        setSelectedVisualKey(key);
         log(`Classic 3D: выбрана связь ${key}`);
       },
     },
