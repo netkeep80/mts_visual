@@ -654,7 +654,7 @@ function evaluateCandidate(
   poses: ReadonlyMap<VisualKey, Document2DPose>,
   strategy: Exclude<Document2DSeedStrategy, "auto">,
   options: ResolvedOptions,
-  variant = strategy,
+  variant: string = strategy,
 ): EvaluatedCandidate {
   const links = buildGeometryFromPoseMap(
     network,
