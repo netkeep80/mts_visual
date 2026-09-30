@@ -184,6 +184,7 @@
     <div class="card" id="lab-shared-diagnostics" style="margin-bottom:12px">
       <div class="toolbar">
         <h2 style="margin-right:auto">Сводка лаборатории</h2>
+        <button id="lab-run-cycle-test" type="button">Проверить цикл 5 режимов</button>
         <button id="lab-copy-diagnostics" type="button">Скопировать диагностику</button>
       </div>
       <div class="grid">
@@ -195,6 +196,11 @@
         <div><span class="muted">Build SHA</span><div id="lab-diagnostic-sha" class="value">—</div></div>
       </div>
       <pre id="lab-diagnostic-detail" style="margin-top:10px; max-height:180px; overflow:auto"></pre>
+      <div class="toolbar" style="margin-top:10px">
+        <span class="muted">Реальный lifecycle self-test</span>
+        <span id="lab-cycle-status" class="lab-mode-status" role="status" aria-live="polite">не запускался</span>
+      </div>
+      <pre id="lab-resource-audit" style="margin-top:6px; max-height:220px; overflow:auto">resource ledger: ожидание</pre>
     </div>
 
     <div id="live-lab" class="live-lab">

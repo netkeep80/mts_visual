@@ -13,6 +13,9 @@ const ui = {
   visualizationMode: $("visualization-mode"),
   modeStatus: $("mode-status"),
   labCopyDiagnostics: $("lab-copy-diagnostics"),
+  labRunCycleTest: $("lab-run-cycle-test"),
+  labCycleStatus: $("lab-cycle-status"),
+  labResourceAudit: $("lab-resource-audit"),
   labDiagnosticMode: $("lab-diagnostic-mode"),
   labDiagnosticInput: $("lab-diagnostic-input"),
   labDiagnosticLinks: $("lab-diagnostic-links"),
@@ -2827,6 +2830,265 @@ function updateModePlaceholder(modeId) {
     + `Подключение renderer: issue #${definition.issue}.</div>`;
 }
 
+const LAB_REAL_CYCLE = Object.freeze([
+  "structural-2d",
+  "blueprint-2d",
+  "document-2d",
+  "classic-3d",
+  "mechanical-3d",
+  "classic-3d",
+  "document-2d",
+  "blueprint-2d",
+  "structural-2d",
+]);
+const LAB_REAL_CYCLE_REPEATS = 2;
+const labResourceLedger = {
+  generation: 0,
+  mounts: 0,
+  disposals: 0,
+  activeMode: null,
+  activeRendererOwners: 0,
+  listenerScopes: 0,
+  resizeObservers: 0,
+  svgRoots: 0,
+  threeRenderers: 0,
+  mechanicalRenderers: 0,
+  rafOwners: 0,
+  webgpuConfigured: 0,
+};
+let labCycleTestRunning = false;
+
+function activeModeState(modeId) {
+  switch (modeId) {
+    case "structural-2d": return structuralState;
+    case "blueprint-2d": return blueprintState;
+    case "document-2d": return document2dState;
+    case "classic-3d": return classicState;
+    case "mechanical-3d": return renderState;
+    default: return null;
+  }
+}
+
+function resourceProfileForMode(modeId) {
+  if (modeId === "structural-2d" && structuralState) {
+    return { activeRendererOwners: 1, listenerScopes: 1, resizeObservers: 0, svgRoots: 1, threeRenderers: 0, mechanicalRenderers: 0, rafOwners: 0, webgpuConfigured: 0 };
+  }
+  if (modeId === "blueprint-2d" && blueprintState) {
+    return { activeRendererOwners: 1, listenerScopes: 1, resizeObservers: 0, svgRoots: 1, threeRenderers: 0, mechanicalRenderers: 0, rafOwners: 0, webgpuConfigured: 0 };
+  }
+  if (modeId === "document-2d" && document2dState) {
+    return { activeRendererOwners: 1, listenerScopes: 1, resizeObservers: 0, svgRoots: 1, threeRenderers: 0, mechanicalRenderers: 0, rafOwners: 0, webgpuConfigured: 0 };
+  }
+  if (modeId === "classic-3d" && classicState) {
+    return { activeRendererOwners: 1, listenerScopes: 1, resizeObservers: 1, svgRoots: 0, threeRenderers: 1, mechanicalRenderers: 0, rafOwners: 1, webgpuConfigured: 0 };
+  }
+  if (modeId === "mechanical-3d" && renderState) {
+    return { activeRendererOwners: 1, listenerScopes: 1, resizeObservers: 0, svgRoots: 0, threeRenderers: 0, mechanicalRenderers: 1, rafOwners: 1, webgpuConfigured: 1 };
+  }
+  return { activeRendererOwners: 0, listenerScopes: 0, resizeObservers: 0, svgRoots: 0, threeRenderers: 0, mechanicalRenderers: 0, rafOwners: 0, webgpuConfigured: 0 };
+}
+
+function claimLabResources(modeId) {
+  const profile = resourceProfileForMode(modeId);
+  labResourceLedger.generation += 1;
+  labResourceLedger.mounts += 1;
+  labResourceLedger.activeMode = modeId;
+  Object.assign(labResourceLedger, profile);
+  renderLabResourceAudit();
+}
+
+function releaseLabResources(modeId) {
+  if (labResourceLedger.activeMode !== modeId) return;
+  labResourceLedger.disposals += 1;
+  labResourceLedger.activeMode = null;
+  labResourceLedger.activeRendererOwners = 0;
+  labResourceLedger.listenerScopes = 0;
+  labResourceLedger.resizeObservers = 0;
+  labResourceLedger.svgRoots = 0;
+  labResourceLedger.threeRenderers = 0;
+  labResourceLedger.mechanicalRenderers = 0;
+  labResourceLedger.rafOwners = 0;
+  labResourceLedger.webgpuConfigured = 0;
+  renderLabResourceAudit();
+}
+
+function labResourceAuditSnapshot() {
+  const threeSnapshot = typeof threeVisual.getVisualThreeRendererSnapshot === "function"
+    ? threeVisual.getVisualThreeRendererSnapshot(ui.classicViewport)
+    : undefined;
+  return Object.freeze({
+    ledger: Object.freeze({ ...labResourceLedger }),
+    actual: Object.freeze({
+      structuralState: structuralState !== null,
+      blueprintState: blueprintState !== null,
+      documentState: document2dState !== null,
+      classicState: classicState !== null,
+      mechanicalState: renderState !== null,
+      structuralSvgRoots: ui.structuralViewport.querySelectorAll("svg").length,
+      blueprintSvgRoots: ui.blueprintViewport.querySelectorAll("svg").length,
+      documentSvgRoots: ui.documentViewport.querySelectorAll("svg").length,
+      classicThreeMounted: Boolean(threeSnapshot),
+      classicCanvasRoots: ui.classicViewport.querySelectorAll("canvas").length,
+      mechanicalCanvasConfigured: renderState !== null,
+    }),
+  });
+}
+
+function renderLabResourceAudit(extra = null) {
+  if (!ui.labResourceAudit) return;
+  const snapshot = labResourceAuditSnapshot();
+  ui.labResourceAudit.textContent = JSON.stringify(
+    extra === null ? snapshot : { ...snapshot, selfTest: extra },
+    null,
+    2,
+  );
+}
+
+function assertLabCycle(condition, message) {
+  if (!condition) throw new Error(`mode-cycle: ${message}`);
+}
+
+function assertRealModeResources(modeId, scene) {
+  const audit = labResourceAuditSnapshot();
+  assertLabCycle(audit.ledger.activeMode === modeId, `ledger activeMode=${audit.ledger.activeMode}, expected=${modeId}`);
+  assertLabCycle(selectedScene() === scene, `${modeId}: input scene identity changed`);
+
+  const states = {
+    "structural-2d": structuralState,
+    "blueprint-2d": blueprintState,
+    "document-2d": document2dState,
+    "classic-3d": classicState,
+    "mechanical-3d": renderState,
+  };
+  for (const [candidateMode, state] of Object.entries(states)) {
+    if (candidateMode === modeId) continue;
+    assertLabCycle(state === null, `${modeId}: stale state from ${candidateMode}`);
+  }
+
+  const active = activeModeState(modeId);
+  if (modeId === "mechanical-3d" && !device) {
+    assertLabCycle(active === null, "Mechanical without WebGPU device must not claim renderer state");
+    assertLabCycle(audit.ledger.activeRendererOwners === 0, "Mechanical unavailable must not claim resource owner");
+  } else {
+    assertLabCycle(active !== null, `${modeId}: active renderer state missing`);
+    assertLabCycle(active.scene === scene, `${modeId}: renderer uses another input snapshot`);
+    assertLabCycle(audit.ledger.activeRendererOwners === 1, `${modeId}: expected exactly one resource owner`);
+  }
+
+  const expectedSvgMode = modeId === "structural-2d"
+    ? "structuralSvgRoots"
+    : modeId === "blueprint-2d"
+      ? "blueprintSvgRoots"
+      : modeId === "document-2d"
+        ? "documentSvgRoots"
+        : null;
+  for (const field of ["structuralSvgRoots", "blueprintSvgRoots", "documentSvgRoots"]) {
+    const expected = field === expectedSvgMode ? 1 : 0;
+    assertLabCycle(audit.actual[field] === expected, `${modeId}: ${field}=${audit.actual[field]}, expected=${expected}`);
+  }
+
+  assertLabCycle(
+    audit.actual.classicThreeMounted === (modeId === "classic-3d"),
+    `${modeId}: Classic Three mount leak/missing mount`,
+  );
+  assertLabCycle(
+    audit.actual.classicCanvasRoots === (modeId === "classic-3d" ? 1 : 0),
+    `${modeId}: Classic canvas root leak/missing root`,
+  );
+
+  if (modeId !== "mechanical-3d") {
+    assertLabCycle(!audit.actual.mechanicalState, `${modeId}: Mechanical state leaked`);
+    assertLabCycle(audit.ledger.webgpuConfigured === 0, `${modeId}: WebGPU canvas still claimed configured`);
+    assertLabCycle(audit.ledger.mechanicalRenderers === 0, `${modeId}: Mechanical renderer ownership leaked`);
+  } else if (device) {
+    assertLabCycle(audit.ledger.webgpuConfigured === 1, "Mechanical must own configured WebGPU canvas");
+    assertLabCycle(audit.ledger.mechanicalRenderers === 1, "Mechanical renderer ownership missing");
+  }
+
+  return audit;
+}
+
+async function runLabModeCycleSelfTest() {
+  if (labCycleTestRunning) return;
+  const scene = selectedScene();
+  if (scene.network.links.length > 64) {
+    throw new Error("mode-cycle self-test ограничен 64 Links; выберите меньший fixture");
+  }
+
+  labCycleTestRunning = true;
+  ui.labRunCycleTest.disabled = true;
+  ui.labCycleStatus.textContent = "выполняется…";
+  const originalMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
+  const originalModeSelect = ui.visualizationMode.value;
+  const originalSceneValue = ui.scene.value;
+  const originalManifest = sceneInputManifestText(scene);
+  const originalSelectedKey = selectedVisualKey;
+  const report = [];
+  let finalSelfTest = null;
+  const startMounts = labResourceLedger.mounts;
+  const startDisposals = labResourceLedger.disposals;
+
+  try {
+    for (let iteration = 0; iteration < LAB_REAL_CYCLE_REPEATS; iteration += 1) {
+      for (const modeId of LAB_REAL_CYCLE) {
+        ui.visualizationMode.value = modeId;
+        await activateLabMode(modeId);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        assertLabCycle(ui.scene.value === originalSceneValue, `${modeId}: scene selector changed`);
+        assertLabCycle(sceneInputManifestText(scene) === originalManifest, `${modeId}: input manifest changed`);
+        assertLabCycle(selectedVisualKey === originalSelectedKey, `${modeId}: selected Link changed`);
+        const audit = assertRealModeResources(modeId, scene);
+        report.push({
+          iteration: iteration + 1,
+          modeId,
+          generation: audit.ledger.generation,
+          owners: audit.ledger.activeRendererOwners,
+          svgRoots: audit.ledger.svgRoots,
+          threeRenderers: audit.ledger.threeRenderers,
+          mechanicalRenderers: audit.ledger.mechanicalRenderers,
+          webgpuConfigured: audit.ledger.webgpuConfigured,
+        });
+      }
+    }
+
+    const expectedActivations = LAB_REAL_CYCLE.length * LAB_REAL_CYCLE_REPEATS;
+    assertLabCycle(
+      labResourceLedger.mounts - startMounts === expectedActivations,
+      `mount count delta=${labResourceLedger.mounts - startMounts}, expected=${expectedActivations}`,
+    );
+    assertLabCycle(
+      labResourceLedger.disposals - startDisposals === expectedActivations,
+      `dispose count before restore=${labResourceLedger.disposals - startDisposals}, expected=${expectedActivations}`,
+    );
+
+    ui.labCycleStatus.textContent = device
+      ? `PASS · ${expectedActivations} переходов · WebGPU проверен`
+      : `PASS · ${expectedActivations} переходов · Mechanical без WebGPU device`;
+    log(`mode-cycle self-test: PASS · переходов=${expectedActivations} · input=${scene.id}`);
+    finalSelfTest = { status: "PASS", steps: report };
+  } catch (error) {
+    ui.labCycleStatus.textContent = "FAIL · см. resource ledger";
+    log(`mode-cycle self-test: FAIL — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+    finalSelfTest = {
+      status: "FAIL",
+      error: error instanceof Error ? error.message : String(error),
+      steps: report,
+    };
+    throw error;
+  } finally {
+    ui.visualizationMode.value = originalModeSelect;
+    try {
+      await activateLabMode(originalMode);
+    } catch (restoreError) {
+      log(`ОШИБКА восстановления режима после mode-cycle — ${restoreError instanceof Error ? restoreError.stack ?? restoreError.message : String(restoreError)}`);
+    }
+    labCycleTestRunning = false;
+    ui.labRunCycleTest.disabled = false;
+    renderLabResourceAudit(finalSelfTest);
+  }
+}
+
 async function mountLabMode(modeId) {
   const mechanical = modeId === "mechanical-3d";
   const structural = modeId === "structural-2d";
@@ -2854,20 +3116,30 @@ async function mountLabMode(modeId) {
   ui.mechanicalGeometryPanel.hidden = !mechanical;
   ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
 
+  let cleanup;
   if (mechanical) {
     await startRender();
-    return () => stopRender();
+    cleanup = () => stopRender();
+  } else if (structural) {
+    cleanup = mountStructural2D();
+  } else if (blueprint) {
+    cleanup = mountBlueprint();
+  } else if (document2d) {
+    cleanup = mountDocument2D();
+  } else if (classic) {
+    cleanup = mountClassic3D();
+  } else {
+    updateModePlaceholder(modeId);
+    cleanup = () => ui.modePlaceholder.replaceChildren();
   }
 
-  if (structural) return mountStructural2D();
-  if (blueprint) return mountBlueprint();
-  if (document2d) return mountDocument2D();
-  if (classic) return mountClassic3D();
-
-  updateModePlaceholder(modeId);
-  log(`режим ${modeId} выбран; renderer будет подключён отдельным этапом roadmap`);
-  return () => {
-    ui.modePlaceholder.replaceChildren();
+  claimLabResources(modeId);
+  return async () => {
+    try {
+      await cleanup?.();
+    } finally {
+      releaseLabResources(modeId);
+    }
   };
 }
 
@@ -2971,6 +3243,12 @@ ui.labInputCopy.addEventListener("click", () => {
       "fail",
     );
     log(`ОШИБКА копирования input manifest — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
+});
+
+ui.labRunCycleTest.addEventListener("click", () => {
+  runLabModeCycleSelfTest().catch((error) => {
+    log(`ОШИБКА mode-cycle self-test — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
   });
 });
 
