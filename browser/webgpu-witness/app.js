@@ -1959,6 +1959,7 @@ function mountStructural2D() {
   const scene = selectedScene();
   const abortController = new AbortController();
   refreshStructuralRootOptions(scene.network);
+  ui.structuralRoot.value = scene.hints?.rootKey ?? "";
   refreshStructuralControlLabels();
 
   const state = {
@@ -2375,6 +2376,7 @@ function mountDocument2D() {
   const scene = selectedScene();
   const abortController = new AbortController();
   refreshDocumentRootOptions(scene.network);
+  ui.documentRoot.value = scene.hints?.rootKey ?? "";
 
   const state = {
     scene,
@@ -2656,6 +2658,53 @@ ui.visualizationMode.addEventListener("change", () => {
   });
 });
 
+ui.labInputApply.addEventListener("click", () => {
+  try {
+    applyImportedManifestText(ui.labInputJson.value, "вставка JSON");
+  } catch (error) {
+    setLabInputStatus(
+      `Ошибка импорта: ${error instanceof Error ? error.message : String(error)}`,
+      "fail",
+    );
+    log(`ОШИБКА импорта JSON — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  }
+});
+
+ui.labInputFileButton.addEventListener("click", () => {
+  ui.labInputFile.click();
+});
+
+ui.labInputFile.addEventListener("change", async () => {
+  const file = ui.labInputFile.files?.[0];
+  if (!file) return;
+  try {
+    applyImportedManifestText(await file.text(), file.name);
+  } catch (error) {
+    setLabInputStatus(
+      `Ошибка файла: ${error instanceof Error ? error.message : String(error)}`,
+      "fail",
+    );
+    log(`ОШИБКА импорта файла ${file.name} — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  } finally {
+    ui.labInputFile.value = "";
+  }
+});
+
+ui.labInputCopy.addEventListener("click", () => {
+  copyText(sceneInputManifestText()).then(() => {
+    setLabInputStatus(
+      `JSON скопирован · ${selectedScene().network.links.length} связей`,
+      "ok",
+    );
+  }).catch((error) => {
+    setLabInputStatus(
+      `Ошибка копирования: ${error instanceof Error ? error.message : String(error)}`,
+      "fail",
+    );
+    log(`ОШИБКА копирования input manifest — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
+});
+
 ui.copyLog.addEventListener("click", () => {
   copyDiagnosticLog().catch((error) => {
     log(`ОШИБКА копирования диагностического журнала — ${error.stack ?? error}`);
@@ -2682,6 +2731,7 @@ ui.rerun.addEventListener("click", () => {
 });
 
 ui.scene.addEventListener("change", () => {
+  syncLabInputPanel();
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
   if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "document-2d" || activeMode === "classic-3d") {
