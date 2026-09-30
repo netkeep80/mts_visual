@@ -2830,6 +2830,7 @@ function updateModePlaceholder(modeId) {
     + `Подключение renderer: issue #${definition.issue}.</div>`;
 }
 
+// Versioned Pages/browser acceptance contract; changing it requires explicit acceptance evidence.
 const LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1";
 const LAB_SELF_TEST_QUERY = "mode-cycle";
 const LAB_REAL_CYCLE = Object.freeze([
