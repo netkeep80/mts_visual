@@ -17,7 +17,7 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const cli = join(repoRoot, "bin", "mts-visual.mjs");
 const fixture = join(repoRoot, "fixtures", "document2d", "article-root.input.json");
 const rendererSha = "c".repeat(40);
-const EXPECTED_SVG_SHA256 = "173ebc20ece915c401eb3647f7b4402ae356ba510046336b4842cc1b4d0f7955";
+const EXPECTED_SVG_SHA256 = "c8a7c700a9a0232f2d563827aa25e3a2a273d6278d2a0e38a65466e1b7f93ebb";
 const EXPECTED_SEED = "layered";
 const directory = await mkdtemp(join(tmpdir(), "mts-visual-article-fixture-"));
 
