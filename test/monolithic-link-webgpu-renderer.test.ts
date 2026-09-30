@@ -344,7 +344,7 @@ function fakeShape(
   );
   let destroyed = false;
   let detailCount = topology.linkCount;
-  let selectionMode = "manual" as const | "gpu-partition";
+  let selectionMode: "manual" | "gpu-partition" = "manual";
   return {
     compute,
     template,
