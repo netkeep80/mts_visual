@@ -84,6 +84,12 @@
     }
     pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 260px; overflow: auto; }
     .section { margin-top: 16px; }
+    .benchmark-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .benchmark-grid .physics-control { min-width:0; }
+    .benchmark-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+    .benchmark-result { margin-top:10px; max-height:360px; }
+    @media (max-width: 950px) { .benchmark-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width: 640px) { .benchmark-grid { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -513,6 +519,81 @@
         </tbody>
       </table>
     </div>
+  </section>
+
+  <section class="card section" id="mechanical-benchmark-panel">
+    <div class="toolbar">
+      <h2 style="margin-right:auto">Бенчмарк Mechanical WebGPU</h2>
+      <span class="muted">production compute/shape/renderer · queue-synchronized host timing</span>
+    </div>
+    <div class="benchmark-grid">
+      <div class="physics-control">
+        <label for="benchmark-links"><span>Связей</span></label>
+        <select id="benchmark-links">
+          <option value="1000">1 000</option>
+          <option value="10000">10 000</option>
+          <option value="100000" selected>100 000</option>
+          <option value="1000000">1 000 000</option>
+        </select>
+      </div>
+      <div class="physics-control">
+        <label for="benchmark-profile"><span>Топология</span></label>
+        <select id="benchmark-profile">
+          <option value="chain">chain</option>
+          <option value="hub-heavy">hub-heavy</option>
+          <option value="mixed" selected>mixed</option>
+          <option value="self-incidence">self-incidence</option>
+          <option value="branching">branching</option>
+        </select>
+      </div>
+      <div class="physics-control">
+        <label for="benchmark-seed"><span>Seed</span></label>
+        <input id="benchmark-seed" type="number" step="1" value="1297371990">
+      </div>
+      <div class="physics-control">
+        <label for="benchmark-octa"><span>Октаэдров / Link</span></label>
+        <select id="benchmark-octa">
+          <option value="16">16</option>
+          <option value="32" selected>32</option>
+          <option value="64">64</option>
+          <option value="128">128</option>
+        </select>
+      </div>
+      <div class="physics-control">
+        <label for="benchmark-detail"><span>Detail profile</span></label>
+        <select id="benchmark-detail">
+          <option value="semantic">semantic · без detail</option>
+          <option value="detail-256">detail-256</option>
+          <option value="detail-1024">detail-1024</option>
+          <option value="detail-4096" selected>detail-4096</option>
+          <option value="full-detail">full-detail</option>
+        </select>
+      </div>
+      <div class="physics-control">
+        <label for="benchmark-warmup"><span>Warmup</span></label>
+        <input id="benchmark-warmup" type="number" min="1" max="100" step="1" value="5">
+      </div>
+      <div class="physics-control">
+        <label for="benchmark-samples"><span>Samples</span></label>
+        <input id="benchmark-samples" type="number" min="1" max="200" step="1" value="20">
+      </div>
+      <div class="physics-control">
+        <div class="muted" style="margin-bottom:6px">Дополнительно</div>
+        <div class="inline-checks">
+          <label><input id="benchmark-render" type="checkbox"> измерять renderer</label>
+        </div>
+      </div>
+    </div>
+    <div class="benchmark-actions">
+      <button id="benchmark-run" type="button">Запустить</button>
+      <button id="benchmark-stop" type="button" disabled>Остановить после sample</button>
+      <button id="benchmark-copy" type="button" disabled>Копировать JSON</button>
+      <button id="benchmark-download" type="button" disabled>Сохранить JSON</button>
+      <span id="benchmark-status" class="lab-mode-status" role="status" aria-live="polite">не запускался</span>
+    </div>
+    <progress id="benchmark-progress" max="1" value="0" style="width:100%; margin-top:10px"></progress>
+    <pre id="benchmark-result" class="benchmark-result">evidence: ожидание</pre>
+    <canvas id="benchmark-canvas" width="512" height="512" hidden></canvas>
   </section>
 
   <section class="card section">
