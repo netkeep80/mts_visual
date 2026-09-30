@@ -3894,6 +3894,58 @@ ui.labRunCycleTest.addEventListener("click", () => {
   });
 });
 
+ui.benchmarkRun.addEventListener("click", () => {
+  runMechanicalBenchmarkFromUi("ui").catch((error) => {
+    log(
+      `ОШИБКА запуска benchmark — `
+      + `${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+  });
+});
+
+ui.benchmarkStop.addEventListener("click", () => {
+  if (!benchmarkRunning) return;
+  benchmarkCancelRequested = true;
+  ui.benchmarkStatus.textContent =
+    "остановка запрошена · завершаю текущий GPU stage/sample…";
+});
+
+ui.benchmarkCopy.addEventListener("click", () => {
+  if (benchmarkEvidence === null) return;
+  copyText(benchmarkEvidenceText()).then(() => {
+    ui.benchmarkStatus.textContent += " · JSON скопирован";
+  }).catch((error) => {
+    log(
+      `ОШИБКА копирования benchmark JSON — `
+      + `${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+  });
+});
+
+ui.benchmarkDownload.addEventListener("click", () => {
+  if (benchmarkEvidence === null) return;
+  const request = benchmarkEvidence.request;
+  downloadTextFile(
+    benchmarkEvidenceText(),
+    `mts-visual-benchmark-${request.links}-${request.topologyProfile}-${request.octahedra}octa-${String(buildInfo.mainSha).slice(0, 12)}.json`,
+    "application/json;charset=utf-8",
+  );
+});
+
+ui.benchmarkLinks.addEventListener("change", () => {
+  if (
+    ui.benchmarkLinks.value === "1000000"
+    && ui.benchmarkSamples.value === "20"
+  ) {
+    ui.benchmarkSamples.value = "5";
+  } else if (
+    ui.benchmarkLinks.value !== "1000000"
+    && ui.benchmarkSamples.value === "5"
+  ) {
+    ui.benchmarkSamples.value = "20";
+  }
+});
+
 ui.labCopyDiagnostics.addEventListener("click", () => {
   copyText(sharedDiagnosticText()).then(() => {
     ui.modeStatus.textContent = `${labModeUi(currentLabModeId)?.label ?? currentLabModeId} · диагностика скопирована`;
@@ -4256,10 +4308,18 @@ try {
   if (device) await runDifferentials();
   await activateLabMode(ui.visualizationMode.value);
 
-  const requestedSelfTest = new URLSearchParams(window.location.search).get("selftest");
+  const query = new URLSearchParams(window.location.search);
+  const requestedSelfTest = query.get("selftest");
   if (requestedSelfTest === LAB_SELF_TEST_QUERY) {
     log(`запрошен browser self-test ${LAB_SELF_TEST_CONTRACT} через URL`);
     await runLabModeCycleSelfTest();
+  }
+
+  if (applyBenchmarkQueryParameters(query)) {
+    log(
+      `запрошен Mechanical benchmark через URL: ${window.location.search}`,
+    );
+    await runMechanicalBenchmarkFromUi("url");
   }
 } catch (error) {
   setStatus(ui.overall, "ОШИБКА — см. диагностический журнал", "fail");
