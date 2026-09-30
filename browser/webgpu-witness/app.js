@@ -1131,6 +1131,29 @@ function sharedDiagnosticText() {
   return JSON.stringify(sharedDiagnosticSnapshot(), null, 2) + "\n";
 }
 
+async function sha256Text(text) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Web Crypto SHA-256 недоступен в этом браузере");
+  }
+  const bytes = new TextEncoder().encode(text);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function downloadTextFile(text, filename, type) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 populateSceneSelector("root-r");
 syncLabInputPanel();
 
@@ -2491,15 +2514,23 @@ function updateDocumentDiagnostics(state) {
     `центры ${after.centerOverlaps} · подписи ${after.labelOverlaps}`;
   ui.documentOptimizer.textContent =
     `${state.layout.metrics.optimizerEvaluations} проверок · ${state.layout.metrics.optimizerPasses} проходов`;
+  ui.documentDigest.textContent = state.outputDigest
+    ? state.outputDigest.slice(0, 16) + "…"
+    : state.digestError
+      ? "недоступен"
+      : "вычисляется…";
+  updateSharedDiagnostics();
 }
 
 function renderDocumentState(state, { fit = false } = {}) {
   state.options = selectedDocumentOptions();
   state.layout = core.layoutDocument2D(state.network, state.options);
-  ui.documentViewport.innerHTML = core.serializeDocument2DSvg(
-    state.network,
-    state.layout,
-  );
+  state.svgText = core.serializeDocument2DSvg(state.network, state.layout);
+  state.outputDigest = null;
+  state.digestError = null;
+  state.digestGeneration += 1;
+  const digestGeneration = state.digestGeneration;
+  ui.documentViewport.innerHTML = state.svgText;
 
   const svg = ui.documentViewport.querySelector("svg");
   if (!svg) throw new Error("Document 2D renderer не создал SVG");
@@ -2511,6 +2542,19 @@ function renderDocumentState(state, { fit = false } = {}) {
   updateDocumentDiagnostics(state);
   if (fit || !state.viewport) fitDocumentState(state);
   else applyDocumentViewport(state);
+
+  sha256Text(state.svgText).then((digest) => {
+    if (document2dState !== state || state.digestGeneration !== digestGeneration) return;
+    state.outputDigest = digest;
+    state.digestError = null;
+    updateDocumentDiagnostics(state);
+  }).catch((error) => {
+    if (document2dState !== state || state.digestGeneration !== digestGeneration) return;
+    state.outputDigest = null;
+    state.digestError = error;
+    updateDocumentDiagnostics(state);
+    log(`ОШИБКА SHA-256 Document SVG — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
 }
 
 function documentPointerPoint(event) {
@@ -2521,25 +2565,68 @@ function documentPointerPoint(event) {
   };
 }
 
+function documentSvgFilename(state) {
+  return `mts-visual-document-${state.scene.id}-${state.layout.profile}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
+}
+
 function downloadDocumentSvg() {
-  if (!document2dState?.layout) return;
-  const text = core.serializeDocument2DSvg(
-    document2dState.network,
-    document2dState.layout,
+  if (!document2dState?.layout || !document2dState.svgText) return;
+  downloadTextFile(
+    document2dState.svgText,
+    documentSvgFilename(document2dState),
+    "image/svg+xml;charset=utf-8",
   );
-  const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download =
-    `mts-visual-document-${document2dState.scene.id}-${document2dState.layout.profile}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
 
   log(
     `Document SVG сохранён: сцена=${document2dState.scene.label}, профиль=${document2dState.layout.profile}, seed=${document2dState.layout.metrics.seedStrategy}, качество=${document2dState.layout.metrics.qualityAfter.score}`,
+  );
+}
+
+async function documentBrowserManifest(state) {
+  if (!state.layout || !state.svgText) {
+    throw new Error("Document 2D ещё не отрендерен");
+  }
+  const inputText = sceneInputManifestText(state.scene);
+  const inputDigest = await sha256Text(inputText);
+  const outputDigest = state.outputDigest ?? await sha256Text(state.svgText);
+  state.outputDigest = outputDigest;
+  state.digestError = null;
+  updateDocumentDiagnostics(state);
+
+  return core.createDocument2DRenderManifest({
+    inputPath: `browser:${state.scene.id}.json`,
+    inputDigest,
+    ...(state.scene.sourceRepository === undefined
+      ? {}
+      : { sourceRepository: state.scene.sourceRepository }),
+    ...(state.scene.sourceSha === undefined
+      ? {}
+      : { sourceSha: state.scene.sourceSha }),
+    rendererVersion: String(buildInfo.version),
+    rendererSha: String(buildInfo.mainSha),
+    profile: state.layout.profile,
+    layoutOptions: {
+      strategy: state.options.strategy,
+      rootKey: state.options.rootKey ?? null,
+    },
+    seedStrategy: state.layout.metrics.seedStrategy,
+    quality: state.layout.metrics.qualityAfter,
+    outputPath: `browser:${documentSvgFilename(state)}`,
+    outputDigest,
+  });
+}
+
+async function downloadDocumentManifest() {
+  if (!document2dState) return;
+  const manifest = await documentBrowserManifest(document2dState);
+  const text = JSON.stringify(manifest, null, 2) + "\n";
+  downloadTextFile(
+    text,
+    documentSvgFilename(document2dState).replace(/\.svg$/, ".manifest.json"),
+    "application/json;charset=utf-8",
+  );
+  log(
+    `Document manifest сохранён: outputDigest=${manifest.outputDigest}, renderer=${manifest.rendererSha.slice(0, 12)}`,
   );
 }
 
@@ -2554,6 +2641,10 @@ function mountDocument2D() {
     network: scene.network,
     options: null,
     layout: null,
+    svgText: null,
+    outputDigest: null,
+    digestError: null,
+    digestGeneration: 0,
     viewport: null,
     pointerId: null,
     panPointer: null,
