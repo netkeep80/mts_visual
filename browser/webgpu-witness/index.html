@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>mts_visual — WebGPU-стенд</title>
+  <title>mts_visual — лаборатория визуализации</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
@@ -28,7 +28,14 @@
     button, select { background: #172338; color: #e9eef7; border: 1px solid #395070; border-radius: 8px; padding: 8px 12px; }
     button:hover { background: #20304a; }
     .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    .lab-mode-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:12px 0; padding:10px; background:#0d1521; border:1px solid #25334a; border-radius:10px; }
+    .lab-mode-bar label { color:#9fb1c9; }
+    .lab-mode-status { margin-left:auto; font-size:12px; color:#98a7bd; }
     .live-lab { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
+    .live-lab.placeholder-mode { grid-template-columns: minmax(0, 1fr); }
+    .mode-placeholder { height:100%; min-height:320px; display:grid; place-items:center; text-align:center; padding:32px; color:#98a7bd; background:radial-gradient(circle at 50% 40%, #172338 0, #090d14 60%); }
+    .mode-placeholder strong { display:block; color:#e9eef7; font-size:20px; margin-bottom:8px; }
+    [hidden] { display:none !important; }
     .control-sidebar { display: grid; gap: 9px; align-content: start; }
     .control-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .control-actions button { width: 100%; }
@@ -56,8 +63,8 @@
 </head>
 <body>
 <main>
-  <h1>mts_visual — реальный WebGPU-стенд</h1>
-  <div class="muted">Дифференциальная проверка вычислений P4b + zero-copy рендерер P4c в этом браузере/GPU.</div>
+  <h1>mts_visual — лаборатория визуализации</h1>
+  <div class="muted">Единая лаборатория пяти представлений асети · текущий Mechanical 3D сохраняет реальный WebGPU witness.</div>
 
   <section class="grid section">
     <div class="card"><div class="muted">Сборка</div><div id="build" class="value">загрузка…</div></div>
@@ -121,22 +128,31 @@
       <span class="muted">физика семантического CENTER · глобально производный октаэдрический носитель</span>
     </div>
 
-    <div class="live-lab">
-      <aside class="control-sidebar" aria-label="Параметры физики в реальном времени">
-        <div class="physics-control">
-          <label for="scene"><span>Сцена</span></label>
-          <select id="scene">
-            <option value="root-r" selected>1 · только R</option>
-            <option value="root-ro">2 · R + O</option>
-            <option value="root-roc">3 · R + O + C</option>
-            <option value="root-rocl">4 · R + O + C + L</option>
-            <option value="root-roclu">5 · R + O + C + L + U</option>
-            <option value="hub-64">нагрузка · 64 связи</option>
-            <option value="hub-333">нагрузка · 333 связи</option>
-            <option value="hub-1000">нагрузка · 1 000 связей</option>
-          </select>
-        </div>
+    <div class="lab-mode-bar" aria-label="Общие параметры лаборатории">
+      <label for="scene">Асеть</label>
+      <select id="scene">
+        <option value="root-r" selected>1 · только R</option>
+        <option value="root-ro">2 · R + O</option>
+        <option value="root-roc">3 · R + O + C</option>
+        <option value="root-rocl">4 · R + O + C + L</option>
+        <option value="root-roclu">5 · R + O + C + L + U</option>
+        <option value="hub-64">нагрузка · 64 связи</option>
+        <option value="hub-333">нагрузка · 333 связи</option>
+        <option value="hub-1000">нагрузка · 1 000 связей</option>
+      </select>
+      <label for="visualization-mode">Режим</label>
+      <select id="visualization-mode">
+        <option value="structural-2d">Структурный 2D</option>
+        <option value="blueprint-2d">Blueprint 2D</option>
+        <option value="document-2d">Документный 2D</option>
+        <option value="classic-3d">Классический 3D</option>
+        <option value="mechanical-3d" selected>Механический 3D</option>
+      </select>
+      <span id="mode-status" class="lab-mode-status" role="status" aria-live="polite">Механический 3D · готов</span>
+    </div>
 
+    <div id="live-lab" class="live-lab">
+      <aside id="mechanical-controls" class="control-sidebar" aria-label="Параметры механического 3D">
         <div class="physics-control">
           <label for="length-octa">
             <span>Длина связи</span>
@@ -251,6 +267,7 @@
 
       <div class="viewport-column">
         <div id="viewport-shell" class="viewport-shell">
+          <div id="mode-placeholder" class="mode-placeholder" hidden></div>
           <canvas id="gpu-canvas"></canvas>
         </div>
         <div class="camera-hint">Мышь: наведите на два центральных октаэдра, чтобы показать зелёный каркасный икосаэдр L2 · перетаскивание ЛКМ за маркер = перемещение семантического CENTER · ЛКМ в другом месте = вращение камеры · колесо = масштаб · ПКМ или Shift+ЛКМ = панорамирование</div>
