@@ -195,6 +195,55 @@ same(
   "32 MiB semantic capacity is explicitly reported",
 );
 
+const semanticOnly = planMonolithicLinkWebGpuCapacity3D(
+  1_000_000,
+  aspectForOctahedra(64),
+  {
+    maxStorageBufferBindingSize: storage128MiB,
+    maxBufferSize: storage128MiB,
+  },
+  { detailCapacity: 0 },
+);
+same(semanticOnly.requestedDetailCapacity, 0, "semantic-only plan records requested zero detail");
+same(semanticOnly.detailCapacity, 0, "semantic-only plan allocates zero detail slots");
+same(semanticOnly.sectionFrameBytes, 0, "semantic-only plan allocates no section-frame payload");
+same(semanticOnly.selectorInvocationsPerStep, 0, "semantic-only plan runs no selector");
+same(semanticOnly.detailInvocationsPerStep, 0, "semantic-only plan runs no detail solve");
+same(semanticOnly.computePassesPerStep, 3, "semantic-only plan is 2 physics + compact shape");
+
+const interactive4096 = planMonolithicLinkWebGpuCapacity3D(
+  1_000_000,
+  aspectForOctahedra(128),
+  {
+    maxStorageBufferBindingSize: storage128MiB,
+    maxBufferSize: storage128MiB,
+  },
+  { detailCapacity: 4096 },
+);
+same(interactive4096.requestedDetailCapacity, 4096, "interactive plan records requested detail budget");
+same(interactive4096.detailCapacity, 4096, "interactive detail budget is independent of total Link count");
+same(interactive4096.detailedLinkCount, 4096, "interactive detailed Link count is bounded");
+same(interactive4096.selectorInvocationsPerStep, 4096, "GPU selector uses one invocation per detail slot");
+same(interactive4096.selectorCandidateVisitsPerStep, 1_000_000, "GPU selector visits all live CENTER candidates");
+same(interactive4096.detailInvocationsPerStep, 4096, "detail solve follows bounded slots");
+same(interactive4096.computePassesPerStep, 5, "bounded plan is 2 physics + compact + selector + detail");
+assert(interactive4096.limits.fits, "1M/128octa with K=4096 fits 128 MiB per-binding limits");
+
+const clampedRequestedDetail = planMonolithicLinkWebGpuCapacity3D(
+  1_000_000,
+  aspectForOctahedra(128),
+  {
+    maxStorageBufferBindingSize: storage128MiB,
+    maxBufferSize: storage128MiB,
+  },
+  { detailCapacity: 100_000 },
+);
+same(
+  clampedRequestedDetail.detailCapacity,
+  clampedRequestedDetail.limits.maximumDetailedLinksByBinding,
+  "requested detail budget clamps to actual adapter detail binding capacity",
+);
+
 const noLimit = planMonolithicLinkWebGpuCapacity3D(
   1_000,
   aspectForOctahedra(32),
