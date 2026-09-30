@@ -37,8 +37,8 @@ function requireOptionalLink(
   linkCount: number,
   name: string,
 ): number | null {
-  if (value === undefined || value === null || value < 0) return null;
-  if (!Number.isSafeInteger(value) || value >= linkCount) {
+  if (value === undefined || value === null || value === -1) return null;
+  if (!Number.isSafeInteger(value) || value < 0 || value >= linkCount) {
     throw new Error(
       `invalid monolithic detail ${name}: ${String(value)}`,
     );
