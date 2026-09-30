@@ -3024,6 +3024,7 @@ async function runLabModeCycleSelfTest() {
   const originalManifest = sceneInputManifestText(scene);
   const originalSelectedKey = selectedVisualKey;
   const report = [];
+  let finalSelfTest = null;
   const startMounts = labResourceLedger.mounts;
   const startDisposals = labResourceLedger.disposals;
 
@@ -3065,15 +3066,15 @@ async function runLabModeCycleSelfTest() {
       ? `PASS · ${expectedActivations} переходов · WebGPU проверен`
       : `PASS · ${expectedActivations} переходов · Mechanical без WebGPU device`;
     log(`mode-cycle self-test: PASS · переходов=${expectedActivations} · input=${scene.id}`);
-    renderLabResourceAudit({ status: "PASS", steps: report });
+    finalSelfTest = { status: "PASS", steps: report };
   } catch (error) {
     ui.labCycleStatus.textContent = "FAIL · см. resource ledger";
     log(`mode-cycle self-test: FAIL — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-    renderLabResourceAudit({
+    finalSelfTest = {
       status: "FAIL",
       error: error instanceof Error ? error.message : String(error),
       steps: report,
-    });
+    };
     throw error;
   } finally {
     ui.visualizationMode.value = originalModeSelect;
@@ -3084,6 +3085,7 @@ async function runLabModeCycleSelfTest() {
     }
     labCycleTestRunning = false;
     ui.labRunCycleTest.disabled = false;
+    renderLabResourceAudit(finalSelfTest);
   }
 }
 
