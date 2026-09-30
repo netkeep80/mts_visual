@@ -31,6 +31,28 @@ const ui = {
   blueprintFit: $("blueprint-fit"),
   blueprintReset: $("blueprint-reset"),
   blueprintExport: $("blueprint-export"),
+  classicControls: $("classic-controls"),
+  classicViewport: $("classic-viewport"),
+  classicCharge: $("classic-charge"),
+  classicChargeValue: $("classic-charge-value"),
+  classicRestLength: $("classic-rest-length"),
+  classicRestLengthValue: $("classic-rest-length-value"),
+  classicStiffness: $("classic-stiffness"),
+  classicStiffnessValue: $("classic-stiffness-value"),
+  classicDamping: $("classic-damping"),
+  classicDampingValue: $("classic-damping-value"),
+  classicTimeStep: $("classic-time-step"),
+  classicTimeStepValue: $("classic-time-step-value"),
+  classicLabels: $("classic-labels"),
+  classicPause: $("classic-pause"),
+  classicReset: $("classic-reset"),
+  classicFit: $("classic-fit"),
+  classicFullscreen: $("classic-fullscreen"),
+  classicRenderDiagnostics: $("classic-render-diagnostics"),
+  classicTick: $("classic-tick"),
+  classicEvaluations: $("classic-evaluations"),
+  classicMaxVelocity: $("classic-max-velocity"),
+  classicPinned: $("classic-pinned"),
   modePlaceholder: $("mode-placeholder"),
   scene: $("scene"),
   inspectGeometry: $("inspect-geometry"),
@@ -89,7 +111,7 @@ const LAB_MODE_UI = Object.freeze({
   "structural-2d": Object.freeze({ label: "Структурный 2D", issue: 126, ready: false, description: "структурная карта асети" }),
   "blueprint-2d": Object.freeze({ label: "Blueprint 2D", issue: 127, ready: true, description: "цельные связи START → CENTER → END · SVG · drag / pan / zoom" }),
   "document-2d": Object.freeze({ label: "Документный 2D", issue: 123, ready: false, description: "детерминированная публикационная проекция" }),
-  "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: false, description: "центры с взаимным отталкиванием + пружины инцидентности" }),
+  "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: true, description: "центры с взаимным отталкиванием + пружины инцидентности" }),
   "mechanical-3d": Object.freeze({ label: "Механический 3D", issue: 129, ready: true, description: "монолитная физика связи · WebGPU zero-copy" }),
 });
 
@@ -181,9 +203,10 @@ function fmt(value) {
     : value.toFixed(6);
 }
 
-const [core, webgpu, buildInfo] = await Promise.all([
+const [core, webgpu, threeVisual, buildInfo] = await Promise.all([
   import("./vendor/mts-visual-core.bundle.js"),
   import("./vendor/mts-visual-webgpu.bundle.js"),
+  import("./vendor/mts-visual-three.bundle.js"),
   fetch("./build-info.json", { cache: "no-store" }).then((response) => {
     if (!response.ok) throw new Error(`ошибка загрузки сведений о сборке: HTTP ${response.status}`);
     return response.json();
