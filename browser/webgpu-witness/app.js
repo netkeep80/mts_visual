@@ -2792,6 +2792,7 @@ const labLifecycle = core.createVisualLabLifecycle({
   mount: mountLabMode,
   onStateChange: ({ state, modeId, error }) => {
     const definition = modeId ? labModeUi(modeId) : null;
+    if (modeId) currentLabModeId = modeId;
     if (state === "mounting") {
       ui.modeStatus.textContent = `${definition?.label ?? modeId} · переключение…`;
       ui.modeHeading.textContent = definition?.label ?? modeId;
@@ -2806,6 +2807,7 @@ const labLifecycle = core.createVisualLabLifecycle({
     } else if (state === "disposed") {
       ui.modeStatus.textContent = "renderer освобождён";
     }
+    updateSharedDiagnostics();
   },
 });
 
@@ -2881,6 +2883,14 @@ ui.labInputCopy.addEventListener("click", () => {
   });
 });
 
+ui.labCopyDiagnostics.addEventListener("click", () => {
+  copyText(sharedDiagnosticText()).then(() => {
+    ui.modeStatus.textContent = `${labModeUi(currentLabModeId)?.label ?? currentLabModeId} · диагностика скопирована`;
+  }).catch((error) => {
+    log(`ОШИБКА копирования общей диагностики — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
+});
+
 ui.copyLog.addEventListener("click", () => {
   copyDiagnosticLog().catch((error) => {
     log(`ОШИБКА копирования диагностического журнала — ${error.stack ?? error}`);
@@ -2908,6 +2918,8 @@ ui.rerun.addEventListener("click", () => {
 
 ui.scene.addEventListener("change", () => {
   syncLabInputPanel();
+  reconcileSelectedVisualKey();
+  updateSharedDiagnostics();
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
   if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "document-2d" || activeMode === "classic-3d") {
