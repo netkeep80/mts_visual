@@ -2,6 +2,7 @@ import type { VisualLinkNetwork } from "../index.js";
 import {
   MONOLITHIC_LINK_BASE_TIME_STEP,
   createMonolithicLinkSemanticCenterSeed3D,
+  createMonolithicLinkSpringPhysics3D,
   getMonolithicLinkSpringTemplate3D,
   type MonolithicLinkSpringOptions3D,
 } from "../monolithic-link-spring3d.js";
