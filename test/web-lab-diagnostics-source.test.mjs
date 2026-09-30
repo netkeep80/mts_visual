@@ -28,6 +28,28 @@ for (const id of [
 }
 
 assert(app.includes("function sharedDiagnosticSnapshot()"), "shared diagnostic envelope exists");
+
+for (const needle of [
+  "detailedLinkCount: shape.detailedLinkCount",
+  "detailCapacity: shape.detailCapacity",
+  "compactDynamicStateBytes: shape.compactDynamicStateBytes",
+  "detailDynamicStateBytes: shape.detailDynamicStateBytes",
+  "renderer.shapeDetailLinkIndexBuffer",
+  "renderer.shapeSectionFrameBuffer",
+  "shapeStats.compactDispatches !== 1",
+  "shapeStats.detailDispatches !== expectedDetailDispatches",
+  "shapeStats.computePasses !== expectedShapePasses",
+  "const hasDetail = stats.detailedLinkCount > 0",
+]) {
+  assert(
+    app.includes(needle),
+    `Mechanical bounded-detail runtime contract missing: ${needle}`,
+  );
+}
+assert(
+  !app.includes("shapeStats.computePasses !== 1"),
+  "Mechanical lab must not retain the obsolete one-pass shape invariant",
+);
 for (const fn of [
   "structuralDiagnosticDetail",
   "blueprintDiagnosticDetail",
