@@ -85,8 +85,11 @@ assert(
 );
 
 assert(
-  app.includes('params.get("benchmark") !== "mechanical"'),
-  "URL auto-run must require explicit benchmark=mechanical opt-in",
+  app.includes('from "./benchmark-ui-model.js"')
+    && app.includes("parseMechanicalBenchmarkQuery")
+    && app.includes("createBenchmarkConfig")
+    && app.includes("serializeBenchmarkEvidence"),
+  "app must delegate benchmark UI data rules to the pure benchmark UI model",
 );
 assert(
   app.includes("applyBenchmarkQuery(startupParams)"),
@@ -95,10 +98,6 @@ assert(
 assert(
   !app.includes('ui.benchmarkLinks.value = "1000000";'),
   "ordinary page load must not force the 1M preset",
-);
-assert(
-  app.includes("linkCount <= 100_000 ? 20 : 1"),
-  "runs <=100k must require at least 20 measured samples",
 );
 assert(
   app.includes("benchmarkStopRequested = true"),
@@ -119,10 +118,6 @@ assert(
 assert(
   app.includes("downloadBenchmarkEvidence"),
   "benchmark evidence must be downloadable",
-);
-assert(
-  app.includes("benchmarkEvidenceText"),
-  "benchmark evidence must be copyable",
 );
 
 assert(
