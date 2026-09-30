@@ -1,9 +1,3 @@
-import {
-  LAB_MODE_DEFINITIONS,
-  createLabModeLifecycle,
-  labModeDefinition,
-} from "./lab-shell.js";
-
 const $ = (id) => document.getElementById(id);
 
 const ui = {
@@ -1652,7 +1646,7 @@ async function inspectGeometry() {
 }
 
 function updateModePlaceholder(modeId) {
-  const definition = labModeDefinition(modeId);
+  const definition = core.visualLabModeDefinition(modeId);
   const scene = selectedScene();
   if (!definition) return;
   ui.modePlaceholder.innerHTML =
@@ -1681,10 +1675,18 @@ async function mountLabMode(modeId) {
   };
 }
 
-const labLifecycle = createLabModeLifecycle({
+const modeIdsInUi = [...ui.visualizationMode.options].map((option) => option.value);
+const modeIdsInCore = core.VISUAL_LAB_MODE_DEFINITIONS.map((mode) => mode.id);
+if (modeIdsInUi.join(",") !== modeIdsInCore.join(",")) {
+  throw new Error(
+    `режимы UI не совпадают с @mts/visual: UI=${modeIdsInUi.join(",")}; core=${modeIdsInCore.join(",")}`,
+  );
+}
+
+const labLifecycle = core.createVisualLabLifecycle({
   mount: mountLabMode,
   onStateChange: ({ state, modeId, error }) => {
-    const definition = modeId ? labModeDefinition(modeId) : null;
+    const definition = modeId ? core.visualLabModeDefinition(modeId) : null;
     if (state === "mounting") {
       ui.modeStatus.textContent = `${definition?.label ?? modeId} · переключение…`;
     } else if (state === "mounted") {
