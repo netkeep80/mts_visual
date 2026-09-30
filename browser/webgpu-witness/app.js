@@ -2275,19 +2275,23 @@ function updateModePlaceholder(modeId) {
 
 async function mountLabMode(modeId) {
   const mechanical = modeId === "mechanical-3d";
+  const structural = modeId === "structural-2d";
   const blueprint = modeId === "blueprint-2d";
   const classic = modeId === "classic-3d";
-  const hasSideControls = mechanical || blueprint || classic;
+  const hasSideControls = mechanical || structural || blueprint || classic;
 
   ui.mechanicalControls.hidden = !mechanical;
+  ui.structuralControls.hidden = !structural;
   ui.blueprintControls.hidden = !blueprint;
   ui.classicControls.hidden = !classic;
   ui.canvas.hidden = !mechanical;
+  ui.structuralViewport.hidden = !structural;
   ui.blueprintViewport.hidden = !blueprint;
   ui.classicViewport.hidden = !classic;
-  ui.modePlaceholder.hidden = mechanical || blueprint || classic;
+  ui.modePlaceholder.hidden = mechanical || structural || blueprint || classic;
   ui.mechanicalCameraHint.hidden = !mechanical;
   ui.mechanicalRenderDiagnostics.hidden = !mechanical;
+  ui.structuralRenderDiagnostics.hidden = !structural;
   ui.classicRenderDiagnostics.hidden = !classic;
   ui.mechanicalGeometryPanel.hidden = !mechanical;
   ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
@@ -2297,6 +2301,7 @@ async function mountLabMode(modeId) {
     return () => stopRender();
   }
 
+  if (structural) return mountStructural2D();
   if (blueprint) return mountBlueprint();
   if (classic) return mountClassic3D();
 
@@ -2378,7 +2383,7 @@ ui.rerun.addEventListener("click", () => {
 ui.scene.addEventListener("change", () => {
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
-  if (activeMode === "blueprint-2d" || activeMode === "classic-3d") {
+  if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "classic-3d") {
     activateLabMode(activeMode).catch((error) => {
       log(`ОШИБКА перезапуска режима ${activeMode} — ${error.stack ?? error}`);
     });
@@ -2395,6 +2400,36 @@ ui.scene.addEventListener("change", () => {
     log(`ОШИБКА перезапуска сцены — ${error.stack ?? error}`);
     updateOverall();
   });
+});
+
+for (const control of [
+  ui.structuralSpacing,
+  ui.structuralNodeSpacing,
+]) {
+  control.addEventListener("input", () => {
+    refreshStructuralControlLabels();
+    if (structuralState) renderStructuralState(structuralState, { fit: true });
+  });
+}
+
+ui.structuralRoot.addEventListener("change", () => {
+  if (structuralState) renderStructuralState(structuralState, { fit: true });
+});
+
+ui.structuralOptimize.addEventListener("change", () => {
+  if (structuralState) renderStructuralState(structuralState, { fit: true });
+});
+
+ui.structuralFit.addEventListener("click", () => {
+  if (structuralState) fitStructuralState(structuralState);
+});
+
+ui.structuralReset.addEventListener("click", () => {
+  if (structuralState) renderStructuralState(structuralState, { fit: true });
+});
+
+ui.structuralExport.addEventListener("click", () => {
+  downloadStructuralSvg();
 });
 
 for (const control of [
@@ -2650,6 +2685,8 @@ document.addEventListener("fullscreenchange", () => {
   if (classicState) {
     requestAnimationFrame(() => threeVisual.fitVisualThreeRenderer(ui.classicViewport));
   }
+  if (structuralState) requestAnimationFrame(() => fitStructuralState(structuralState));
+  if (blueprintState) requestAnimationFrame(() => fitBlueprintState(blueprintState));
 });
 
 try {
