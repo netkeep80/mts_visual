@@ -104,6 +104,7 @@ export * from "./presentation.js";
 export * from "./lab-lifecycle.js";
 export * from "./structural2d.js";
 export * from "./document2d.js";
+export * from "./document2d-manifest.js";
 export * from "./blueprint-geometry.js";
 export * from "./blueprint-svg.js";
 export * from "./blueprint-interaction.js";

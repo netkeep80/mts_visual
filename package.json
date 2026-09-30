@@ -15,12 +15,14 @@
     }
   },
   "files": [
-    "dist/src"
+    "dist/src",
+    "bin"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build --silent && node dist/test/model.test.js",
-    "check": "npm test"
+    "test": "npm run build --silent && node dist/test/model.test.js && node test/document2d-cli.test.mjs",
+    "check": "npm test",
+    "render-2d": "npm run build --silent && node bin/mts-visual.mjs render-2d"
   },
   "dependencies": {
     "three": "0.185.1"
@@ -28,5 +30,8 @@
   "devDependencies": {
     "@types/three": "0.185.0",
     "typescript": "5.9.3"
+  },
+  "bin": {
+    "mts-visual": "./bin/mts-visual.mjs"
   }
 }
