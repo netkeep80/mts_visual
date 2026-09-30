@@ -47,6 +47,19 @@ const ui = {
   blueprintFit: $("blueprint-fit"),
   blueprintReset: $("blueprint-reset"),
   blueprintExport: $("blueprint-export"),
+  documentControls: $("document-controls"),
+  documentViewport: $("document-viewport"),
+  documentProfile: $("document-profile"),
+  documentStrategy: $("document-strategy"),
+  documentRoot: $("document-root"),
+  documentFit: $("document-fit"),
+  documentReset: $("document-reset"),
+  documentExport: $("document-export"),
+  documentRenderDiagnostics: $("document-render-diagnostics"),
+  documentSeed: $("document-seed"),
+  documentCrossings: $("document-crossings"),
+  documentOverlaps: $("document-overlaps"),
+  documentOptimizer: $("document-optimizer"),
   classicControls: $("classic-controls"),
   classicViewport: $("classic-viewport"),
   classicCharge: $("classic-charge"),
@@ -126,7 +139,7 @@ function log(message) {
 const LAB_MODE_UI = Object.freeze({
   "structural-2d": Object.freeze({ label: "Структурный 2D", issue: 126, ready: true, description: "SCC + структурные слои · START/END incidence · детерминированная минимизация пересечений" }),
   "blueprint-2d": Object.freeze({ label: "Blueprint 2D", issue: 127, ready: true, description: "цельные связи START → CENTER → END · SVG · drag / pan / zoom" }),
-  "document-2d": Object.freeze({ label: "Документный 2D", issue: 123, ready: false, description: "детерминированная публикационная проекция" }),
+  "document-2d": Object.freeze({ label: "Документный 2D", issue: 123, ready: true, description: "детерминированный one-shot publication layout · exact 180° CENTER · canonical SVG" }),
   "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: true, description: "центры с взаимным отталкиванием + пружины инцидентности" }),
   "mechanical-3d": Object.freeze({ label: "Механический 3D", issue: 129, ready: true, description: "монолитная физика связи · WebGPU zero-copy" }),
 });
@@ -2157,6 +2170,207 @@ function mountBlueprint() {
   };
 }
 
+let document2dState = null;
+
+function selectedDocumentOptions() {
+  const rootKey = ui.documentRoot.value || undefined;
+  return Object.freeze({
+    profile: ui.documentProfile.value,
+    strategy: ui.documentStrategy.value,
+    ...(rootKey === undefined ? {} : { rootKey }),
+  });
+}
+
+function refreshDocumentRootOptions(network) {
+  const previous = ui.documentRoot.value;
+  ui.documentRoot.replaceChildren();
+
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "Без явного корня";
+  ui.documentRoot.appendChild(none);
+
+  for (const link of [...network.links].sort((left, right) => left.key.localeCompare(right.key))) {
+    const option = document.createElement("option");
+    option.value = link.key;
+    option.textContent = link.key;
+    ui.documentRoot.appendChild(option);
+  }
+
+  ui.documentRoot.value = network.links.some((link) => link.key === previous)
+    ? previous
+    : "";
+}
+
+function documentViewportSize() {
+  return {
+    width: Math.max(1, ui.documentViewport.clientWidth),
+    height: Math.max(1, ui.documentViewport.clientHeight),
+  };
+}
+
+function applyDocumentViewport(state) {
+  const svg = ui.documentViewport.querySelector("svg");
+  if (!svg || !state.viewport) return;
+  const { width, height } = documentViewportSize();
+  const { scale, panX, panY } = state.viewport;
+  svg.setAttribute(
+    "viewBox",
+    [
+      -panX / scale,
+      -panY / scale,
+      width / scale,
+      height / scale,
+    ].map((value) => Number(value.toFixed(9))).join(" "),
+  );
+  svg.setAttribute("preserveAspectRatio", "none");
+}
+
+function fitDocumentState(state) {
+  const { width, height } = documentViewportSize();
+  state.viewport = core.fitBlueprintViewport(
+    state.layout.bounds,
+    width,
+    height,
+    { padding: 28, minScale: 0.05, maxScale: 16 },
+  );
+  applyDocumentViewport(state);
+}
+
+function updateDocumentDiagnostics(state) {
+  const before = state.layout.metrics.qualityBefore;
+  const after = state.layout.metrics.qualityAfter;
+  ui.documentSeed.textContent =
+    `${state.layout.metrics.seedStrategy} · ${state.layout.metrics.seedCandidates} кандидата`;
+  ui.documentCrossings.textContent =
+    `${before.crossings} → ${after.crossings}`;
+  ui.documentOverlaps.textContent =
+    `центры ${after.centerOverlaps} · подписи ${after.labelOverlaps}`;
+  ui.documentOptimizer.textContent =
+    `${state.layout.metrics.optimizerEvaluations} проверок · ${state.layout.metrics.optimizerPasses} проходов`;
+}
+
+function renderDocumentState(state, { fit = false } = {}) {
+  state.options = selectedDocumentOptions();
+  state.layout = core.layoutDocument2D(state.network, state.options);
+  ui.documentViewport.innerHTML = core.serializeDocument2DSvg(
+    state.network,
+    state.layout,
+  );
+
+  const svg = ui.documentViewport.querySelector("svg");
+  if (!svg) throw new Error("Document 2D renderer не создал SVG");
+  svg.setAttribute(
+    "aria-label",
+    `Document 2D: ${state.scene.label} · ${state.layout.profile}`,
+  );
+
+  updateDocumentDiagnostics(state);
+  if (fit || !state.viewport) fitDocumentState(state);
+  else applyDocumentViewport(state);
+}
+
+function documentPointerPoint(event) {
+  const rect = ui.documentViewport.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+}
+
+function downloadDocumentSvg() {
+  if (!document2dState?.layout) return;
+  const text = core.serializeDocument2DSvg(
+    document2dState.network,
+    document2dState.layout,
+  );
+  const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download =
+    `mts-visual-document-${document2dState.scene.id}-${document2dState.layout.profile}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+
+  log(
+    `Document SVG сохранён: сцена=${document2dState.scene.label}, профиль=${document2dState.layout.profile}, seed=${document2dState.layout.metrics.seedStrategy}, качество=${document2dState.layout.metrics.qualityAfter.score}`,
+  );
+}
+
+function mountDocument2D() {
+  const scene = selectedScene();
+  const abortController = new AbortController();
+  refreshDocumentRootOptions(scene.network);
+
+  const state = {
+    scene,
+    network: scene.network,
+    options: null,
+    layout: null,
+    viewport: null,
+    pointerId: null,
+    panPointer: null,
+    abortController,
+  };
+  document2dState = state;
+  renderDocumentState(state, { fit: true });
+
+  const signal = abortController.signal;
+  ui.documentViewport.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    state.pointerId = event.pointerId;
+    state.panPointer = { x: event.clientX, y: event.clientY };
+    ui.documentViewport.setPointerCapture?.(event.pointerId);
+    ui.documentViewport.classList.add("dragging");
+    event.preventDefault();
+  }, { signal });
+
+  ui.documentViewport.addEventListener("pointermove", (event) => {
+    if (state.pointerId !== event.pointerId || !state.panPointer) return;
+    const dx = event.clientX - state.panPointer.x;
+    const dy = event.clientY - state.panPointer.y;
+    state.panPointer = { x: event.clientX, y: event.clientY };
+    state.viewport = core.panBlueprintViewport(state.viewport, dx, dy);
+    applyDocumentViewport(state);
+    event.preventDefault();
+  }, { signal });
+
+  const finishPointer = (event) => {
+    if (state.pointerId !== event.pointerId) return;
+    state.pointerId = null;
+    state.panPointer = null;
+    ui.documentViewport.classList.remove("dragging");
+  };
+  ui.documentViewport.addEventListener("pointerup", finishPointer, { signal });
+  ui.documentViewport.addEventListener("pointercancel", finishPointer, { signal });
+
+  ui.documentViewport.addEventListener("wheel", (event) => {
+    const factor = Math.exp(-event.deltaY * 0.001);
+    state.viewport = core.zoomBlueprintViewport(
+      state.viewport,
+      factor,
+      documentPointerPoint(event),
+      { minScale: 0.05, maxScale: 24 },
+    );
+    applyDocumentViewport(state);
+    event.preventDefault();
+  }, { passive: false, signal });
+
+  log(
+    `Document 2D запущен: сцена=${scene.label}, профиль=${state.layout.profile}, seed=${state.layout.metrics.seedStrategy}, пересечения=${state.layout.metrics.qualityBefore.crossings}→${state.layout.metrics.qualityAfter.crossings}`,
+  );
+
+  return () => {
+    abortController.abort();
+    ui.documentViewport.classList.remove("dragging");
+    ui.documentViewport.replaceChildren();
+    if (document2dState === state) document2dState = null;
+  };
+}
+
 let classicState = null;
 
 function selectedClassicOptions() {
@@ -2277,21 +2491,25 @@ async function mountLabMode(modeId) {
   const mechanical = modeId === "mechanical-3d";
   const structural = modeId === "structural-2d";
   const blueprint = modeId === "blueprint-2d";
+  const document2d = modeId === "document-2d";
   const classic = modeId === "classic-3d";
-  const hasSideControls = mechanical || structural || blueprint || classic;
+  const hasSideControls = mechanical || structural || blueprint || document2d || classic;
 
   ui.mechanicalControls.hidden = !mechanical;
   ui.structuralControls.hidden = !structural;
   ui.blueprintControls.hidden = !blueprint;
+  ui.documentControls.hidden = !document2d;
   ui.classicControls.hidden = !classic;
   ui.canvas.hidden = !mechanical;
   ui.structuralViewport.hidden = !structural;
   ui.blueprintViewport.hidden = !blueprint;
+  ui.documentViewport.hidden = !document2d;
   ui.classicViewport.hidden = !classic;
-  ui.modePlaceholder.hidden = mechanical || structural || blueprint || classic;
+  ui.modePlaceholder.hidden = mechanical || structural || blueprint || document2d || classic;
   ui.mechanicalCameraHint.hidden = !mechanical;
   ui.mechanicalRenderDiagnostics.hidden = !mechanical;
   ui.structuralRenderDiagnostics.hidden = !structural;
+  ui.documentRenderDiagnostics.hidden = !document2d;
   ui.classicRenderDiagnostics.hidden = !classic;
   ui.mechanicalGeometryPanel.hidden = !mechanical;
   ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
@@ -2303,6 +2521,7 @@ async function mountLabMode(modeId) {
 
   if (structural) return mountStructural2D();
   if (blueprint) return mountBlueprint();
+  if (document2d) return mountDocument2D();
   if (classic) return mountClassic3D();
 
   updateModePlaceholder(modeId);
@@ -2383,7 +2602,7 @@ ui.rerun.addEventListener("click", () => {
 ui.scene.addEventListener("change", () => {
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
-  if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "classic-3d") {
+  if (activeMode === "structural-2d" || activeMode === "blueprint-2d" || activeMode === "document-2d" || activeMode === "classic-3d") {
     activateLabMode(activeMode).catch((error) => {
       log(`ОШИБКА перезапуска режима ${activeMode} — ${error.stack ?? error}`);
     });
@@ -2467,6 +2686,28 @@ ui.blueprintReset.addEventListener("click", () => {
 
 ui.blueprintExport.addEventListener("click", () => {
   downloadBlueprintSvg();
+});
+
+for (const control of [
+  ui.documentProfile,
+  ui.documentStrategy,
+  ui.documentRoot,
+]) {
+  control.addEventListener("change", () => {
+    if (document2dState) renderDocumentState(document2dState, { fit: true });
+  });
+}
+
+ui.documentFit.addEventListener("click", () => {
+  if (document2dState) fitDocumentState(document2dState);
+});
+
+ui.documentReset.addEventListener("click", () => {
+  if (document2dState) renderDocumentState(document2dState, { fit: true });
+});
+
+ui.documentExport.addEventListener("click", () => {
+  downloadDocumentSvg();
 });
 
 for (const control of [
@@ -2687,6 +2928,7 @@ document.addEventListener("fullscreenchange", () => {
   }
   if (structuralState) requestAnimationFrame(() => fitStructuralState(structuralState));
   if (blueprintState) requestAnimationFrame(() => fitBlueprintState(blueprintState));
+  if (document2dState) requestAnimationFrame(() => fitDocumentState(document2dState));
 });
 
 try {

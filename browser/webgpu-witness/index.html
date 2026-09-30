@@ -35,7 +35,11 @@
     .live-lab.placeholder-mode { grid-template-columns: minmax(0, 1fr); }
     .mode-placeholder { height:100%; min-height:320px; display:grid; place-items:center; text-align:center; padding:32px; color:#98a7bd; background:radial-gradient(circle at 50% 40%, #172338 0, #090d14 60%); }
     .mode-placeholder strong { display:block; color:#e9eef7; font-size:20px; margin-bottom:8px; }
-    .structural-viewport, .blueprint-viewport, .classic-viewport { width:100%; height:100%; background:#070b11; overflow:hidden; touch-action:none; user-select:none; }
+    .structural-viewport, .blueprint-viewport, .document-viewport, .classic-viewport { width:100%; height:100%; overflow:hidden; touch-action:none; user-select:none; }
+    .structural-viewport, .blueprint-viewport, .classic-viewport { background:#070b11; }
+    .document-viewport { background:#fff; cursor:grab; }
+    .document-viewport.dragging { cursor:grabbing; }
+    .document-viewport svg { width:100%; height:100%; display:block; }
     .structural-viewport { cursor:grab; }
     .structural-viewport.dragging { cursor:grabbing; }
     .structural-viewport svg { width:100%; height:100%; display:block; }
@@ -341,6 +345,41 @@
         </div>
       </aside>
 
+      <aside id="document-controls" class="control-sidebar" aria-label="Параметры документного 2D" hidden>
+        <div class="physics-control">
+          <label for="document-profile"><span>Профиль</span></label>
+          <select id="document-profile">
+            <option value="formal">Формальный</option>
+            <option value="article" selected>Статья</option>
+            <option value="debug">Отладочный</option>
+          </select>
+        </div>
+        <div class="physics-control">
+          <label for="document-strategy"><span>Начальная раскладка</span></label>
+          <select id="document-strategy">
+            <option value="auto" selected>Автовыбор</option>
+            <option value="layered">Структурные слои</option>
+            <option value="radial">Радиальная</option>
+            <option value="canonical">Каноническая сетка</option>
+          </select>
+        </div>
+        <div class="physics-control">
+          <label for="document-root"><span>Явный корень</span></label>
+          <select id="document-root">
+            <option value="" selected>Без явного корня</option>
+          </select>
+        </div>
+        <div class="control-actions">
+          <button id="document-fit" type="button">Вписать</button>
+          <button id="document-reset" type="button">Пересчитать</button>
+          <button id="document-export" type="button">Скачать SVG</button>
+        </div>
+        <div class="physics-control">
+          <div class="muted">Публикационный режим</div>
+          <div class="camera-hint">One-shot layout без физики и времени. Положение и ориентация Links воспроизводимы; для provenance используйте CLI render-2d.</div>
+        </div>
+      </aside>
+
       <aside id="classic-controls" class="control-sidebar" aria-label="Параметры классического 3D" hidden>
         <div class="physics-control">
           <label for="classic-charge"><span>Отталкивание центров</span><output id="classic-charge-value">1.00</output></label>
@@ -384,6 +423,7 @@
           <div id="mode-placeholder" class="mode-placeholder" hidden></div>
           <div id="structural-viewport" class="structural-viewport" role="application" aria-label="Структурная 2D визуализация асети" hidden></div>
           <div id="blueprint-viewport" class="blueprint-viewport" role="application" aria-label="Интерактивная Blueprint 2D визуализация асети" hidden></div>
+          <div id="document-viewport" class="document-viewport" role="application" aria-label="Детерминированная Document 2D визуализация асети" hidden></div>
           <div id="classic-viewport" class="classic-viewport" role="application" aria-label="Классический 3D: отталкивание центров и пружины" hidden></div>
           <canvas id="gpu-canvas"></canvas>
         </div>
@@ -393,6 +433,12 @@
           <div><span class="muted">Пересечения</span><div id="structural-crossings" class="value">0 → 0</div></div>
           <div><span class="muted">Оптимизатор</span><div id="structural-optimizer" class="value">0 проверок</div></div>
           <div><span class="muted">Связи</span><div id="structural-link-count" class="value">0</div></div>
+        </div>
+        <div id="document-render-diagnostics" class="grid" style="margin-top:12px" hidden>
+          <div><span class="muted">Seed</span><div id="document-seed" class="value">—</div></div>
+          <div><span class="muted">Пересечения</span><div id="document-crossings" class="value">0 → 0</div></div>
+          <div><span class="muted">Наложения</span><div id="document-overlaps" class="value">0 / 0</div></div>
+          <div><span class="muted">Оптимизатор</span><div id="document-optimizer" class="value">0</div></div>
         </div>
         <div id="classic-render-diagnostics" class="grid" style="margin-top:12px" hidden>
           <div><span class="muted">Шаг / состояние</span><div id="classic-tick" class="value">0</div></div>
