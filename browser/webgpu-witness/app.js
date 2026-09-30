@@ -1074,9 +1074,22 @@ function mechanicalDiagnosticDetail() {
     centerBytes: compute.centerBytes,
     velocityBytes: compute.velocityBytes,
     octahedraPerLink: shape.octahedronCount,
+    detail: {
+      detailedLinkCount: shape.detailedLinkCount,
+      detailCapacity: shape.detailCapacity,
+      compactDynamicStateBytes: shape.compactDynamicStateBytes,
+      detailDynamicStateBytes: shape.detailDynamicStateBytes,
+      sectionFrameBytes: shape.sectionFrameBytes,
+    },
     zeroCopy: {
       sharedSemanticCenterBuffer: renderer.sharedSemanticCenterBuffer,
       sharedShapeParameterBuffer: renderer.sharedShapeParameterBuffer,
+      sharedDetailLinkIndexBuffer:
+        renderState.renderer.shapeDetailLinkIndexBuffer
+        === renderState.shape.detailLinkIndexBuffer,
+      sharedSectionFrameBuffer:
+        renderState.renderer.shapeSectionFrameBuffer
+        === renderState.shape.sectionFrameBuffer,
       dynamicStateUploadBytesPerFrame: renderer.dynamicStateUploadBytesPerFrame,
       rendererDynamicStateBytes: renderer.rendererDynamicStateBytes,
     },
@@ -1703,6 +1716,8 @@ async function startRender() {
     const zeroCopy =
       renderer.semanticCenterBuffer === compute.centerBuffer
       && renderer.shapeParameterBuffer === shape.parameterBuffer
+      && renderer.shapeDetailLinkIndexBuffer === shape.detailLinkIndexBuffer
+      && renderer.shapeSectionFrameBuffer === shape.sectionFrameBuffer
       && rendererSnapshot.sharedSemanticCenterBuffer === true
       && rendererSnapshot.sharedShapeParameterBuffer === true
       && rendererSnapshot.dynamicStateUploadBytesPerFrame === 0
@@ -1719,12 +1734,12 @@ async function startRender() {
     const shapeSnapshot = shape.snapshot();
     setStatus(
       ui.renderCompute,
-      `ДОСТУПНО · 2 прохода физики + 1 проход производной геометрии`,
+      `ДОСТУПНО · 2 прохода физики + 1 compact shape + 1 detail`,
       "ok",
     );
     setStatus(
       ui.renderTopology,
-      `${scene.label} · ${linkCount} связей · ${shapeSnapshot.octahedronCount} октаэдров/связь · семантическое состояние=${(computeSnapshot.centerBytes + computeSnapshot.velocityBytes).toLocaleString()} Б · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
+      `${scene.label} · ${linkCount} связей · ${shapeSnapshot.octahedronCount} октаэдров/связь · detail=${shapeSnapshot.detailedLinkCount}/${shapeSnapshot.detailCapacity} · compact=${shapeSnapshot.compactDynamicStateBytes.toLocaleString()} Б · detail-cache=${shapeSnapshot.detailDynamicStateBytes.toLocaleString()} Б · mC=${physics.nodeMass.toFixed(2)} · kS=${physics.longitudinalStiffness.toFixed(2)} · kB=${physics.transverseStiffness.toFixed(2)} · α=${physics.nonlinearity.toFixed(2)} · t=${physics.simulationSpeed.toFixed(2)}x`,
       "ok",
     );
     setStatus(
@@ -1825,12 +1840,18 @@ async function startRender() {
         }
 
         const shapeStats = state.shape.update();
+        const expectedShapePasses =
+          shapeStats.detailedLinkCount > 0 ? 2 : 1;
+        const expectedDetailDispatches =
+          shapeStats.detailedLinkCount > 0 ? 1 : 0;
         if (
-          shapeStats.computePasses !== 1
+          shapeStats.compactDispatches !== 1
+          || shapeStats.detailDispatches !== expectedDetailDispatches
+          || shapeStats.computePasses !== expectedShapePasses
           || shapeStats.dynamicStateUploadBytes !== 0
         ) {
           throw new Error(
-            `нарушен инвариант производной геометрии: проходы=${shapeStats.computePasses}, загрузка=${shapeStats.dynamicStateUploadBytes}`,
+            `нарушен инвариант производной геометрии: compact=${shapeStats.compactDispatches}, detail=${shapeStats.detailDispatches}, проходы=${shapeStats.computePasses}/${expectedShapePasses}, detailLinks=${shapeStats.detailedLinkCount}, загрузка=${shapeStats.dynamicStateUploadBytes}`,
           );
         }
         state.shapeUpdates += 1;
@@ -1864,15 +1885,16 @@ async function startRender() {
         });
         state.frames += 1;
 
+        const hasDetail = stats.detailedLinkCount > 0;
         const expectedDrawCalls =
-          1
+          (hasDetail ? 1 : 0)
           + (
             markers.showCenterMarkers
             && state.hoveredCenterLink >= 0
               ? 1
               : 0
           )
-          + (markers.showEndCones ? 1 : 0);
+          + (markers.showEndCones && hasDetail ? 1 : 0);
         if (
           stats.dynamicStateUploadBytes !== 0
           || stats.bufferCopies !== 0
@@ -1905,7 +1927,7 @@ async function startRender() {
 
     state.raf = requestAnimationFrame(frame);
     log(
-      `монолитный рендер v0.5 запущен: сцена=${scene.label}, ${linkCount} связей, ${shape.template.octahedronCount} октаэдров/связь, массаCENTER=${physics.nodeMass.toFixed(2)}, растяжение=${physics.longitudinalStiffness.toFixed(2)}, выпрямление=${physics.transverseStiffness.toFixed(2)}, нелинейность=${physics.nonlinearity.toFixed(2)}, демпфирование=${physics.linearDampingRate.toFixed(2)}, скорость=${physics.simulationSpeed.toFixed(2)}x`,
+      `монолитный рендер v0.6 запущен: сцена=${scene.label}, ${linkCount} связей, detail=${shape.snapshot().detailedLinkCount}/${shape.snapshot().detailCapacity}, ${shape.template.octahedronCount} октаэдров/связь, массаCENTER=${physics.nodeMass.toFixed(2)}, растяжение=${physics.longitudinalStiffness.toFixed(2)}, выпрямление=${physics.transverseStiffness.toFixed(2)}, нелинейность=${physics.nonlinearity.toFixed(2)}, демпфирование=${physics.linearDampingRate.toFixed(2)}, скорость=${physics.simulationSpeed.toFixed(2)}x`,
     );
   } catch (error) {
     try { renderer?.destroy(); } catch {}
