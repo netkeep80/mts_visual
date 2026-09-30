@@ -1,19 +1,12 @@
-export const VISUAL_LAB_MODE_DEFINITIONS = Object.freeze([
-  Object.freeze({ id: "structural-2d", label: "Структурный 2D", issue: 126, ready: false }),
-  Object.freeze({ id: "blueprint-2d", label: "Blueprint 2D", issue: 127, ready: false }),
-  Object.freeze({ id: "document-2d", label: "Документный 2D", issue: 123, ready: false }),
-  Object.freeze({ id: "classic-3d", label: "Классический 3D", issue: 128, ready: false }),
-  Object.freeze({ id: "mechanical-3d", label: "Механический 3D", issue: 129, ready: true }),
+export const VISUAL_LAB_MODE_IDS = Object.freeze([
+  "structural-2d",
+  "blueprint-2d",
+  "document-2d",
+  "classic-3d",
+  "mechanical-3d",
 ] as const);
 
-export type VisualLabModeId = typeof VISUAL_LAB_MODE_DEFINITIONS[number]["id"];
-
-export interface VisualLabModeDefinition {
-  readonly id: VisualLabModeId;
-  readonly label: string;
-  readonly issue: number;
-  readonly ready: boolean;
-}
+export type VisualLabModeId = typeof VISUAL_LAB_MODE_IDS[number];
 
 export type VisualLabCleanup = () => void | Promise<void>;
 
@@ -36,17 +29,21 @@ export interface VisualLabLifecycle<TContext = undefined> {
   snapshot(): VisualLabLifecycleSnapshot;
 }
 
-const MODE_IDS = new Set<string>(VISUAL_LAB_MODE_DEFINITIONS.map((mode) => mode.id));
-
-export function visualLabModeDefinition(modeId: string): VisualLabModeDefinition | null {
-  return VISUAL_LAB_MODE_DEFINITIONS.find((mode) => mode.id === modeId) ?? null;
-}
+const MODE_IDS = new Set<string>(VISUAL_LAB_MODE_IDS);
 
 export function assertVisualLabModeId(modeId: string): VisualLabModeId {
   if (!MODE_IDS.has(modeId)) throw new Error(`unknown visual lab mode: ${modeId}`);
   return modeId as VisualLabModeId;
 }
 
+/**
+ * Serial lifecycle for presentation renderers.
+ *
+ * Every activation disposes the current renderer before mounting the next one.
+ * Async mounts are generation-guarded so a superseded mount cannot become
+ * current after a newer request. A failed mount rejects that activation but does
+ * not poison the queue: a later mode can still mount normally.
+ */
 export function createVisualLabLifecycle<TContext = undefined>(options: Readonly<{
   mount: (
     modeId: VisualLabModeId,
@@ -80,6 +77,9 @@ export function createVisualLabLifecycle<TContext = undefined>(options: Readonly
     if (current) await current();
   };
 
+  const recoveredQueue = (): Promise<VisualLabLifecycleSnapshot> =>
+    queue.catch(() => snapshot());
+
   const activate = (
     modeId: VisualLabModeId,
     context: TContext,
@@ -87,7 +87,7 @@ export function createVisualLabLifecycle<TContext = undefined>(options: Readonly
     assertVisualLabModeId(modeId);
     const requestedGeneration = ++generation;
 
-    queue = queue.then(async () => {
+    queue = recoveredQueue().then(async () => {
       if (requestedGeneration !== generation) return snapshot();
 
       await runCleanup();
@@ -121,7 +121,7 @@ export function createVisualLabLifecycle<TContext = undefined>(options: Readonly
 
   const dispose = (): Promise<VisualLabLifecycleSnapshot> => {
     generation += 1;
-    queue = queue.then(async () => {
+    queue = recoveredQueue().then(async () => {
       await runCleanup();
       onStateChange(Object.freeze({ state: "disposed", modeId: null }));
       return snapshot();
