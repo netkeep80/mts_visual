@@ -184,6 +184,7 @@
     <div class="card" id="lab-shared-diagnostics" style="margin-bottom:12px">
       <div class="toolbar">
         <h2 style="margin-right:auto">Сводка лаборатории</h2>
+        <button id="lab-run-cycle-test" type="button">Проверить цикл режимов</button>
         <button id="lab-copy-diagnostics" type="button">Скопировать диагностику</button>
       </div>
       <div class="grid">
@@ -193,6 +194,7 @@
         <div><span class="muted">Выбрана связь</span><div id="lab-diagnostic-selected" class="value">—</div></div>
         <div><span class="muted">Версия</span><div id="lab-diagnostic-version" class="value">—</div></div>
         <div><span class="muted">Build SHA</span><div id="lab-diagnostic-sha" class="value">—</div></div>
+        <div><span class="muted">Цикл ресурсов</span><div id="lab-cycle-status" class="value">не запускался</div></div>
       </div>
       <pre id="lab-diagnostic-detail" style="margin-top:10px; max-height:180px; overflow:auto"></pre>
     </div>
