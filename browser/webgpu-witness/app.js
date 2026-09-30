@@ -1,3 +1,9 @@
+import {
+  LAB_MODE_DEFINITIONS,
+  createLabModeLifecycle,
+  labModeDefinition,
+} from "./lab-shell.js";
+
 const $ = (id) => document.getElementById(id);
 
 const ui = {
@@ -10,6 +16,11 @@ const ui = {
   monolithicDiffBody: $("monolithic-diff-body"),
   rerun: $("rerun"),
   canvas: $("gpu-canvas"),
+  visualizationMode: $("visualization-mode"),
+  modeStatus: $("mode-status"),
+  liveLab: $("live-lab"),
+  mechanicalControls: $("mechanical-controls"),
+  modePlaceholder: $("mode-placeholder"),
   scene: $("scene"),
   inspectGeometry: $("inspect-geometry"),
   geometryBody: $("geometry-body"),
@@ -1640,6 +1651,69 @@ async function inspectGeometry() {
   }
 }
 
+function updateModePlaceholder(modeId) {
+  const definition = labModeDefinition(modeId);
+  const scene = selectedScene();
+  if (!definition) return;
+  ui.modePlaceholder.innerHTML =
+    `<div><strong>${definition.label}</strong>`
+    + `Режим зарегистрирован общим lifecycle лаборатории.<br>`
+    + `Текущая асеть: ${scene.label} · ${scene.network.links.length} связей.<br>`
+    + `Подключение renderer: issue #${definition.issue}.</div>`;
+}
+
+async function mountLabMode(modeId) {
+  const mechanical = modeId === "mechanical-3d";
+  ui.mechanicalControls.hidden = !mechanical;
+  ui.canvas.hidden = !mechanical;
+  ui.modePlaceholder.hidden = mechanical;
+  ui.liveLab.classList.toggle("placeholder-mode", !mechanical);
+
+  if (mechanical) {
+    await startRender();
+    return () => stopRender();
+  }
+
+  updateModePlaceholder(modeId);
+  log(`режим ${modeId} выбран; renderer будет подключён отдельным этапом roadmap`);
+  return () => {
+    ui.modePlaceholder.replaceChildren();
+  };
+}
+
+const labLifecycle = createLabModeLifecycle({
+  mount: mountLabMode,
+  onStateChange: ({ state, modeId, error }) => {
+    const definition = modeId ? labModeDefinition(modeId) : null;
+    if (state === "mounting") {
+      ui.modeStatus.textContent = `${definition?.label ?? modeId} · переключение…`;
+    } else if (state === "mounted") {
+      ui.modeStatus.textContent = definition?.ready
+        ? `${definition.label} · готов`
+        : `${definition?.label ?? modeId} · каркас готов · renderer #${definition?.issue}`;
+    } else if (state === "error") {
+      ui.modeStatus.textContent = `${definition?.label ?? modeId} · ошибка`;
+      log(`ОШИБКА переключения режима ${modeId} — ${error?.stack ?? error}`);
+    } else if (state === "disposed") {
+      ui.modeStatus.textContent = "renderer освобождён";
+    }
+  },
+});
+
+async function activateLabMode(modeId) {
+  await labLifecycle.activate(modeId);
+}
+
+function mechanicalModeIsActive() {
+  return labLifecycle.activeMode === "mechanical-3d";
+}
+
+ui.visualizationMode.addEventListener("change", () => {
+  activateLabMode(ui.visualizationMode.value).catch((error) => {
+    log(`ОШИБКА активации режима — ${error.stack ?? error}`);
+  });
+});
+
 ui.copyLog.addEventListener("click", () => {
   copyDiagnosticLog().catch((error) => {
     log(`ОШИБКА копирования диагностического журнала — ${error.stack ?? error}`);
@@ -1667,6 +1741,10 @@ ui.rerun.addEventListener("click", () => {
 
 ui.scene.addEventListener("change", () => {
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
+  if (!mechanicalModeIsActive()) {
+    updateModePlaceholder(labLifecycle.activeMode ?? ui.visualizationMode.value);
+    return;
+  }
   startRender().catch((error) => {
     renderPass = false;
     setStatus(ui.renderCompute, UI_STATUS.error, "fail");
@@ -1849,11 +1927,13 @@ document.addEventListener("fullscreenchange", () => {
 
 try {
   await acquireDevice();
-  if (device) {
-    await runDifferentials();
-    await startRender();
-  }
+  if (device) await runDifferentials();
+  await activateLabMode(ui.visualizationMode.value);
 } catch (error) {
   setStatus(ui.overall, "ОШИБКА — см. диагностический журнал", "fail");
   log(error.stack ?? String(error));
 }
+
+window.addEventListener("pagehide", () => {
+  stopRender();
+});
