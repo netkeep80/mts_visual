@@ -23,6 +23,7 @@ import type {
 
 export type MonolithicLinkBenchmarkStatus3D =
   | "PASS"
+  | "CANCELLED"
   | "CAPACITY_BLOCKED"
   | "RUNTIME_FAILED";
 
@@ -39,6 +40,17 @@ export interface MonolithicLinkBenchmarkStageStats3D {
   readonly meanMs: number;
 }
 
+export interface MonolithicLinkBenchmarkProgress3D {
+  readonly phase:
+    | "topology"
+    | "compute-init"
+    | "shape-init"
+    | "warmup"
+    | "sample";
+  readonly completed: number;
+  readonly total: number;
+}
+
 export interface MonolithicLinkBenchmarkRunOptions3D {
   readonly linkCount: number;
   readonly topologyProfile: MonolithicLinkBenchmarkProfile3D;
@@ -49,6 +61,14 @@ export interface MonolithicLinkBenchmarkRunOptions3D {
   readonly sampleCount?: number;
   readonly physics: Omit<MonolithicLinkSpringOptions3D, "aspectRatio">;
   readonly now?: () => number;
+  /**
+   * Checked only between completed GPU submissions. Cancellation therefore
+   * means "stop after the current submitted stage/sample", never mid-dispatch.
+   */
+  readonly shouldCancel?: () => boolean;
+  readonly onProgress?: (
+    progress: MonolithicLinkBenchmarkProgress3D,
+  ) => void;
 }
 
 export interface MonolithicLinkBenchmarkCoreResult3D {
@@ -64,6 +84,8 @@ export interface MonolithicLinkBenchmarkCoreResult3D {
   readonly topologyInputBytes: number | null;
   readonly warmupIterations: number;
   readonly sampleCount: number;
+  readonly completedWarmupIterations: number;
+  readonly completedSamples: number;
   readonly capacity: MonolithicLinkWebGpuCapacityPlan3D;
   readonly initialization: Readonly<{
     topologyGenerationMs: number | null;
@@ -170,6 +192,34 @@ function summarize(
     maxMs: sorted[sorted.length - 1]!,
     meanMs: mean,
   });
+}
+
+function summarizeOrNull(
+  values: readonly number[],
+): MonolithicLinkBenchmarkStageStats3D | null {
+  return values.length === 0 ? null : summarize(values);
+}
+
+class MonolithicLinkBenchmarkCancelled extends Error {
+  constructor() {
+    super("monolithic Link benchmark cancelled after current sample");
+    this.name = "MonolithicLinkBenchmarkCancelled";
+  }
+}
+
+function reportProgress(
+  options: MonolithicLinkBenchmarkRunOptions3D,
+  progress: MonolithicLinkBenchmarkProgress3D,
+): void {
+  options.onProgress?.(Object.freeze({ ...progress }));
+}
+
+function cancelIfRequested(
+  options: MonolithicLinkBenchmarkRunOptions3D,
+): void {
+  if (options.shouldCancel?.() === true) {
+    throw new MonolithicLinkBenchmarkCancelled();
+  }
 }
 
 async function queueSync(
@@ -328,6 +378,8 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
       status: "CAPACITY_BLOCKED",
       ...base,
       topologyInputBytes: null,
+      completedWarmupIterations: 0,
+      completedSamples: 0,
       initialization: Object.freeze({
         topologyGenerationMs: null,
         computeCreationMs: null,
@@ -358,8 +410,18 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
   let computeCreationMs: number | null = null;
   let shapeCreationMs: number | null = null;
   let topologyInputBytes: number | null = null;
+  let completedWarmupIterations = 0;
+  const physicsSamples: number[] = [];
+  const shapeSamples: number[] = [];
+  const totalSamples: number[] = [];
 
   try {
+    cancelIfRequested(options);
+    reportProgress(options, {
+      phase: "topology",
+      completed: 0,
+      total: 1,
+    });
     const topologyStart = now();
     const topology = createMonolithicLinkBenchmarkTopology3D({
       linkCount: options.linkCount,
@@ -368,7 +430,18 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
     });
     topologyGenerationMs = elapsed(topologyStart, now());
     topologyInputBytes = topology.inputTopologyBytes;
+    reportProgress(options, {
+      phase: "topology",
+      completed: 1,
+      total: 1,
+    });
+    cancelIfRequested(options);
 
+    reportProgress(options, {
+      phase: "compute-init",
+      completed: 0,
+      total: 1,
+    });
     const computeStart = now();
     compute = await createMonolithicLinkWebGpuComputeFromTopology3D(
       device,
@@ -380,7 +453,18 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
     );
     await queueSync(device);
     computeCreationMs = elapsed(computeStart, now());
+    reportProgress(options, {
+      phase: "compute-init",
+      completed: 1,
+      total: 1,
+    });
+    cancelIfRequested(options);
 
+    reportProgress(options, {
+      phase: "shape-init",
+      completed: 0,
+      total: 1,
+    });
     const shapeStart = now();
     shape = await createMonolithicLinkWebGpuShape3D(
       device,
@@ -403,16 +487,26 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
     shape.update();
     await queueSync(device);
     shapeCreationMs = elapsed(shapeStart, now());
+    reportProgress(options, {
+      phase: "shape-init",
+      completed: 1,
+      total: 1,
+    });
+    cancelIfRequested(options);
 
     for (let warmup = 0; warmup < warmupIterations; warmup += 1) {
       compute.step();
       shape.update();
       await queueSync(device);
+      completedWarmupIterations = warmup + 1;
+      reportProgress(options, {
+        phase: "warmup",
+        completed: completedWarmupIterations,
+        total: warmupIterations,
+      });
+      cancelIfRequested(options);
     }
 
-    const physicsSamples: number[] = [];
-    const shapeSamples: number[] = [];
-    const totalSamples: number[] = [];
     let synchronizedEveryMeasuredStage = queueSyncSupported;
 
     for (let sample = 0; sample < sampleCount; sample += 1) {
@@ -437,6 +531,12 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
       shapeSamples.push(shapeTiming.milliseconds);
 
       totalSamples.push(elapsed(iterationStart, now()));
+      reportProgress(options, {
+        phase: "sample",
+        completed: totalSamples.length,
+        total: sampleCount,
+      });
+      cancelIfRequested(options);
     }
 
     const computeSnapshot = compute.snapshot();
@@ -451,6 +551,8 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
         : "host-wall-submit-only",
       queueSyncSupported: synchronizedEveryMeasuredStage,
       topologyInputBytes,
+      completedWarmupIterations,
+      completedSamples: totalSamples.length,
       initialization: Object.freeze({
         topologyGenerationMs,
         computeCreationMs,
@@ -468,10 +570,14 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
       error: null,
     });
   } catch (error) {
+    const cancelled =
+      error instanceof MonolithicLinkBenchmarkCancelled;
     return Object.freeze({
-      status: "RUNTIME_FAILED",
+      status: cancelled ? "CANCELLED" : "RUNTIME_FAILED",
       ...base,
       topologyInputBytes,
+      completedWarmupIterations,
+      completedSamples: totalSamples.length,
       initialization: Object.freeze({
         topologyGenerationMs,
         computeCreationMs,
@@ -479,17 +585,19 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
         totalMs: elapsed(initStart, now()),
       }),
       stages: Object.freeze({
-        physics: null,
-        shape: null,
-        totalIteration: null,
+        physics: summarizeOrNull(physicsSamples),
+        shape: summarizeOrNull(shapeSamples),
+        totalIteration: summarizeOrNull(totalSamples),
       }),
       computeSnapshot: compute?.snapshot() ?? null,
       shapeSnapshot: shape?.snapshot() ?? null,
       blockReason: null,
       error:
-        error instanceof Error
-          ? error.stack ?? error.message
-          : String(error),
+        cancelled
+          ? null
+          : error instanceof Error
+            ? error.stack ?? error.message
+            : String(error),
     });
   } finally {
     try { shape?.destroy(); } catch {}
