@@ -3796,6 +3796,58 @@ ui.labInputCopy.addEventListener("click", () => {
   });
 });
 
+ui.benchmarkRun.addEventListener("click", () => {
+  runBenchmarkFromUi().catch((error) => {
+    ui.benchmarkStatus.textContent =
+      `RUNTIME_FAILED · ${error instanceof Error ? error.message : String(error)}`;
+    ui.benchmarkStatus.className = "lab-mode-status fail";
+    ui.benchmarkResult.textContent =
+      `benchmark runner error:\n${error instanceof Error ? error.stack ?? error.message : String(error)}`;
+    log(
+      `ОШИБКА benchmark runner — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+    benchmarkRunning = false;
+    ui.benchmarkRun.disabled = false;
+    ui.benchmarkStop.disabled = true;
+  });
+});
+
+ui.benchmarkStop.addEventListener("click", () => {
+  if (!benchmarkRunning) return;
+  benchmarkStopRequested = true;
+  ui.benchmarkStop.disabled = true;
+  ui.benchmarkStatus.textContent =
+    "остановка после текущего warmup/sample…";
+  log("benchmark: запрошена остановка после текущего sample");
+});
+
+ui.benchmarkCopy.addEventListener("click", () => {
+  copyText(benchmarkEvidenceText()).then(() => {
+    ui.benchmarkStatus.textContent =
+      `${benchmarkEvidence.status} · JSON скопирован`;
+  }).catch((error) => {
+    log(
+      `ОШИБКА копирования benchmark evidence — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+  });
+});
+
+ui.benchmarkDownload.addEventListener("click", () => {
+  try {
+    downloadBenchmarkEvidence();
+  } catch (error) {
+    log(
+      `ОШИБКА сохранения benchmark evidence — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+  }
+});
+
+ui.benchmarkDetail.addEventListener("change", () => {
+  if (ui.benchmarkDetail.value === "semantic") {
+    ui.benchmarkRender.checked = false;
+  }
+});
+
 ui.labRunCycleTest.addEventListener("click", () => {
   runLabModeCycleSelfTest().catch((error) => {
     log(`ОШИБКА mode-cycle self-test — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
@@ -4164,10 +4216,16 @@ try {
   if (device) await runDifferentials();
   await activateLabMode(ui.visualizationMode.value);
 
-  const requestedSelfTest = new URLSearchParams(window.location.search).get("selftest");
+  const startupParams = new URLSearchParams(window.location.search);
+  const requestedSelfTest = startupParams.get("selftest");
   if (requestedSelfTest === LAB_SELF_TEST_QUERY) {
     log(`запрошен browser self-test ${LAB_SELF_TEST_CONTRACT} через URL`);
     await runLabModeCycleSelfTest();
+  }
+
+  if (applyBenchmarkQuery(startupParams)) {
+    log("запрошен Mechanical WebGPU benchmark через URL");
+    await runBenchmarkFromUi();
   }
 } catch (error) {
   setStatus(ui.overall, "ОШИБКА — см. диагностический журнал", "fail");
@@ -4175,6 +4233,7 @@ try {
 }
 
 window.addEventListener("pagehide", () => {
+  benchmarkStopRequested = true;
   void labLifecycle.dispose();
   stopRender();
 });
