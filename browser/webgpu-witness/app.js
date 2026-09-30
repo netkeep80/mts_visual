@@ -1,3 +1,5 @@
+import { runMechanicalWebGpuBenchmark } from "./benchmark.js";
+
 const $ = (id) => document.getElementById(id);
 
 const ui = {
@@ -16,6 +18,22 @@ const ui = {
   labRunCycleTest: $("lab-run-cycle-test"),
   labCycleStatus: $("lab-cycle-status"),
   labResourceAudit: $("lab-resource-audit"),
+  benchmarkLinks: $("benchmark-links"),
+  benchmarkProfile: $("benchmark-profile"),
+  benchmarkSeed: $("benchmark-seed"),
+  benchmarkOcta: $("benchmark-octa"),
+  benchmarkDetail: $("benchmark-detail"),
+  benchmarkWarmup: $("benchmark-warmup"),
+  benchmarkSamples: $("benchmark-samples"),
+  benchmarkRender: $("benchmark-render"),
+  benchmarkRun: $("benchmark-run"),
+  benchmarkStop: $("benchmark-stop"),
+  benchmarkCopy: $("benchmark-copy"),
+  benchmarkDownload: $("benchmark-download"),
+  benchmarkStatus: $("benchmark-status"),
+  benchmarkProgress: $("benchmark-progress"),
+  benchmarkResult: $("benchmark-result"),
+  benchmarkCanvas: $("benchmark-canvas"),
   labDiagnosticMode: $("lab-diagnostic-mode"),
   labDiagnosticInput: $("lab-diagnostic-input"),
   labDiagnosticLinks: $("lab-diagnostic-links"),
@@ -494,11 +512,315 @@ let rigidDifferentialPhysicsSignature = null;
 let monolithicDifferentialPhysicsSignature = null;
 let renderPass = false;
 let renderState = null;
+let benchmarkRunning = false;
+let benchmarkStopRequested = false;
+let benchmarkEvidence = null;
 
 const MECHANICAL_DETAIL_SLOT_BUDGET = 4096;
 const MECHANICAL_DETAIL_FRUSTUM_MARGIN = 0.18;
 const MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS = 70;
 const MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS = 250;
+
+const BENCHMARK_LINK_COUNTS = Object.freeze([
+  1_000,
+  10_000,
+  100_000,
+  1_000_000,
+]);
+const BENCHMARK_OCTAHEDRA = Object.freeze([16, 32, 64, 128]);
+const BENCHMARK_TOPOLOGY_PROFILES = Object.freeze([
+  "chain",
+  "hub-heavy",
+  "mixed",
+  "self-incidence",
+  "branching",
+]);
+const BENCHMARK_DETAIL_PROFILES = Object.freeze([
+  "semantic",
+  "detail-256",
+  "detail-1024",
+  "detail-4096",
+  "full-detail",
+]);
+
+function benchmarkInteger(element, label, minimum, maximum) {
+  const value = Number(element.value);
+  if (
+    !Number.isSafeInteger(value)
+    || value < minimum
+    || value > maximum
+  ) {
+    throw new Error(
+      `недопустимое значение benchmark «${label}»: ${element.value}`,
+    );
+  }
+  return value;
+}
+
+function selectedBenchmarkConfig() {
+  const linkCount = benchmarkInteger(
+    ui.benchmarkLinks,
+    "число Links",
+    1,
+    1_000_000,
+  );
+  if (!BENCHMARK_LINK_COUNTS.includes(linkCount)) {
+    throw new Error(
+      `неподдерживаемое число Links benchmark: ${linkCount}`,
+    );
+  }
+
+  const topologyProfile = ui.benchmarkProfile.value;
+  if (!BENCHMARK_TOPOLOGY_PROFILES.includes(topologyProfile)) {
+    throw new Error(
+      `неподдерживаемый профиль topology: ${topologyProfile}`,
+    );
+  }
+
+  const octahedra = benchmarkInteger(
+    ui.benchmarkOcta,
+    "октаэдры",
+    2,
+    128,
+  );
+  if (!BENCHMARK_OCTAHEDRA.includes(octahedra)) {
+    throw new Error(
+      `неподдерживаемое число октаэдров benchmark: ${octahedra}`,
+    );
+  }
+
+  const detailProfile = ui.benchmarkDetail.value;
+  if (!BENCHMARK_DETAIL_PROFILES.includes(detailProfile)) {
+    throw new Error(
+      `неподдерживаемый detail profile: ${detailProfile}`,
+    );
+  }
+
+  const warmupCount = benchmarkInteger(
+    ui.benchmarkWarmup,
+    "warmup",
+    5,
+    100,
+  );
+  const minimumSamples = linkCount <= 100_000 ? 20 : 1;
+  const sampleCount = benchmarkInteger(
+    ui.benchmarkSamples,
+    "samples",
+    minimumSamples,
+    200,
+  );
+  const seed = benchmarkInteger(
+    ui.benchmarkSeed,
+    "seed",
+    0,
+    0xffff_ffff,
+  );
+
+  const physics = selectedPhysics();
+  return Object.freeze({
+    linkCount,
+    topologyProfile,
+    seed,
+    octahedra,
+    detailProfile,
+    warmupCount,
+    sampleCount,
+    renderEnabled:
+      ui.benchmarkRender.checked
+      && detailProfile !== "semantic",
+    physics: Object.freeze({
+      stretchStiffness: physics.longitudinalStiffness,
+      straighteningStiffness: physics.transverseStiffness,
+      nonlinearity: physics.nonlinearity,
+      centerMass: physics.nodeMass,
+      dampingRate: physics.linearDampingRate,
+      simulationSpeed: physics.simulationSpeed,
+    }),
+  });
+}
+
+function benchmarkProgress(event) {
+  const labels = {
+    device: "устройство",
+    topology: "топология",
+    "compute-create": "compute init",
+    "shape-create": "shape init",
+    "renderer-create": "renderer init",
+    warmup: "warmup",
+    samples: "samples",
+    done: "завершение",
+  };
+  const total = Math.max(1, event.total ?? 1);
+  const completed = Math.max(0, event.completed ?? 0);
+  ui.benchmarkProgress.max = total;
+  ui.benchmarkProgress.value = Math.min(total, completed);
+  ui.benchmarkStatus.textContent =
+    `${labels[event.phase] ?? event.phase} · ${completed}/${total}`;
+}
+
+function benchmarkEvidenceText() {
+  if (!benchmarkEvidence) {
+    throw new Error("benchmark evidence ещё не создан");
+  }
+  return JSON.stringify(benchmarkEvidence, null, 2);
+}
+
+function renderBenchmarkEvidence(evidence) {
+  benchmarkEvidence = evidence;
+  ui.benchmarkResult.textContent = JSON.stringify(evidence, null, 2);
+  ui.benchmarkCopy.disabled = false;
+  ui.benchmarkDownload.disabled = false;
+
+  if (evidence.status === "PASS") {
+    const physicsMedian =
+      evidence.stages.physics?.medianMs?.toFixed(3) ?? "—";
+    const shapeMedian =
+      evidence.stages.shape?.medianMs?.toFixed(3) ?? "—";
+    ui.benchmarkStatus.textContent =
+      `PASS · samples=${evidence.sampleCountCompleted} · physics median=${physicsMedian} ms · shape median=${shapeMedian} ms`;
+    ui.benchmarkStatus.className = "lab-mode-status ok";
+  } else if (evidence.status === "CAPACITY_BLOCKED") {
+    ui.benchmarkStatus.textContent =
+      `CAPACITY_BLOCKED · ${evidence.capacityBlockReason}`;
+    ui.benchmarkStatus.className = "lab-mode-status warn";
+  } else {
+    ui.benchmarkStatus.textContent =
+      `RUNTIME_FAILED · ${evidence.error ?? "неизвестная ошибка"}`;
+    ui.benchmarkStatus.className = "lab-mode-status fail";
+  }
+}
+
+async function runBenchmarkFromUi() {
+  if (benchmarkRunning) return;
+  if (!adapter) {
+    throw new Error("WebGPU adapter недоступен");
+  }
+
+  const config = selectedBenchmarkConfig();
+  benchmarkRunning = true;
+  benchmarkStopRequested = false;
+  benchmarkEvidence = null;
+  ui.benchmarkRun.disabled = true;
+  ui.benchmarkStop.disabled = false;
+  ui.benchmarkCopy.disabled = true;
+  ui.benchmarkDownload.disabled = true;
+  ui.benchmarkResult.textContent = "evidence: benchmark выполняется…";
+  ui.benchmarkProgress.max = 1;
+  ui.benchmarkProgress.value = 0;
+  ui.benchmarkStatus.className = "lab-mode-status";
+  log(
+    `benchmark start: Links=${config.linkCount}, topology=${config.topologyProfile}, octa=${config.octahedra}, detail=${config.detailProfile}, render=${config.renderEnabled}, warmup=${config.warmupCount}, samples=${config.sampleCount}`,
+  );
+
+  try {
+    const interactiveMechanicalSuspended = renderState !== null;
+    if (
+      interactiveMechanicalSuspended
+      && typeof device?.queue?.onSubmittedWorkDone === "function"
+    ) {
+      ui.benchmarkStatus.textContent =
+        "изоляция benchmark · ожидание завершения интерактивной GPU queue";
+      await device.queue.onSubmittedWorkDone();
+    }
+
+    const evidence = await runMechanicalWebGpuBenchmark({
+      adapter,
+      webgpu,
+      buildInfo,
+      canvas: ui.benchmarkCanvas,
+      config: {
+        ...config,
+        resourceIsolation: interactiveMechanicalSuspended
+          ? "separate-device+interactive-mechanical-suspended"
+          : "separate-device",
+      },
+      onProgress: benchmarkProgress,
+      shouldStop: () => benchmarkStopRequested,
+    });
+    renderBenchmarkEvidence(evidence);
+    log(
+      `benchmark result: ${evidence.status} · Links=${evidence.linkCount} · detail=${evidence.effectiveDetailCapacity} · samples=${evidence.sampleCountCompleted}`,
+    );
+  } finally {
+    benchmarkRunning = false;
+    ui.benchmarkRun.disabled = false;
+    ui.benchmarkStop.disabled = true;
+  }
+}
+
+function downloadBenchmarkEvidence() {
+  const text = benchmarkEvidenceText();
+  const blob = new Blob(
+    [text],
+    { type: "application/json;charset=utf-8" },
+  );
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  anchor.href = url;
+  anchor.download =
+    `mts-visual-mechanical-benchmark-${benchmarkEvidence.linkCount}-${String(buildInfo.mainSha).slice(0, 12)}-${stamp}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function normalizeBenchmarkDetailQuery(value) {
+  if (value === null) return null;
+  if (BENCHMARK_DETAIL_PROFILES.includes(value)) return value;
+  const aliases = {
+    "0": "semantic",
+    "256": "detail-256",
+    "1024": "detail-1024",
+    "4096": "detail-4096",
+    "full": "full-detail",
+  };
+  return aliases[value] ?? null;
+}
+
+function applyBenchmarkQuery(params) {
+  if (params.get("benchmark") !== "mechanical") return false;
+
+  const links = Number(params.get("links"));
+  if (BENCHMARK_LINK_COUNTS.includes(links)) {
+    ui.benchmarkLinks.value = String(links);
+  }
+  const profile = params.get("profile");
+  if (BENCHMARK_TOPOLOGY_PROFILES.includes(profile)) {
+    ui.benchmarkProfile.value = profile;
+  }
+  const detail = normalizeBenchmarkDetailQuery(params.get("detail"));
+  if (detail !== null) {
+    ui.benchmarkDetail.value = detail;
+  }
+  const octa = Number(params.get("octa"));
+  if (BENCHMARK_OCTAHEDRA.includes(octa)) {
+    ui.benchmarkOcta.value = String(octa);
+  }
+  const seed = Number(params.get("seed"));
+  if (Number.isSafeInteger(seed) && seed >= 0 && seed <= 0xffff_ffff) {
+    ui.benchmarkSeed.value = String(seed);
+  }
+  const warmup = Number(params.get("warmup"));
+  if (Number.isSafeInteger(warmup) && warmup >= 5 && warmup <= 100) {
+    ui.benchmarkWarmup.value = String(warmup);
+  }
+  const samples = Number(params.get("samples"));
+  const selectedLinks = Number(ui.benchmarkLinks.value);
+  const minimumSamples = selectedLinks <= 100_000 ? 20 : 1;
+  if (
+    Number.isSafeInteger(samples)
+    && samples >= minimumSamples
+    && samples <= 200
+  ) {
+    ui.benchmarkSamples.value = String(samples);
+  }
+  ui.benchmarkRender.checked =
+    params.get("render") === "1"
+    || params.get("render") === "true";
+  return true;
+}
 
 function differentialIsCurrent() {
   return monolithicDifferentialAllPass
@@ -2018,6 +2340,12 @@ async function startRender() {
     function frame(now) {
       if (renderState !== state) return;
 
+      if (benchmarkRunning) {
+        state.lastFrameAt = now;
+        state.raf = requestAnimationFrame(frame);
+        return;
+      }
+
       try {
         ensureDepth();
         if (!state.paused) {
@@ -3489,6 +3817,58 @@ ui.labInputCopy.addEventListener("click", () => {
   });
 });
 
+ui.benchmarkRun.addEventListener("click", () => {
+  runBenchmarkFromUi().catch((error) => {
+    ui.benchmarkStatus.textContent =
+      `RUNTIME_FAILED · ${error instanceof Error ? error.message : String(error)}`;
+    ui.benchmarkStatus.className = "lab-mode-status fail";
+    ui.benchmarkResult.textContent =
+      `benchmark runner error:\n${error instanceof Error ? error.stack ?? error.message : String(error)}`;
+    log(
+      `ОШИБКА benchmark runner — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+    benchmarkRunning = false;
+    ui.benchmarkRun.disabled = false;
+    ui.benchmarkStop.disabled = true;
+  });
+});
+
+ui.benchmarkStop.addEventListener("click", () => {
+  if (!benchmarkRunning) return;
+  benchmarkStopRequested = true;
+  ui.benchmarkStop.disabled = true;
+  ui.benchmarkStatus.textContent =
+    "остановка после текущего warmup/sample…";
+  log("benchmark: запрошена остановка после текущего sample");
+});
+
+ui.benchmarkCopy.addEventListener("click", () => {
+  copyText(benchmarkEvidenceText()).then(() => {
+    ui.benchmarkStatus.textContent =
+      `${benchmarkEvidence.status} · JSON скопирован`;
+  }).catch((error) => {
+    log(
+      `ОШИБКА копирования benchmark evidence — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+  });
+});
+
+ui.benchmarkDownload.addEventListener("click", () => {
+  try {
+    downloadBenchmarkEvidence();
+  } catch (error) {
+    log(
+      `ОШИБКА сохранения benchmark evidence — ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
+  }
+});
+
+ui.benchmarkDetail.addEventListener("change", () => {
+  if (ui.benchmarkDetail.value === "semantic") {
+    ui.benchmarkRender.checked = false;
+  }
+});
+
 ui.labRunCycleTest.addEventListener("click", () => {
   runLabModeCycleSelfTest().catch((error) => {
     log(`ОШИБКА mode-cycle self-test — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
@@ -3857,10 +4237,16 @@ try {
   if (device) await runDifferentials();
   await activateLabMode(ui.visualizationMode.value);
 
-  const requestedSelfTest = new URLSearchParams(window.location.search).get("selftest");
+  const startupParams = new URLSearchParams(window.location.search);
+  const requestedSelfTest = startupParams.get("selftest");
   if (requestedSelfTest === LAB_SELF_TEST_QUERY) {
     log(`запрошен browser self-test ${LAB_SELF_TEST_CONTRACT} через URL`);
     await runLabModeCycleSelfTest();
+  }
+
+  if (applyBenchmarkQuery(startupParams)) {
+    log("запрошен Mechanical WebGPU benchmark через URL");
+    await runBenchmarkFromUi();
   }
 } catch (error) {
   setStatus(ui.overall, "ОШИБКА — см. диагностический журнал", "fail");
@@ -3868,6 +4254,7 @@ try {
 }
 
 window.addEventListener("pagehide", () => {
+  benchmarkStopRequested = true;
   void labLifecycle.dispose();
   stopRender();
 });

@@ -23,6 +23,11 @@ export interface MonolithicLinkWebGpuCapacityLimits3D {
   readonly maxComputeWorkgroupsPerDimension?: number;
 }
 
+export interface MonolithicLinkWebGpuCapacityOptions3D {
+  readonly detailCapacity?: number;
+  readonly includeRenderer?: boolean;
+}
+
 export interface MonolithicLinkWebGpuCapacityBuffer3D {
   readonly name: string;
   readonly allocatedBytes: number;
@@ -39,7 +44,7 @@ export interface MonolithicLinkWebGpuCapacityPlan3D {
   readonly persistentGpuBytes: number;
   readonly compactPersistentGpuBytes: number;
   readonly detailCacheBytes: number;
-  readonly persistentBytesPerLink: 148;
+  readonly persistentBytesPerLink: number;
   readonly detailBytesPerSlot: number;
   readonly fixedBytes: number;
   readonly buffers: readonly MonolithicLinkWebGpuCapacityBuffer3D[];
@@ -206,8 +211,19 @@ export function planMonolithicLinkWebGpuCapacity3D(
   linkCountValue: number,
   aspectRatio: number,
   adapterLimits: MonolithicLinkWebGpuCapacityLimits3D = {},
+  options: MonolithicLinkWebGpuCapacityOptions3D = {},
 ): MonolithicLinkWebGpuCapacityPlan3D {
   const linkCount = requireLinkCount(linkCountValue);
+  const requestedDetailCapacity =
+    options.detailCapacity === undefined
+      ? linkCount
+      : requireLinkCount(options.detailCapacity);
+  const includeRenderer = options.includeRenderer !== false;
+  if (requestedDetailCapacity > linkCount) {
+    throw new Error(
+      `invalid monolithic capacity detailCapacity: ${requestedDetailCapacity} > ${linkCount}`,
+    );
+  }
   const template = getOctahedralLinkTemplate3D(aspectRatio);
   const octahedronCount = template.octahedronCount;
   const sectionCount = octahedronCount + 1;
@@ -228,7 +244,7 @@ export function planMonolithicLinkWebGpuCapacity3D(
   );
 
   const detail = boundedDetailCapacity(
-    linkCount,
+    requestedDetailCapacity,
     sectionCount,
     maxStorageBufferBindingSize,
     maxBufferSize,
@@ -273,19 +289,23 @@ export function planMonolithicLinkWebGpuCapacity3D(
       false,
     ),
 
-    buffer("renderer.topology", linkTopologyBytes, true),
-    buffer(
-      "renderer.surfaceIndices",
-      template.surfaceTriangles.byteLength,
-      true,
-    ),
-    buffer(
-      "renderer.wireframeIndices",
-      wireframe.byteLength,
-      true,
-    ),
-    buffer("renderer.gradient", template.gradientT.byteLength, true),
-    buffer("renderer.uniforms", RENDER_UNIFORM_BYTES, false),
+    ...(includeRenderer
+      ? [
+          buffer("renderer.topology", linkTopologyBytes, true),
+          buffer(
+            "renderer.surfaceIndices",
+            template.surfaceTriangles.byteLength,
+            true,
+          ),
+          buffer(
+            "renderer.wireframeIndices",
+            wireframe.byteLength,
+            true,
+          ),
+          buffer("renderer.gradient", template.gradientT.byteLength, true),
+          buffer("renderer.uniforms", RENDER_UNIFORM_BYTES, false),
+        ]
+      : []),
   ]);
 
   const detailNames = new Set([
@@ -314,10 +334,15 @@ export function planMonolithicLinkWebGpuCapacity3D(
     + 4
     + SHAPE_GLOBAL_BYTES
     + DETAIL_SELECTION_CONTROL_BYTES
-    + template.surfaceTriangles.byteLength
-    + wireframe.byteLength
-    + template.gradientT.byteLength
-    + RENDER_UNIFORM_BYTES;
+    + (
+      includeRenderer
+        ? template.surfaceTriangles.byteLength
+          + wireframe.byteLength
+          + template.gradientT.byteLength
+          + RENDER_UNIFORM_BYTES
+        : 0
+    );
+  const persistentBytesPerLink = includeRenderer ? 148 : 140;
   const detailBytesPerSlot = 4 + sectionCount * 16;
 
   const storageBuffers = buffers.filter((candidate) => candidate.storageBinding);
@@ -393,7 +418,7 @@ export function planMonolithicLinkWebGpuCapacity3D(
     persistentGpuBytes,
     compactPersistentGpuBytes,
     detailCacheBytes,
-    persistentBytesPerLink: 148 as const,
+    persistentBytesPerLink,
     detailBytesPerSlot,
     fixedBytes,
     buffers,
