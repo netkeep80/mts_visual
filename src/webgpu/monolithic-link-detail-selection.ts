@@ -13,8 +13,8 @@ export interface MonolithicLinkDetailSelection3D {
   readonly visibleCandidateCount: number;
   readonly selectedIncluded: boolean;
   readonly hoveredIncluded: boolean;
-  readonly selectedForced: boolean;
-  readonly hoveredForced: boolean;
+  readonly selectedPinned: boolean;
+  readonly hoveredPinned: boolean;
   readonly culledLinkCount: number;
 }
 
@@ -253,8 +253,8 @@ export function selectMonolithicLinkDetail3D(
       visibleCandidateCount: linkCount,
       selectedIncluded: selected !== null,
       hoveredIncluded: hovered !== null,
-      selectedForced: false,
-      hoveredForced: false,
+      selectedPinned: false,
+      hoveredPinned: false,
       culledLinkCount: 0,
     });
   }
@@ -301,11 +301,11 @@ export function selectMonolithicLinkDetail3D(
     visibleCandidateCount,
     selectedIncluded,
     hoveredIncluded,
-    selectedForced:
+    selectedPinned:
       selectedIncluded
       && selected !== null
       && !heap.some((candidate) => candidate.linkIndex === selected),
-    hoveredForced:
+    hoveredPinned:
       hoveredIncluded
       && hovered !== null
       && hovered !== selected
