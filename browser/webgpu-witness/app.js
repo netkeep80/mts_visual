@@ -2991,6 +2991,203 @@ async function activateLabMode(modeId) {
   await labLifecycle.activate(modeId);
 }
 
+const LAB_RESOURCE_CYCLE = Object.freeze([
+  "structural-2d",
+  "blueprint-2d",
+  "document-2d",
+  "classic-3d",
+  "mechanical-3d",
+  "classic-3d",
+  "document-2d",
+  "blueprint-2d",
+  "structural-2d",
+]);
+
+function failLabCycle(message, snapshot = null) {
+  const detail = snapshot === null ? "" : `\n${JSON.stringify(snapshot, null, 2)}`;
+  throw new Error(`resource-cycle: ${message}${detail}`);
+}
+
+function realLabResourceSnapshot() {
+  const scene = selectedScene();
+  return Object.freeze({
+    lifecycleMode: labLifecycle.activeMode,
+    sceneId: scene.id,
+    sceneIdentity: scene,
+    selectedKey: selectedVisualKey,
+    ledger: labResourceLedgerSnapshot(),
+    states: Object.freeze({
+      structural: structuralState?.scene === scene,
+      blueprint: blueprintState?.scene === scene,
+      document: document2dState?.scene === scene,
+      classic: classicState?.scene === scene,
+      mechanical: renderState?.scene === scene,
+    }),
+    dom: Object.freeze({
+      structuralSvg: ui.structuralViewport.querySelectorAll("svg").length,
+      blueprintSvg: ui.blueprintViewport.querySelectorAll("svg").length,
+      documentSvg: ui.documentViewport.querySelectorAll("svg").length,
+      classicChildren: ui.classicViewport.childElementCount,
+    }),
+    webgpuAvailable: device !== null,
+  });
+}
+
+function verifyRealLabModeResources(modeId, originalScene, originalSelectedKey) {
+  const snapshot = realLabResourceSnapshot();
+  if (snapshot.lifecycleMode !== modeId) {
+    failLabCycle(`active mode ${snapshot.lifecycleMode} !== ${modeId}`, snapshot);
+  }
+  if (snapshot.sceneIdentity !== originalScene || selectedScene() !== originalScene) {
+    failLabCycle("input scene identity changed during mode cycle", snapshot);
+  }
+  if (snapshot.selectedKey !== originalSelectedKey) {
+    failLabCycle("selected Link changed during mode cycle", snapshot);
+  }
+
+  const expectedState = {
+    structural: modeId === "structural-2d",
+    blueprint: modeId === "blueprint-2d",
+    document: modeId === "document-2d",
+    classic: modeId === "classic-3d",
+    mechanical: modeId === "mechanical-3d" && snapshot.webgpuAvailable,
+  };
+  for (const [name, expected] of Object.entries(expectedState)) {
+    if (snapshot.states[name] !== expected) {
+      failLabCycle(`state owner mismatch: ${name}=${snapshot.states[name]} expected ${expected}`, snapshot);
+    }
+  }
+
+  const expectedSvg = {
+    structuralSvg: modeId === "structural-2d" ? 1 : 0,
+    blueprintSvg: modeId === "blueprint-2d" ? 1 : 0,
+    documentSvg: modeId === "document-2d" ? 1 : 0,
+  };
+  for (const [name, expected] of Object.entries(expectedSvg)) {
+    if (snapshot.dom[name] !== expected) {
+      failLabCycle(`DOM root mismatch: ${name}=${snapshot.dom[name]} expected ${expected}`, snapshot);
+    }
+  }
+  if (modeId === "classic-3d") {
+    if (snapshot.dom.classicChildren <= 0) {
+      failLabCycle("Classic renderer has no mounted DOM surface", snapshot);
+    }
+  } else if (snapshot.dom.classicChildren !== 0) {
+    failLabCycle("Classic DOM resources leaked after mode departure", snapshot);
+  }
+
+  const is2d = modeId === "structural-2d"
+    || modeId === "blueprint-2d"
+    || modeId === "document-2d";
+  const mechanicalMounted = modeId === "mechanical-3d" && snapshot.webgpuAvailable;
+  const expectedAbortScopes = is2d || mechanicalMounted ? 1 : 0;
+  const expectedClassic = modeId === "classic-3d" ? 1 : 0;
+  const expectedMechanical = mechanicalMounted ? 1 : 0;
+  const expectedRaf = expectedClassic + expectedMechanical;
+
+  if (snapshot.ledger.activeAbortScopes !== expectedAbortScopes) {
+    failLabCycle(
+      `activeAbortScopes=${snapshot.ledger.activeAbortScopes} expected ${expectedAbortScopes}`,
+      snapshot,
+    );
+  }
+  if (snapshot.ledger.activeClassicRenderers !== expectedClassic) {
+    failLabCycle(
+      `activeClassicRenderers=${snapshot.ledger.activeClassicRenderers} expected ${expectedClassic}`,
+      snapshot,
+    );
+  }
+  if (snapshot.ledger.activeMechanicalRenderers !== expectedMechanical) {
+    failLabCycle(
+      `activeMechanicalRenderers=${snapshot.ledger.activeMechanicalRenderers} expected ${expectedMechanical}`,
+      snapshot,
+    );
+  }
+  if (snapshot.ledger.activeRafOwners !== expectedRaf) {
+    failLabCycle(
+      `activeRafOwners=${snapshot.ledger.activeRafOwners} expected ${expectedRaf}`,
+      snapshot,
+    );
+  }
+  if (snapshot.ledger.mechanicalContextConfigured !== mechanicalMounted) {
+    failLabCycle(
+      `mechanicalContextConfigured=${snapshot.ledger.mechanicalContextConfigured} expected ${mechanicalMounted}`,
+      snapshot,
+    );
+  }
+}
+
+async function runLabResourceCycleSelfTest(iterations = 2) {
+  if (!Number.isSafeInteger(iterations) || iterations < 1 || iterations > 10) {
+    throw new Error("iterations must be an integer within 1..10");
+  }
+
+  const originalScene = selectedScene();
+  const originalSelectedKey = selectedVisualKey;
+  const originalMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
+  const originalSelectValue = ui.visualizationMode.value;
+  let transitions = 0;
+  let mechanicalExercised = false;
+
+  ui.labRunCycleTest.disabled = true;
+  ui.scene.disabled = true;
+  ui.visualizationMode.disabled = true;
+  setStatus(ui.labCycleStatus, "выполняется…", "warn");
+
+  try {
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      for (const modeId of LAB_RESOURCE_CYCLE) {
+        ui.visualizationMode.value = modeId;
+        await activateLabMode(modeId);
+        verifyRealLabModeResources(modeId, originalScene, originalSelectedKey);
+        transitions += 1;
+        if (modeId === "mechanical-3d" && device !== null) mechanicalExercised = true;
+      }
+    }
+
+    setStatus(
+      ui.labCycleStatus,
+      `ПРОЙДЕНО · ${iterations} цикла · ${transitions} переходов · WebGPU ${mechanicalExercised ? "проверен" : "недоступен"}`,
+      "ok",
+    );
+    log(
+      `resource-cycle: ПРОЙДЕНО · циклы=${iterations}, переходы=${transitions}, WebGPU=${mechanicalExercised ? "проверен" : "недоступен"}, input=${originalScene.id}`,
+    );
+    return Object.freeze({
+      passed: true,
+      iterations,
+      transitions,
+      mechanicalExercised,
+      sceneId: originalScene.id,
+    });
+  } catch (error) {
+    setStatus(ui.labCycleStatus, "НЕ ПРОЙДЕНО — см. журнал", "fail");
+    log(`resource-cycle: ОШИБКА — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+    throw error;
+  } finally {
+    try {
+      ui.visualizationMode.value = originalSelectValue;
+      await activateLabMode(originalMode);
+      if (selectedScene() !== originalScene) {
+        throw new Error("resource-cycle restore changed input scene identity");
+      }
+      if (selectedVisualKey !== originalSelectedKey) {
+        setSelectedVisualKey(originalSelectedKey);
+      }
+    } catch (restoreError) {
+      setStatus(ui.labCycleStatus, "ОШИБКА восстановления — см. журнал", "fail");
+      log(
+        `resource-cycle: ошибка восстановления — ${restoreError instanceof Error ? restoreError.stack ?? restoreError.message : String(restoreError)}`,
+      );
+    } finally {
+      ui.scene.disabled = false;
+      ui.visualizationMode.disabled = false;
+      ui.labRunCycleTest.disabled = false;
+      updateSharedDiagnostics();
+    }
+  }
+}
+
 function mechanicalModeIsActive() {
   return labLifecycle.activeMode === "mechanical-3d";
 }
@@ -3056,6 +3253,12 @@ ui.labInputCopy.addEventListener("click", () => {
       "fail",
     );
     log(`ОШИБКА копирования input manifest — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
+});
+
+ui.labRunCycleTest.addEventListener("click", () => {
+  runLabResourceCycleSelfTest(2).catch(() => {
+    // The self-test already records the exact failure and resource snapshot.
   });
 });
 
