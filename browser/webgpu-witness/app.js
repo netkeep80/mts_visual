@@ -413,16 +413,7 @@ const ROOT_BASIS = Object.freeze([
 ]);
 
 function rootBasisNetwork(count) {
-  if (!Number.isSafeInteger(count) || count < 1 || count > ROOT_BASIS.length) {
-    throw new Error(`недопустимая ступень корневого базиса: ${count}`);
-  }
-  return {
-    links: ROOT_BASIS.slice(0, count).map(({ key, startKey, endKey }) => ({
-      key,
-      startKey,
-      endKey,
-    })),
-  };
+  return core.createRootBasisNetwork(count);
 }
 
 function equationForNetworkLink(link) {
@@ -844,74 +835,142 @@ async function runDifferentials() {
   updateOverall();
 }
 
-function classicSeparationNetwork() {
-  return {
-    links: [
-      { key: "R", startKey: "R", endKey: "R" },
-      { key: "O", startKey: "O", endKey: "R" },
-      { key: "C", startKey: "R", endKey: "C" },
-      { key: "L", startKey: "O", endKey: "C" },
-      { key: "U", startKey: "C", endKey: "O" },
-      { key: "A", startKey: "L", endKey: "U" },
-      { key: "B", startKey: "L", endKey: "A" },
-      { key: "D", startKey: "B", endKey: "U" },
-      { key: "E", startKey: "A", endKey: "D" },
-      { key: "F", startKey: "B", endKey: "E" },
-    ],
-  };
+const IMPORTED_SCENE_ID = "__imported__";
+const fixtureSceneCache = new Map();
+let importedScene = null;
+
+function fixtureScene(id) {
+  const cached = fixtureSceneCache.get(id);
+  if (cached) return cached;
+
+  const fixture = core.visualLabFixture(id);
+  const scene = Object.freeze({
+    id: fixture.id,
+    label: fixture.label,
+    network: fixture.network,
+    hints: fixture.hints ?? Object.freeze({}),
+    sourceKind: "fixture",
+  });
+  fixtureSceneCache.set(id, scene);
+  return scene;
+}
+
+function populateSceneSelector(preferredId = ui.scene.value || "root-r") {
+  ui.scene.replaceChildren();
+
+  for (const definition of core.VISUAL_LAB_FIXTURE_DEFINITIONS) {
+    const option = document.createElement("option");
+    option.value = definition.id;
+    option.textContent = definition.label;
+    ui.scene.appendChild(option);
+  }
+
+  if (importedScene) {
+    const option = document.createElement("option");
+    option.value = IMPORTED_SCENE_ID;
+    option.textContent = importedScene.label;
+    ui.scene.appendChild(option);
+  }
+
+  const available = [...ui.scene.options].some((option) => option.value === preferredId);
+  ui.scene.value = available ? preferredId : "root-r";
 }
 
 function selectedScene() {
-  switch (ui.scene.value) {
-    case "root-r": return Object.freeze({ id: "root-r", label: "только R", network: rootBasisNetwork(1) });
-    case "root-ro": return Object.freeze({ id: "root-ro", label: "R + O", network: rootBasisNetwork(2) });
-    case "root-roc": return Object.freeze({ id: "root-roc", label: "R + O + C", network: rootBasisNetwork(3) });
-    case "root-rocl": return Object.freeze({ id: "root-rocl", label: "R + O + C + L", network: rootBasisNetwork(4) });
-    case "root-roclu": return Object.freeze({ id: "root-roclu", label: "R + O + C + L + U", network: rootBasisNetwork(5) });
-    case "classic-separation": return Object.freeze({ id: "classic-separation", label: "Classic · разведение похожих связей", network: classicSeparationNetwork() });
-    case "hub-64": return Object.freeze({ id: "hub-64", label: "нагрузка 64", network: hubHeavyNetwork(64) });
-    case "hub-333": return Object.freeze({ id: "hub-333", label: "нагрузка 333", network: hubHeavyNetwork(333) });
-    case "hub-1000": return Object.freeze({ id: "hub-1000", label: "нагрузка 1000", network: hubHeavyNetwork(1000) });
-    default: throw new Error(`неизвестная сцена: ${ui.scene.value}`);
+  if (ui.scene.value === IMPORTED_SCENE_ID) {
+    if (!importedScene) throw new Error("импортированная асеть отсутствует");
+    return importedScene;
+  }
+  return fixtureScene(ui.scene.value);
+}
+
+function sceneInputManifest(scene = selectedScene()) {
+  return Object.freeze({
+    schema: core.DOCUMENT2D_INPUT_SCHEMA,
+    ...(scene.sourceRepository === undefined
+      ? {}
+      : { sourceRepository: scene.sourceRepository }),
+    ...(scene.sourceSha === undefined ? {} : { sourceSha: scene.sourceSha }),
+    links: scene.network.links,
+  });
+}
+
+function sceneInputManifestText(scene = selectedScene()) {
+  return JSON.stringify(sceneInputManifest(scene), null, 2) + "\n";
+}
+
+function setLabInputStatus(text, kind = "") {
+  ui.labInputStatus.textContent = text;
+  ui.labInputStatus.className = `lab-input-status ${kind}`.trim();
+}
+
+function syncLabInputPanel(scene = selectedScene()) {
+  ui.labInputJson.value = sceneInputManifestText(scene);
+  if (scene.sourceKind === "import") {
+    setLabInputStatus(
+      `Импорт · ${scene.network.links.length} связей · schema=${core.DOCUMENT2D_INPUT_SCHEMA}`,
+      "ok",
+    );
+  } else {
+    setLabInputStatus(
+      `Встроенный fixture «${scene.label}» · ${scene.network.links.length} связей`,
+      "ok",
+    );
   }
 }
 
-function hubHeavyNetwork(count) {
-  if (!Number.isSafeInteger(count) || count < 8) throw new Error("нагрузочная сцена требует не менее 8 связей");
-
-  const links = [
-    { key: "L1", startKey: "L1", endKey: "L1" },
-    { key: "L2", startKey: "L2", endKey: "L1" },
-    { key: "L3", startKey: "L1", endKey: "L3" },
-  ];
-  const key = (oneBased) => `L${oneBased}`;
-
-  for (let oneBased = 4; oneBased <= count; oneBased += 1) {
-    const previous = key(oneBased - 1);
-    const previous2 = key(Math.max(1, oneBased - 2));
-    const self = key(oneBased);
-    const role = oneBased % 16;
-
-    let startKey;
-    let endKey;
-    switch (role) {
-      case 0: startKey = previous; endKey = "L2"; break;
-      case 1: startKey = previous; endKey = "L3"; break;
-      case 2: startKey = self; endKey = previous; break;
-      case 3: startKey = "L1"; endKey = previous; break;
-      case 4: startKey = previous2; endKey = "L2"; break;
-      case 5: startKey = previous2; endKey = "L3"; break;
-      case 6: startKey = previous2; endKey = previous; break;
-      case 7: startKey = previous; endKey = previous2; break;
-      default:
-        startKey = previous;
-        endKey = oneBased % 3 === 0 ? "L3" : "L2";
-        break;
-    }
-    links.push({ key: self, startKey, endKey });
+function applyImportedManifestText(text, sourceLabel) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      `некорректный JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-  return { links };
+
+  const parsed = core.parseDocument2DInputManifest(raw);
+  const network = core.normalizeVisualLinkNetwork(parsed.network);
+  importedScene = Object.freeze({
+    id: IMPORTED_SCENE_ID,
+    label: `Импорт · ${sourceLabel}`,
+    network,
+    hints: Object.freeze({}),
+    sourceKind: "import",
+    ...(parsed.sourceRepository === undefined
+      ? {}
+      : { sourceRepository: parsed.sourceRepository }),
+    ...(parsed.sourceSha === undefined ? {} : { sourceSha: parsed.sourceSha }),
+  });
+
+  populateSceneSelector(IMPORTED_SCENE_ID);
+  syncLabInputPanel(importedScene);
+  ui.scene.dispatchEvent(new Event("change"));
+  log(
+    `импортирована асеть: источник=${sourceLabel}, связей=${network.links.length}, schema=${core.DOCUMENT2D_INPUT_SCHEMA}`,
+  );
 }
+
+async function copyText(text) {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("не удалось скопировать текст в буфер обмена");
+}
+
+populateSceneSelector("root-r");
+syncLabInputPanel();
+
 
 function normalize3(v) {
   const length = Math.hypot(v[0], v[1], v[2]) || 1;
