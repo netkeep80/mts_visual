@@ -51,6 +51,7 @@ export interface MonolithicLinkWebGpuRendererOptions3D {
 
 export interface MonolithicLinkWebGpuRenderStats3D {
   readonly linkCount: number;
+  readonly detailedLinkCount: number;
   readonly drawCalls: number;
   readonly surfaceVertexInvocations: number;
   readonly centerVertexInvocations: number;
@@ -64,6 +65,8 @@ export interface MonolithicLinkWebGpuRenderStats3D {
 export interface MonolithicLinkWebGpuRendererSnapshot3D {
   readonly status: "available" | "destroyed";
   readonly linkCount: number;
+  readonly detailedLinkCount: number;
+  readonly detailCapacity: number;
   readonly octahedronCount: number;
   readonly sectionCount: number;
   readonly surfaceVerticesPerLink: number;
@@ -84,6 +87,7 @@ export interface MonolithicLinkWebGpuRenderer3D {
   readonly semanticCenterBuffer: WebGpuBufferLike;
   readonly shapeParameterBuffer: WebGpuBufferLike;
   readonly shapeGaugeBuffer: WebGpuBufferLike;
+  readonly shapeDetailLinkIndexBuffer: WebGpuBufferLike;
   readonly shapeSectionFrameBuffer: WebGpuBufferLike;
   render(
     frame: MonolithicLinkWebGpuRenderFrame3D,
@@ -282,10 +286,11 @@ struct ShapeSample {
 @group(0) @binding(1) var<storage, read> shape_parameters: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> roll_gauge: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> section_frames: array<vec4<f32>>;
-@group(0) @binding(4) var<storage, read> topology_data: array<u32>;
-@group(0) @binding(5) var<storage, read> surface_indices: array<u32>;
-@group(0) @binding(6) var<storage, read> gradient_t: array<f32>;
-@group(0) @binding(7) var<uniform> scene: SceneUniforms;
+@group(0) @binding(4) var<storage, read> detail_link_indices: array<u32>;
+@group(0) @binding(5) var<storage, read> topology_data: array<u32>;
+@group(0) @binding(6) var<storage, read> surface_indices: array<u32>;
+@group(0) @binding(7) var<storage, read> gradient_t: array<f32>;
+@group(0) @binding(8) var<uniform> scene: SceneUniforms;
 
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
@@ -479,8 +484,14 @@ fn ordinary_sample(
   return ShapeSample(point, tangent);
 }
 
-fn sample_section(link: u32, section: u32) -> ShapeSample {
-  let descriptor = section_frames[link * scene.counts.w + section];
+fn sample_section(
+  link: u32,
+  detail_slot: u32,
+  section: u32,
+) -> ShapeSample {
+  let descriptor = section_frames[
+    detail_slot * scene.counts.w + section
+  ];
   let t = descriptor.w;
   let start_index = topology_data[link * 2u];
   let end_index = topology_data[link * 2u + 1u];
@@ -540,15 +551,16 @@ fn sample_section(link: u32, section: u32) -> ShapeSample {
 
 fn section_axes(
   link: u32,
+  detail_slot: u32,
   section: u32,
 ) -> AxisFrame {
-  let sample = sample_section(link, section);
+  let sample = sample_section(link, detail_slot, section);
   let tangent = safe_normalize(
     sample.tangent,
     deterministic_frame(link).z,
   );
   let stored_x = section_frames[
-    link * scene.counts.w + section
+    detail_slot * scene.counts.w + section
   ].xyz;
   var x = safe_normalize(
     stored_x - tangent * dot(stored_x, tangent),
@@ -570,19 +582,27 @@ fn section_axes(
   return AxisFrame(twisted_x, twisted_y, tangent);
 }
 
-fn material_vertex(link: u32, local_vertex: u32) -> vec3<f32> {
+fn material_vertex(
+  link: u32,
+  detail_slot: u32,
+  local_vertex: u32,
+) -> vec3<f32> {
   let section = local_vertex / 3u;
   let corner = local_vertex % 3u;
-  let sample = sample_section(link, section);
-  let axes = section_axes(link, section);
+  let sample = sample_section(link, detail_slot, section);
+  let axes = section_axes(link, detail_slot, section);
   let angle = f32(corner) * 2.0943951023931953;
   return sample.point
     + axes.x * (scene.geometry.x * cos(angle))
     + axes.y * (scene.geometry.x * sin(angle));
 }
 
-fn section_center(link: u32, section: u32) -> vec3<f32> {
-  return sample_section(link, section).point;
+fn section_center(
+  link: u32,
+  detail_slot: u32,
+  section: u32,
+) -> vec3<f32> {
+  return sample_section(link, detail_slot, section).point;
 }
 
 fn link_gradient(t_value: f32) -> vec3<f32> {
@@ -600,10 +620,12 @@ fn surface_vertex(
   @builtin(vertex_index) vertex_index: u32,
   @builtin(instance_index) instance_index: u32,
 ) -> VertexOut {
+  let detail_slot = instance_index;
+  let link = detail_link_indices[detail_slot];
   let local_vertex = surface_indices[vertex_index];
   let section = local_vertex / 3u;
-  let world = material_vertex(instance_index, local_vertex);
-  let center = section_center(instance_index, section);
+  let world = material_vertex(link, detail_slot, local_vertex);
+  let center = section_center(link, detail_slot, section);
   let t = clamp(gradient_t[local_vertex], 0.0, 1.0);
 
   var out: VertexOut;
@@ -612,7 +634,7 @@ fn surface_vertex(
   out.world_position = world;
   out.smooth_normal = safe_normalize(
     world - center,
-    section_axes(instance_index, section).x,
+    section_axes(link, detail_slot, section).x,
   );
   return out;
 }
@@ -703,10 +725,12 @@ fn arrow_vertex(
   @builtin(vertex_index) vertex_index: u32,
   @builtin(instance_index) instance_index: u32,
 ) -> VertexOut {
+  let detail_slot = instance_index;
+  let link = detail_link_indices[detail_slot];
   let end_section = scene.counts.y;
   let lower_section = select(0u, end_section - 1u, end_section > 0u);
-  let tip = section_center(instance_index, end_section);
-  let lower_center = section_center(instance_index, lower_section);
+  let tip = section_center(link, detail_slot, end_section);
+  let lower_center = section_center(link, detail_slot, lower_section);
   let axis = safe_normalize(
     tip - lower_center,
     vec3<f32>(0.0, 0.0, 1.0),
@@ -795,6 +819,7 @@ implements MonolithicLinkWebGpuRenderer3D {
   readonly semanticCenterBuffer: WebGpuBufferLike;
   readonly shapeParameterBuffer: WebGpuBufferLike;
   readonly shapeGaugeBuffer: WebGpuBufferLike;
+  readonly shapeDetailLinkIndexBuffer: WebGpuBufferLike;
   readonly shapeSectionFrameBuffer: WebGpuBufferLike;
 
   private readonly topologyBuffer: WebGpuBufferLike;
@@ -834,6 +859,7 @@ implements MonolithicLinkWebGpuRenderer3D {
     this.semanticCenterBuffer = compute.centerBuffer;
     this.shapeParameterBuffer = shape.parameterBuffer;
     this.shapeGaugeBuffer = shape.gaugeBuffer;
+    this.shapeDetailLinkIndexBuffer = shape.detailLinkIndexBuffer;
     this.shapeSectionFrameBuffer = shape.sectionFrameBuffer;
     this.topologyBuffer = args.topologyBuffer;
     this.surfaceIndicesBuffer = args.surfaceIndicesBuffer;
@@ -908,8 +934,9 @@ implements MonolithicLinkWebGpuRenderer3D {
     const pass = encoder.beginRenderPass(renderPassDescriptor);
 
     const linkCount = this.compute.topology.linkCount;
+    const detailedLinkCount = this.shape.snapshot().detailedLinkCount;
     let drawCalls = 0;
-    if (linkCount > 0) {
+    if (detailedLinkCount > 0) {
       const wireframe = frame.wireframe === true;
       const hoveredCenterLink =
         frame.hoveredCenterLink ?? -1;
@@ -935,7 +962,7 @@ implements MonolithicLinkWebGpuRenderer3D {
             / Uint32Array.BYTES_PER_ELEMENT
           : this.surfaceIndicesBuffer.size
             / Uint32Array.BYTES_PER_ELEMENT,
-        linkCount,
+        detailedLinkCount,
         0,
         0,
       );
@@ -949,7 +976,7 @@ implements MonolithicLinkWebGpuRenderer3D {
       }
       if (frame.showEndCones !== false) {
         pass.setPipeline(this.arrowPipeline);
-        pass.draw(END_CONE_VERTEX_COUNT, linkCount, 0, 0);
+        pass.draw(END_CONE_VERTEX_COUNT, detailedLinkCount, 0, 0);
         drawCalls += 1;
       }
     }
@@ -962,9 +989,10 @@ implements MonolithicLinkWebGpuRenderer3D {
       / Uint32Array.BYTES_PER_ELEMENT;
     return Object.freeze({
       linkCount,
+      detailedLinkCount,
       drawCalls,
       surfaceVertexInvocations:
-        surfaceVerticesPerLink * linkCount,
+        surfaceVerticesPerLink * detailedLinkCount,
       centerVertexInvocations:
         frame.showCenterMarkers === false
           || frame.hoveredCenterLink === undefined
@@ -976,7 +1004,7 @@ implements MonolithicLinkWebGpuRenderer3D {
       arrowVertexInvocations:
         frame.showEndCones === false
           ? 0
-          : END_CONE_VERTEX_COUNT * linkCount,
+          : END_CONE_VERTEX_COUNT * detailedLinkCount,
       dynamicStateUploadBytes: 0 as const,
       controlUploadBytes: RENDER_UNIFORM_BYTES,
       bufferCopies: 0 as const,
@@ -986,9 +1014,12 @@ implements MonolithicLinkWebGpuRenderer3D {
 
   snapshot(): MonolithicLinkWebGpuRendererSnapshot3D {
     const linkCount = this.compute.topology.linkCount;
+    const shapeSnapshot = this.shape.snapshot();
     return Object.freeze({
       status: this.destroyed ? "destroyed" : "available",
       linkCount,
+      detailedLinkCount: shapeSnapshot.detailedLinkCount,
+      detailCapacity: shapeSnapshot.detailCapacity,
       octahedronCount: this.shape.template.octahedronCount,
       sectionCount: this.shape.template.octahedronCount + 1,
       surfaceVerticesPerLink:
@@ -1166,6 +1197,11 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
       },
       {
         binding: 7,
+        visibility: GPU_SHADER_STAGE_VERTEX,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 8,
         visibility:
           GPU_SHADER_STAGE_VERTEX
           | GPU_SHADER_STAGE_FRAGMENT,
@@ -1275,6 +1311,10 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     },
     {
       binding: 4,
+      resource: { buffer: shape.detailLinkIndexBuffer },
+    },
+    {
+      binding: 5,
       resource: { buffer: topologyBuffer },
     },
   ] as const;
@@ -1285,15 +1325,15 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     entries: [
       ...commonEntries,
       {
-        binding: 5,
+        binding: 6,
         resource: { buffer: surfaceIndicesBuffer },
       },
       {
-        binding: 6,
+        binding: 7,
         resource: { buffer: gradientBuffer },
       },
       {
-        binding: 7,
+        binding: 8,
         resource: { buffer: uniformBuffer },
       },
     ],
@@ -1304,15 +1344,15 @@ export async function createMonolithicLinkWebGpuZeroCopyRenderer3D(
     entries: [
       ...commonEntries,
       {
-        binding: 5,
+        binding: 6,
         resource: { buffer: wireframeIndicesBuffer },
       },
       {
-        binding: 6,
+        binding: 7,
         resource: { buffer: gradientBuffer },
       },
       {
-        binding: 7,
+        binding: 8,
         resource: { buffer: uniformBuffer },
       },
     ],
