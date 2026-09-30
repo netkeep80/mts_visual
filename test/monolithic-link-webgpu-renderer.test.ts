@@ -420,7 +420,7 @@ for (const needle of [
   "let hinge_opening = PI * t * (1.0 - t);",
   "+ PI * (1.0 - 2.0 * t),",
   "let center = semantic_centers[instance_index].xyz;",
-  "let tip = section_center(instance_index, end_section);",
+  "let tip = section_center(link, detail_slot, end_section);",
   "fn link_gradient(t_value: f32)",
   "return vec3<f32>(1.0 - u, u, 0.0);",
   "return vec3<f32>(0.0, 1.0 - u, u);",
