@@ -105,6 +105,11 @@ assert(
   "Stop/pagehide must prevent another benchmark sample",
 );
 assert(
+  benchmark.includes("samples.physics.length < sampleCount")
+    && benchmark.includes('"USER_STOPPED_BEFORE_REQUESTED_SAMPLE_COUNT"'),
+  "stopped partial runs must not be reported as PASS",
+);
+assert(
   app.includes("downloadBenchmarkEvidence"),
   "benchmark evidence must be downloadable",
 );
