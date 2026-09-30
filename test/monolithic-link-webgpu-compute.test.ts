@@ -2,6 +2,7 @@ import {
   MONOLITHIC_LINK_WEBGPU_WGSL,
   createMonolithicLinkWebGpuCompute3D,
   createMonolithicLinkWebGpuComputeFromTopology3D,
+  runMonolithicLinkWebGpuBenchmark3D,
   runMonolithicLinkWebGpuDifferential3D,
   type WebGpuBufferLike,
   type WebGpuDeviceLike,
@@ -45,6 +46,7 @@ class FakeBuffer implements WebGpuBufferLike {
 class FakeQueue {
   readonly writes: { label: string; bytes: number; offset: number }[] = [];
   submissions = 0;
+  submittedWorkSyncs = 0;
 
   writeBuffer(
     buffer: WebGpuBufferLike,
@@ -71,6 +73,10 @@ class FakeQueue {
 
   submit(_commandBuffers: readonly object[]): void {
     this.submissions += 1;
+  }
+
+  async onSubmittedWorkDone(): Promise<void> {
+    this.submittedWorkSyncs += 1;
   }
 
   resetWrites(): void {
@@ -537,6 +543,99 @@ assert(
 );
 shortController.destroy();
 longController.destroy();
+
+let benchmarkClock = 0;
+const benchmarkDevice = new FakeDevice();
+const benchmarkResult = await runMonolithicLinkWebGpuBenchmark3D(
+  benchmarkDevice,
+  {
+    linkCount: 32,
+    topologyProfile: "mixed",
+    seed: 123,
+    aspectRatio: 8 * Math.SQRT2,
+    detailCapacity: 8,
+    warmupIterations: 2,
+    sampleCount: 3,
+    physics: {
+      stretchStiffness: 5,
+      straighteningStiffness: 2,
+      nonlinearity: 0.75,
+      centerMass: 3,
+      dampingRate: 0.6,
+      simulationSpeed: 1.5,
+    },
+    now: () => benchmarkClock++,
+  },
+);
+same(benchmarkResult.status, "PASS", "small fake-device runtime benchmark executes");
+same(
+  benchmarkResult.timingSource,
+  "host-wall-after-queue-sync",
+  "benchmark labels queue-synchronized host timing honestly",
+);
+assert(benchmarkResult.queueSyncSupported, "benchmark uses queue completion sync");
+same(benchmarkResult.topologyInputBytes, 32 * 8, "benchmark reports compact topology bytes");
+same(benchmarkResult.effectiveDetailCapacity, 8, "benchmark honors requested detail budget");
+same(benchmarkResult.stages.physics?.samples, 3, "benchmark records requested physics samples");
+same(benchmarkResult.stages.shape?.samples, 3, "benchmark records requested shape samples");
+same(benchmarkResult.stages.totalIteration?.samples, 3, "benchmark records requested total samples");
+same(benchmarkResult.stages.physics?.medianMs, 1, "deterministic fake clock physics timing");
+same(benchmarkResult.stages.shape?.medianMs, 1, "deterministic fake clock shape timing");
+assert(
+  benchmarkDevice.queue.submittedWorkSyncs >= 2 + 3 * 2,
+  "benchmark synchronizes initialization/warmup/measured queue work",
+);
+assert(
+  benchmarkDevice.dispatches.some(
+    (dispatch) => dispatch.entryPoint === "link_force_main",
+  ),
+  "runtime benchmark executes production physics kernel",
+);
+assert(
+  benchmarkDevice.dispatches.some(
+    (dispatch) => dispatch.entryPoint === "shape_parameter_main",
+  ),
+  "runtime benchmark executes production compact shape kernel",
+);
+assert(
+  benchmarkDevice.dispatches.some(
+    (dispatch) => dispatch.entryPoint === "shape_detail_select_main",
+  ),
+  "bounded runtime benchmark executes production GPU selector",
+);
+assert(
+  benchmarkDevice.dispatches.some(
+    (dispatch) => dispatch.entryPoint === "shape_detail_main",
+  ),
+  "bounded runtime benchmark executes production detail kernel",
+);
+
+const blockedDevice = new FakeDevice();
+blockedDevice.limits.maxStorageBufferBindingSize = 64;
+const blocked = await runMonolithicLinkWebGpuBenchmark3D(
+  blockedDevice,
+  {
+    linkCount: 100,
+    topologyProfile: "chain",
+    aspectRatio: 8 * Math.SQRT2,
+    detailCapacity: 0,
+    warmupIterations: 1,
+    sampleCount: 1,
+    physics: {
+      stretchStiffness: 5,
+      straighteningStiffness: 2,
+    },
+    now: () => benchmarkClock++,
+  },
+);
+same(blocked.status, "CAPACITY_BLOCKED", "capacity failure is explicit benchmark result");
+same(
+  blocked.blockReason,
+  "maxStorageBufferBindingSize",
+  "capacity failure reports concrete adapter limit",
+);
+same(blockedDevice.buffers.length, 0, "capacity-blocked run allocates no GPU buffers");
+same(blocked.topologyInputBytes, null, "capacity-blocked run does not fake topology execution");
 
 const zeroStepDifferential = await runMonolithicLinkWebGpuDifferential3D(
   new FakeDevice(),
