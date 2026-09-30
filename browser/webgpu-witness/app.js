@@ -978,6 +978,159 @@ async function copyText(text) {
   if (!copied) throw new Error("не удалось скопировать текст в буфер обмена");
 }
 
+let selectedVisualKey = null;
+let currentLabModeId = ui.visualizationMode.value;
+
+function reconcileSelectedVisualKey(scene = selectedScene()) {
+  if (
+    selectedVisualKey !== null
+    && !scene.network.links.some((link) => link.key === selectedVisualKey)
+  ) {
+    selectedVisualKey = null;
+  }
+}
+
+function setSelectedVisualKey(key) {
+  const scene = selectedScene();
+  if (key !== null && !scene.network.links.some((link) => link.key === key)) {
+    throw new Error(`неизвестная выбранная связь: ${key}`);
+  }
+  selectedVisualKey = key;
+  updateSharedDiagnostics();
+}
+
+function structuralDiagnosticDetail() {
+  if (!structuralState?.layout) return null;
+  const maxDepth = structuralState.layout.positions.reduce(
+    (maximum, position) => Math.max(maximum, position.depth),
+    0,
+  );
+  return {
+    scc: structuralState.layout.components.length,
+    layers: maxDepth + 1,
+    crossingsBefore: structuralState.layout.metrics.crossingsBefore,
+    crossingsAfter: structuralState.layout.metrics.crossingsAfter,
+    evaluations: structuralState.layout.metrics.evaluations,
+    passes: structuralState.layout.metrics.passes,
+    bounds: structuralState.layout.bounds,
+  };
+}
+
+function blueprintDiagnosticDetail() {
+  if (!blueprintState?.svgScene) return null;
+  return {
+    positions: blueprintState.positions.length,
+    bounds: blueprintState.svgScene.bounds,
+    viewport: blueprintState.viewport,
+  };
+}
+
+function documentDiagnosticDetail() {
+  if (!document2dState?.layout) return null;
+  const quality = document2dState.layout.metrics.qualityAfter;
+  return {
+    profile: document2dState.layout.profile,
+    requestedStrategy: document2dState.options?.strategy ?? null,
+    seedStrategy: document2dState.layout.metrics.seedStrategy,
+    seedCandidates: document2dState.layout.metrics.seedCandidates,
+    crossings: quality.crossings,
+    centerOverlaps: quality.centerOverlaps,
+    labelOverlaps: quality.labelOverlaps,
+    evaluations: document2dState.layout.metrics.optimizerEvaluations,
+    passes: document2dState.layout.metrics.optimizerPasses,
+    svgSha256: document2dState.outputDigest ?? null,
+    bounds: document2dState.layout.bounds,
+  };
+}
+
+function classicDiagnosticDetail() {
+  if (!classicState) return null;
+  const snapshot = core.snapshotLivePhysics3D(classicState.controller);
+  const linkCount = classicState.controller.model.keys.length;
+  return {
+    tick: snapshot.tick,
+    awake: snapshot.awake,
+    maxVelocity: snapshot.maxVelocity,
+    pinnedKeys: snapshot.pinnedKeys,
+    springs: classicState.controller.model.springs.length,
+    chargePairs: linkCount * (linkCount - 1) / 2,
+  };
+}
+
+function mechanicalDiagnosticDetail() {
+  if (!renderState) return null;
+  const compute = renderState.compute.snapshot();
+  const shape = renderState.shape.snapshot();
+  const renderer = renderState.renderer.snapshot();
+  return {
+    frames: renderState.frames,
+    steps: renderState.steps,
+    shapeUpdates: renderState.shapeUpdates,
+    paused: renderState.paused,
+    linkCount: renderState.compute.topology.linkCount,
+    centerBytes: compute.centerBytes,
+    velocityBytes: compute.velocityBytes,
+    octahedraPerLink: shape.octahedronCount,
+    zeroCopy: {
+      sharedSemanticCenterBuffer: renderer.sharedSemanticCenterBuffer,
+      sharedShapeParameterBuffer: renderer.sharedShapeParameterBuffer,
+      dynamicStateUploadBytesPerFrame: renderer.dynamicStateUploadBytesPerFrame,
+      rendererDynamicStateBytes: renderer.rendererDynamicStateBytes,
+    },
+  };
+}
+
+function activeModeDiagnosticDetail() {
+  switch (currentLabModeId) {
+    case "structural-2d": return structuralDiagnosticDetail();
+    case "blueprint-2d": return blueprintDiagnosticDetail();
+    case "document-2d": return documentDiagnosticDetail();
+    case "classic-3d": return classicDiagnosticDetail();
+    case "mechanical-3d": return mechanicalDiagnosticDetail();
+    default: return null;
+  }
+}
+
+function sharedDiagnosticSnapshot() {
+  const scene = selectedScene();
+  const definition = labModeUi(currentLabModeId);
+  return {
+    mode: currentLabModeId,
+    modeLabel: definition?.label ?? currentLabModeId,
+    input: {
+      id: scene.id,
+      label: scene.label,
+      sourceKind: scene.sourceKind,
+      links: scene.network.links.length,
+      ...(scene.sourceRepository === undefined
+        ? {}
+        : { sourceRepository: scene.sourceRepository }),
+      ...(scene.sourceSha === undefined ? {} : { sourceSha: scene.sourceSha }),
+    },
+    selectedKey: selectedVisualKey,
+    renderer: {
+      version: buildInfo.version,
+      buildSha: buildInfo.mainSha,
+    },
+    detail: activeModeDiagnosticDetail(),
+  };
+}
+
+function updateSharedDiagnostics() {
+  const snapshot = sharedDiagnosticSnapshot();
+  ui.labDiagnosticMode.textContent = `${snapshot.modeLabel} · ${snapshot.mode}`;
+  ui.labDiagnosticInput.textContent = `${snapshot.input.label} · ${snapshot.input.sourceKind}`;
+  ui.labDiagnosticLinks.textContent = String(snapshot.input.links);
+  ui.labDiagnosticSelected.textContent = snapshot.selectedKey ?? "—";
+  ui.labDiagnosticVersion.textContent = String(snapshot.renderer.version);
+  ui.labDiagnosticSha.textContent = String(snapshot.renderer.buildSha).slice(0, 12);
+  ui.labDiagnosticDetail.textContent = JSON.stringify(snapshot.detail ?? {}, null, 2);
+}
+
+function sharedDiagnosticText() {
+  return JSON.stringify(sharedDiagnosticSnapshot(), null, 2) + "\n";
+}
+
 populateSceneSelector("root-r");
 syncLabInputPanel();
 
