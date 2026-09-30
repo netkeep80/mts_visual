@@ -68,6 +68,18 @@ function log(message) {
   ui.log.scrollTop = ui.log.scrollHeight;
 }
 
+const LAB_MODE_UI = Object.freeze({
+  "structural-2d": Object.freeze({ label: "Структурный 2D", issue: 126, ready: false }),
+  "blueprint-2d": Object.freeze({ label: "Blueprint 2D", issue: 127, ready: false }),
+  "document-2d": Object.freeze({ label: "Документный 2D", issue: 123, ready: false }),
+  "classic-3d": Object.freeze({ label: "Классический 3D", issue: 128, ready: false }),
+  "mechanical-3d": Object.freeze({ label: "Механический 3D", issue: 129, ready: true }),
+});
+
+function labModeUi(modeId) {
+  return LAB_MODE_UI[modeId] ?? null;
+}
+
 const UI_STATUS = Object.freeze({
   pending: "ожидание",
   running: "выполняется…",
@@ -1646,7 +1658,7 @@ async function inspectGeometry() {
 }
 
 function updateModePlaceholder(modeId) {
-  const definition = core.visualLabModeDefinition(modeId);
+  const definition = labModeUi(modeId);
   const scene = selectedScene();
   if (!definition) return;
   ui.modePlaceholder.innerHTML =
@@ -1676,7 +1688,7 @@ async function mountLabMode(modeId) {
 }
 
 const modeIdsInUi = [...ui.visualizationMode.options].map((option) => option.value);
-const modeIdsInCore = core.VISUAL_LAB_MODE_DEFINITIONS.map((mode) => mode.id);
+const modeIdsInCore = core.VISUAL_LAB_MODE_IDS;
 if (modeIdsInUi.join(",") !== modeIdsInCore.join(",")) {
   throw new Error(
     `режимы UI не совпадают с @mts/visual: UI=${modeIdsInUi.join(",")}; core=${modeIdsInCore.join(",")}`,
@@ -1686,7 +1698,7 @@ if (modeIdsInUi.join(",") !== modeIdsInCore.join(",")) {
 const labLifecycle = core.createVisualLabLifecycle({
   mount: mountLabMode,
   onStateChange: ({ state, modeId, error }) => {
-    const definition = modeId ? core.visualLabModeDefinition(modeId) : null;
+    const definition = modeId ? labModeUi(modeId) : null;
     if (state === "mounting") {
       ui.modeStatus.textContent = `${definition?.label ?? modeId} · переключение…`;
     } else if (state === "mounted") {
