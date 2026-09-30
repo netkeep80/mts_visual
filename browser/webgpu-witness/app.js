@@ -1651,8 +1651,15 @@ function stopRender() {
   try { state.renderer.destroy(); } catch {}
   try { state.depthTexture?.destroy(); } catch {}
   try { state.context.unconfigure?.(); } catch {}
+  finally { labResourceLedger.mechanicalContextConfigured = false; }
   try { state.shape.destroy(); } catch {}
   try { state.compute.destroy(); } catch {}
+  if (state.resourceRegistered) {
+    removeLabResource("activeMechanicalRenderers");
+    removeLabResource("activeRafOwners");
+    state.resourceRegistered = false;
+  }
+  updateSharedDiagnostics();
 }
 
 async function startRender() {
@@ -1713,6 +1720,7 @@ async function startRender() {
       format: colorFormat,
       alphaMode: "opaque",
     });
+    labResourceLedger.mechanicalContextConfigured = true;
 
     renderer = await webgpu.createMonolithicLinkWebGpuZeroCopyRenderer3D(
       device,
@@ -1806,10 +1814,14 @@ async function startRender() {
       semanticCenterCache: initialSemanticCenters.map((center) => [...center]),
       scene,
       network,
+      resourceRegistered: false,
     };
     resetCamera(state.camera, defaultCameraDistance);
     state.cleanupCameraControls = installCameraControls(state);
     renderState = state;
+    addLabResource("activeMechanicalRenderers");
+    addLabResource("activeRafOwners");
+    state.resourceRegistered = true;
     ui.pauseRender.textContent = "Пауза";
 
     function ensureDepth() {
@@ -1935,6 +1947,7 @@ async function startRender() {
   } catch (error) {
     try { renderer?.destroy(); } catch {}
     try { context?.unconfigure?.(); } catch {}
+    finally { labResourceLedger.mechanicalContextConfigured = false; }
     try { shape?.destroy(); } catch {}
     try { compute.destroy(); } catch {}
     throw error;
