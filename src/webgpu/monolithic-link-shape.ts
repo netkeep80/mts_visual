@@ -1205,9 +1205,12 @@ implements MonolithicLinkWebGpuShape3D {
   snapshot(): MonolithicLinkWebGpuShapeSnapshot3D {
     const linkCount = this.compute.topology.linkCount;
     const compactDynamicStateBytes = linkCount * 32;
-    const detailDynamicStateBytes =
-      this.currentDetailLinkIndices.length
+    const detailLinkIndexBytes = this.detailCapacityValue * 4;
+    const sectionFrameBytes =
+      this.detailCapacityValue
       * (this.template.octahedronCount + 1) * 16;
+    const detailDynamicStateBytes =
+      detailLinkIndexBytes + sectionFrameBytes;
     return Object.freeze({
       status: this.destroyed ? "destroyed" : "available",
       linkCount,
@@ -1217,10 +1220,8 @@ implements MonolithicLinkWebGpuShape3D {
       sectionCount: this.template.octahedronCount + 1,
       parameterBytes: linkCount * 16,
       gaugeBytes: linkCount * 16,
-      detailLinkIndexBytes: this.detailCapacityValue * 4,
-      sectionFrameBytes:
-        this.detailCapacityValue
-        * (this.template.octahedronCount + 1) * 16,
+      detailLinkIndexBytes,
+      sectionFrameBytes,
       topologyBytes: this.topologyBuffer.size,
       compactDynamicStateBytes,
       detailDynamicStateBytes,
