@@ -102,6 +102,7 @@ export function normalizeVisualLinkNetwork(network: VisualLinkNetwork): VisualLi
 
 export * from "./presentation.js";
 export * from "./lab-lifecycle.js";
+export * from "./lab-fixtures.js";
 export * from "./structural2d.js";
 export * from "./document2d.js";
 export * from "./document2d-manifest.js";
