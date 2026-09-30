@@ -1,5 +1,4 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import * as webgpu from "../dist/src/webgpu/index.js";
@@ -40,19 +39,20 @@ assert(
   `production WGSL export set changed: expected=${EXPECTED_WGSL_EXPORTS.join(",")} actual=${discovered.join(",")}`,
 );
 
-const directory = await mkdtemp(join(tmpdir(), "mts-visual-wgsl-naga-"));
+const directory = await mkdtemp(join(process.cwd(), ".mts-visual-wgsl-naga-"));
 
 try {
   const shaderPaths = [];
   for (const name of EXPECTED_WGSL_EXPORTS) {
     const source = webgpu[name];
     assert(typeof source === "string" && source.trim().length > 0, `${name} is not a non-empty shader string`);
-    const path = join(directory, `${name}.wgsl`);
+    const fileName = `${name}.wgsl`;
+    const path = join(directory, fileName);
     await writeFile(path, source, "utf8");
-    shaderPaths.push(path);
+    shaderPaths.push(fileName);
   }
 
-  const validation = runNaga(["--bulk-validate", ...shaderPaths]);
+  const validation = runNaga(["--bulk-validate", ...shaderPaths], { cwd: directory });
   if (validation.status !== 0) {
     process.stderr.write(validation.stdout ?? "");
     process.stderr.write(validation.stderr ?? "");
@@ -61,13 +61,14 @@ try {
 
   // Negative control: prove that the external validator is actually parsing input,
   // rather than succeeding because of a wrapper/no-op failure.
-  const invalidPath = join(directory, "invalid-negative-control.wgsl");
+  const invalidFileName = "invalid-negative-control.wgsl";
+  const invalidPath = join(directory, invalidFileName);
   await writeFile(
     invalidPath,
     "@compute @workgroup_size(1) fn broken() { let value = ; }\n",
     "utf8",
   );
-  const invalid = runNaga([invalidPath]);
+  const invalid = runNaga([invalidFileName], { cwd: directory });
   assert(
     invalid.status !== 0,
     "negative-control invalid WGSL was unexpectedly accepted",
