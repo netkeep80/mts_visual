@@ -89,166 +89,11 @@ export interface MonolithicLinkWebGpuShape3D {
   readonly detailSelectionControlBuffer: WebGpuBufferLike;
   setDetailLinkIndices(
     indices: readonly number[],
-  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D {
-    this.assertAlive();
-    const normalized = normalizeDetailLinkIndices(
-      indices,
-      this.compute.topology.linkCount,
-      this.detailCapacityValue,
-    );
-    if (normalized.byteLength > 0) {
-      this.device.queue.writeBuffer(
-        this.detailLinkIndexBuffer,
-        0,
-        normalized,
-      );
-    }
-    const globals = globalsData(
-      this.compute.topology.linkCount,
-      normalized.length,
-      this.template,
-    );
-    this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
-    this.currentDetailLinkIndices = normalized;
-    this.selectionModeValue = "manual";
-    return Object.freeze({
-      detailedLinkCount: normalized.length,
-      detailCapacity: this.detailCapacityValue,
-      selectionMode: "manual" as const,
-      indexUploadBytes: normalized.byteLength,
-      globalsUploadBytes: globals.byteLength,
-      selectionControlUploadBytes: 0,
-    });
-  }
-
+  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D;
   setGpuDetailSelectionView(
     view: MonolithicLinkWebGpuDetailSelectionView3D,
-  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D {
-    this.assertAlive();
-    const linkCount = this.compute.topology.linkCount;
-    if (this.detailCapacityValue <= 0 || linkCount <= 0) {
-      this.currentDetailLinkIndices = new Uint32Array(0);
-      this.selectionModeValue = "manual";
-      const globals = globalsData(linkCount, 0, this.template);
-      this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
-      return Object.freeze({
-        detailedLinkCount: 0,
-        detailCapacity: this.detailCapacityValue,
-        selectionMode: "manual" as const,
-        indexUploadBytes: 0,
-        globalsUploadBytes: globals.byteLength,
-        selectionControlUploadBytes: 0,
-      });
-    }
-
-    if (linkCount <= this.detailCapacityValue) {
-      const identity = defaultDetailLinkIndices(linkCount);
-      return this.setDetailLinkIndices(identity);
-    }
-
-    const control = detailSelectionData(
-      linkCount,
-      this.detailCapacityValue,
-      view,
-    );
-    const globals = globalsData(
-      linkCount,
-      this.detailCapacityValue,
-      this.template,
-    );
-    this.device.queue.writeBuffer(
-      this.detailSelectionControlBuffer,
-      0,
-      control,
-    );
-    this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
-    this.currentDetailLinkIndices = defaultDetailLinkIndices(
-      this.detailCapacityValue,
-    );
-    this.selectionModeValue = "gpu-partition";
-    return Object.freeze({
-      detailedLinkCount: this.detailCapacityValue,
-      detailCapacity: this.detailCapacityValue,
-      selectionMode: "gpu-partition" as const,
-      indexUploadBytes: 0,
-      globalsUploadBytes: globals.byteLength,
-      selectionControlUploadBytes: control.byteLength,
-    });
-  }
-
-  update(): MonolithicLinkWebGpuShapeStepStats3D {
-    this.assertAlive();
-    const linkCount = this.compute.topology.linkCount;
-    const detailCount = this.currentDetailLinkIndices.length;
-    if (linkCount === 0) {
-      return Object.freeze({
-        compactDispatches: 0,
-        selectorDispatches: 0,
-        detailDispatches: 0,
-        dispatches: 0,
-        computePasses: 0,
-        detailedLinkCount: 0,
-        selectionMode: this.selectionModeValue,
-        dynamicStateUploadBytes: 0 as const,
-      });
-    }
-
-    const encoder = this.device.createCommandEncoder({
-      label: "monolithic-link-shape-update",
-    });
-
-    const compactGroups = Math.ceil(linkCount / WORKGROUP_SIZE);
-    const compactX = Math.min(compactGroups, this.maxWorkgroups);
-    const compactY = Math.ceil(compactGroups / this.maxWorkgroups);
-    const compactPass = encoder.beginComputePass();
-    compactPass.setPipeline(this.compactPipeline);
-    compactPass.setBindGroup(0, this.bindGroup);
-    compactPass.dispatchWorkgroups(compactX, compactY, 1);
-    compactPass.end();
-
-    let selectorDispatches = 0;
-    if (
-      detailCount > 0
-      && this.selectionModeValue === "gpu-partition"
-    ) {
-      const selectorGroups = Math.ceil(detailCount / WORKGROUP_SIZE);
-      const selectorX = Math.min(selectorGroups, this.maxWorkgroups);
-      const selectorY = Math.ceil(selectorGroups / this.maxWorkgroups);
-      const selectorPass = encoder.beginComputePass();
-      selectorPass.setPipeline(this.selectorPipeline);
-      selectorPass.setBindGroup(0, this.bindGroup);
-      selectorPass.dispatchWorkgroups(selectorX, selectorY, 1);
-      selectorPass.end();
-      selectorDispatches = 1;
-    }
-
-    let detailDispatches = 0;
-    if (detailCount > 0) {
-      const detailGroups = Math.ceil(detailCount / WORKGROUP_SIZE);
-      const detailX = Math.min(detailGroups, this.maxWorkgroups);
-      const detailY = Math.ceil(detailGroups / this.maxWorkgroups);
-      const detailPass = encoder.beginComputePass();
-      detailPass.setPipeline(this.detailPipeline);
-      detailPass.setBindGroup(0, this.bindGroup);
-      detailPass.dispatchWorkgroups(detailX, detailY, 1);
-      detailPass.end();
-      detailDispatches = 1;
-    }
-
-    this.device.queue.submit([encoder.finish()]);
-
-    return Object.freeze({
-      compactDispatches: 1,
-      selectorDispatches,
-      detailDispatches,
-      dispatches: 1 + selectorDispatches + detailDispatches,
-      computePasses: 1 + selectorDispatches + detailDispatches,
-      detailedLinkCount: detailCount,
-      selectionMode: this.selectionModeValue,
-      dynamicStateUploadBytes: 0 as const,
-    });
-  }
-
+  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D;
+  update(): MonolithicLinkWebGpuShapeStepStats3D;
   snapshot(): MonolithicLinkWebGpuShapeSnapshot3D;
   destroy(): void;
 }
@@ -1515,11 +1360,70 @@ implements MonolithicLinkWebGpuShape3D {
     );
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
     this.currentDetailLinkIndices = normalized;
+    this.selectionModeValue = "manual";
     return Object.freeze({
       detailedLinkCount: normalized.length,
       detailCapacity: this.detailCapacityValue,
+      selectionMode: "manual" as const,
       indexUploadBytes: normalized.byteLength,
       globalsUploadBytes: globals.byteLength,
+      selectionControlUploadBytes: 0,
+    });
+  }
+
+  setGpuDetailSelectionView(
+    view: MonolithicLinkWebGpuDetailSelectionView3D,
+  ): MonolithicLinkWebGpuShapeDetailUpdateStats3D {
+    this.assertAlive();
+    const linkCount = this.compute.topology.linkCount;
+    if (this.detailCapacityValue <= 0 || linkCount <= 0) {
+      this.currentDetailLinkIndices = new Uint32Array(0);
+      this.selectionModeValue = "manual";
+      const globals = globalsData(linkCount, 0, this.template);
+      this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
+      return Object.freeze({
+        detailedLinkCount: 0,
+        detailCapacity: this.detailCapacityValue,
+        selectionMode: "manual" as const,
+        indexUploadBytes: 0,
+        globalsUploadBytes: globals.byteLength,
+        selectionControlUploadBytes: 0,
+      });
+    }
+
+    if (linkCount <= this.detailCapacityValue) {
+      return this.setDetailLinkIndices(
+        defaultDetailLinkIndices(linkCount),
+      );
+    }
+
+    const control = detailSelectionData(
+      linkCount,
+      this.detailCapacityValue,
+      view,
+    );
+    const globals = globalsData(
+      linkCount,
+      this.detailCapacityValue,
+      this.template,
+    );
+    this.device.queue.writeBuffer(
+      this.detailSelectionControlBuffer,
+      0,
+      control,
+    );
+    this.device.queue.writeBuffer(this.globalsBuffer, 0, globals);
+    this.currentDetailLinkIndices = defaultDetailLinkIndices(
+      this.detailCapacityValue,
+    );
+    this.selectionModeValue = "gpu-partition";
+    return Object.freeze({
+      detailedLinkCount: this.detailCapacityValue,
+      detailCapacity: this.detailCapacityValue,
+      selectionMode: "gpu-partition" as const,
+      indexUploadBytes: 0,
+      globalsUploadBytes: globals.byteLength,
+      selectionControlUploadBytes: control.byteLength,
     });
   }
 
@@ -1530,10 +1434,12 @@ implements MonolithicLinkWebGpuShape3D {
     if (linkCount === 0) {
       return Object.freeze({
         compactDispatches: 0,
+        selectorDispatches: 0,
         detailDispatches: 0,
         dispatches: 0,
         computePasses: 0,
         detailedLinkCount: 0,
+        selectionMode: this.selectionModeValue,
         dynamicStateUploadBytes: 0 as const,
       });
     }
@@ -1550,6 +1456,22 @@ implements MonolithicLinkWebGpuShape3D {
     compactPass.setBindGroup(0, this.bindGroup);
     compactPass.dispatchWorkgroups(compactX, compactY, 1);
     compactPass.end();
+
+    let selectorDispatches = 0;
+    if (
+      detailCount > 0
+      && this.selectionModeValue === "gpu-partition"
+    ) {
+      const selectorGroups = Math.ceil(detailCount / WORKGROUP_SIZE);
+      const selectorX = Math.min(selectorGroups, this.maxWorkgroups);
+      const selectorY = Math.ceil(selectorGroups / this.maxWorkgroups);
+      const selectorPass = encoder.beginComputePass();
+      selectorPass.setPipeline(this.selectorPipeline);
+      selectorPass.setBindGroup(0, this.bindGroup);
+      selectorPass.dispatchWorkgroups(selectorX, selectorY, 1);
+      selectorPass.end();
+      selectorDispatches = 1;
+    }
 
     let detailDispatches = 0;
     if (detailCount > 0) {
@@ -1568,10 +1490,12 @@ implements MonolithicLinkWebGpuShape3D {
 
     return Object.freeze({
       compactDispatches: 1,
+      selectorDispatches,
       detailDispatches,
-      dispatches: 1 + detailDispatches,
-      computePasses: 1 + detailDispatches,
+      dispatches: 1 + selectorDispatches + detailDispatches,
+      computePasses: 1 + selectorDispatches + detailDispatches,
       detailedLinkCount: detailCount,
+      selectionMode: this.selectionModeValue,
       dynamicStateUploadBytes: 0 as const,
     });
   }
