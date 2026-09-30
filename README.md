@@ -3,6 +3,24 @@
 Standalone presentation/visualization authority for MTS link asets, published as the `@mts/visual` package.
 
 
+## Current release — 0.6.0
+
+`@mts/visual 0.6.0` is the unified visualization-laboratory release.
+
+Compared with the 0.5.0 monolithic Mechanical 3D foundation, 0.6.0 adds the complete five-mode public laboratory, deterministic Document 2D publication/CLI rendering, shared renderer-neutral fixtures and JSON input, cross-mode diagnostics/export, repeated real lifecycle/resource acceptance, zero-crossing optimization for small Document layouts, and blocking Naga validation for all shipping WGSL modules.
+
+The five modes remain intentionally distinct:
+
+```text
+Structural 2D  — topology/debug projection
+Blueprint 2D   — interactive continuous Link geometry
+Document 2D    — deterministic publication SVG
+Classic 3D     — charge + incidence springs / center repulsion
+Mechanical 3D  — monolithic semantic-Link mechanics / WebGPU
+```
+
+0.6.0 changes presentation/debug tooling only; it does not introduce MTS semantic authority into this repository and does not imply an MTS theory-version transition.
+
 ## Five-mode visualization laboratory
 
 **[Open the published mts_visual laboratory](https://netkeep80.github.io/mts_visual/)**
