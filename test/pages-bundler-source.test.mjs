@@ -47,5 +47,9 @@ assert(
   workflow.includes("npm ci --ignore-scripts --no-audit --no-fund"),
   "Pages workflow must install from the lockfile before bundling",
 );
+assert(
+  workflow.includes("cp browser/webgpu-witness/*.js _site/"),
+  "Pages workflow must publish the complete browser witness JavaScript module surface",
+);
 
 console.log("Pages lockfile-closed bundler contract: PASS");

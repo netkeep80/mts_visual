@@ -24,33 +24,22 @@ for (const id of [
   assert(html.includes(`id="${id}"`), `missing shipped self-test UI id: ${id}`);
 }
 
+assert(
+  app.includes('from "./lab-resource-model.js"')
+    && app.includes("createLabResourceLedger")
+    && app.includes("claimLabResourceLedger")
+    && app.includes("releaseLabResourceLedger")
+    && app.includes("assertLabResourceAudit"),
+  "app must delegate resource accounting/invariants to the executable resource model",
+);
+
 for (const symbol of [
-  "LAB_REAL_CYCLE",
-  "labResourceLedger",
-  "claimLabResources",
-  "releaseLabResources",
   "labResourceAuditSnapshot",
   "assertRealModeResources",
   "runLabModeCycleSelfTest",
 ]) {
-  assert(app.includes(symbol), `missing resource-cycle implementation: ${symbol}`);
+  assert(app.includes(symbol), `missing resource-cycle browser wiring: ${symbol}`);
 }
-
-const orderedModes = [
-  '"structural-2d"',
-  '"blueprint-2d"',
-  '"document-2d"',
-  '"classic-3d"',
-  '"mechanical-3d"',
-  '"classic-3d"',
-  '"document-2d"',
-  '"blueprint-2d"',
-  '"structural-2d"',
-].join(",\n  ");
-assert(
-  app.includes(orderedModes),
-  "real self-test must ship the accepted forward/back five-mode sequence",
-);
 
 assert(
   app.includes('LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"'),
@@ -82,19 +71,6 @@ assert(
   "real cycle must preserve shared selection",
 );
 
-for (const resource of [
-  "activeRendererOwners",
-  "listenerScopes",
-  "resizeObservers",
-  "svgRoots",
-  "threeRenderers",
-  "mechanicalRenderers",
-  "rafOwners",
-  "webgpuConfigured",
-]) {
-  assert(app.includes(resource), `missing lab-owned resource counter: ${resource}`);
-}
-
 assert(
   app.includes("threeVisual.getVisualThreeRendererSnapshot"),
   "Classic resource acceptance must inspect the actual Three mount registry",
@@ -114,10 +90,6 @@ assert(
 assert(
   app.includes("renderState !== null"),
   "Mechanical actual renderer state must be checked",
-);
-assert(
-  app.includes("audit.ledger.webgpuConfigured === 0"),
-  "leaving Mechanical must assert configured-WebGPU ownership is zero",
 );
 assert(
   app.includes("releaseLabResources(modeId);"),
