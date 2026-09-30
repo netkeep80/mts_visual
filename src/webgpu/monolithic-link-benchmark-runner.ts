@@ -57,6 +57,7 @@ export interface MonolithicLinkBenchmarkRunOptions3D {
   readonly seed?: number;
   readonly aspectRatio: number;
   readonly detailCapacity: number;
+  readonly requireDetailCapacity?: boolean;
   readonly warmupIterations?: number;
   readonly sampleCount?: number;
   readonly physics: Omit<MonolithicLinkSpringOptions3D, "aspectRatio">;
@@ -372,7 +373,12 @@ export async function runMonolithicLinkWebGpuBenchmark3D(
     capacity,
     queueSyncSupported,
   );
-  const blockReason = capacityBlockReason(capacity);
+  const adapterBlockReason = capacityBlockReason(capacity);
+  const blockReason =
+    options.requireDetailCapacity === true
+    && capacity.detailCapacity < options.detailCapacity
+      ? "detailCapacity"
+      : adapterBlockReason;
   if (blockReason !== null) {
     return Object.freeze({
       status: "CAPACITY_BLOCKED",
