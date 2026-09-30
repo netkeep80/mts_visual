@@ -31,6 +31,7 @@ import "./presentation.test.js";
 import "./structural2d.test.js";
 import "./document2d.test.js";
 import "./lab-lifecycle.test.js";
+import "./lab-fixtures.test.js";
 import "./three-presentation.test.js";
 import "./three-labels.test.js";
 
