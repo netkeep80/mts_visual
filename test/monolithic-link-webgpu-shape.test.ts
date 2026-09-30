@@ -510,7 +510,7 @@ same(
   gpuWritesBefore + 2,
   "GPU selector camera change performs exactly globals + control writes",
 );
-const selectorWrite = boundedDevice.queue.writes.findLast(
+const selectorWrite = [...boundedDevice.queue.writes].reverse().find(
   (write) => write.label === "monolithic-link-detail-selection",
 );
 assert(selectorWrite !== undefined, "GPU selector writes its fixed control buffer");
