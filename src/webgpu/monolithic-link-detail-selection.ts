@@ -245,12 +245,25 @@ export function selectMonolithicLinkDetail3D(
   );
 
   if (capacity >= linkCount) {
+    let visibleCandidateCount = 0;
+    for (let linkIndex = 0; linkIndex < linkCount; linkIndex += 1) {
+      if (
+        candidateFor(
+          matrix,
+          input.centerAt(linkIndex),
+          linkIndex,
+          margin,
+        ).visibleRank === 0
+      ) {
+        visibleCandidateCount += 1;
+      }
+    }
     const indices = Object.freeze(
       Array.from({ length: linkCount }, (_value, index) => index),
     );
     return Object.freeze({
       indices,
-      visibleCandidateCount: linkCount,
+      visibleCandidateCount,
       selectedIncluded: selected !== null,
       hoveredIncluded: hovered !== null,
       selectedPinned: false,
