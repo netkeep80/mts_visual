@@ -2059,15 +2059,19 @@ function updateModePlaceholder(modeId) {
 async function mountLabMode(modeId) {
   const mechanical = modeId === "mechanical-3d";
   const blueprint = modeId === "blueprint-2d";
-  const hasSideControls = mechanical || blueprint;
+  const classic = modeId === "classic-3d";
+  const hasSideControls = mechanical || blueprint || classic;
 
   ui.mechanicalControls.hidden = !mechanical;
   ui.blueprintControls.hidden = !blueprint;
+  ui.classicControls.hidden = !classic;
   ui.canvas.hidden = !mechanical;
   ui.blueprintViewport.hidden = !blueprint;
-  ui.modePlaceholder.hidden = mechanical || blueprint;
+  ui.classicViewport.hidden = !classic;
+  ui.modePlaceholder.hidden = mechanical || blueprint || classic;
   ui.mechanicalCameraHint.hidden = !mechanical;
   ui.mechanicalRenderDiagnostics.hidden = !mechanical;
+  ui.classicRenderDiagnostics.hidden = !classic;
   ui.mechanicalGeometryPanel.hidden = !mechanical;
   ui.liveLab.classList.toggle("placeholder-mode", !hasSideControls);
 
@@ -2077,6 +2081,7 @@ async function mountLabMode(modeId) {
   }
 
   if (blueprint) return mountBlueprint();
+  if (classic) return mountClassic3D();
 
   updateModePlaceholder(modeId);
   log(`режим ${modeId} выбран; renderer будет подключён отдельным этапом roadmap`);
@@ -2156,9 +2161,9 @@ ui.rerun.addEventListener("click", () => {
 ui.scene.addEventListener("change", () => {
   ui.geometryBody.innerHTML = '<tr><td colspan="9" class="muted">Нажмите «Проверить геометрию».</td></tr>';
   const activeMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
-  if (activeMode === "blueprint-2d") {
-    activateLabMode("blueprint-2d").catch((error) => {
-      log(`ОШИБКА перезапуска Blueprint 2D — ${error.stack ?? error}`);
+  if (activeMode === "blueprint-2d" || activeMode === "classic-3d") {
+    activateLabMode(activeMode).catch((error) => {
+      log(`ОШИБКА перезапуска режима ${activeMode} — ${error.stack ?? error}`);
     });
     return;
   }
@@ -2210,6 +2215,51 @@ ui.blueprintReset.addEventListener("click", () => {
 
 ui.blueprintExport.addEventListener("click", () => {
   downloadBlueprintSvg();
+});
+
+for (const control of [
+  ui.classicCharge,
+  ui.classicRestLength,
+  ui.classicStiffness,
+  ui.classicDamping,
+  ui.classicTimeStep,
+]) {
+  control.addEventListener("input", applyClassicPhysicsControls);
+}
+
+ui.classicLabels.addEventListener("change", () => {
+  if (!classicState) return;
+  activateLabMode("classic-3d").catch((error) => {
+    log(`ОШИБКА обновления подписей Classic 3D — ${error.stack ?? error}`);
+  });
+});
+
+ui.classicPause.addEventListener("click", () => {
+  if (!classicState) return;
+  classicState.paused = !classicState.paused;
+  threeVisual.setVisualThreeLivePaused(ui.classicViewport, classicState.paused);
+  ui.classicPause.textContent = classicState.paused ? "Продолжить" : "Пауза";
+  updateClassicDiagnostics(classicState);
+});
+
+ui.classicReset.addEventListener("click", () => {
+  if (!classicState) return;
+  activateLabMode("classic-3d").catch((error) => {
+    log(`ОШИБКА сброса Classic 3D — ${error.stack ?? error}`);
+  });
+});
+
+ui.classicFit.addEventListener("click", () => {
+  if (classicState) threeVisual.fitVisualThreeRenderer(ui.classicViewport);
+});
+
+ui.classicFullscreen.addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement === ui.viewportShell) await document.exitFullscreen();
+    else await ui.viewportShell.requestFullscreen();
+  } catch (error) {
+    log(`ОШИБКА полноэкранного режима Classic 3D — ${error.stack ?? error}`);
+  }
 });
 
 ui.inspectGeometry.addEventListener("click", () => {
@@ -2377,10 +2427,12 @@ ui.fullscreenRender.addEventListener("click", async () => {
 });
 
 document.addEventListener("fullscreenchange", () => {
-  ui.fullscreenRender.textContent =
-    document.fullscreenElement === ui.viewportShell
-      ? "Выйти из полноэкранного режима"
-      : "На весь экран";
+  const active = document.fullscreenElement === ui.viewportShell;
+  ui.fullscreenRender.textContent = active ? "Выйти из полноэкранного режима" : "На весь экран";
+  ui.classicFullscreen.textContent = active ? "Выйти из полноэкранного режима" : "На весь экран";
+  if (classicState) {
+    requestAnimationFrame(() => threeVisual.fitVisualThreeRenderer(ui.classicViewport));
+  }
 });
 
 try {
