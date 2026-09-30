@@ -7,7 +7,6 @@ import {
 } from "../monolithic-link-spring3d.js";
 import {
   buildOctahedralLinkTopology3D,
-  type OctahedralLinkTopology3D,
 } from "../octahedral-link3d.js";
 import {
   computeOctahedralWebGpuDispatch2D,
