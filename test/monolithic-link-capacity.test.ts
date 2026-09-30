@@ -195,6 +195,40 @@ same(
   "32 MiB semantic capacity is explicitly reported",
 );
 
+const semanticOnly = planMonolithicLinkWebGpuCapacity3D(
+  1_000_000,
+  aspectForOctahedra(128),
+  {
+    maxStorageBufferBindingSize: storage128MiB,
+    maxBufferSize: 256 * MIB,
+  },
+  { detailCapacity: 0 },
+);
+same(semanticOnly.detailCapacity, 0, "semantic benchmark preflight allocates no detail cache");
+same(semanticOnly.detailCacheBytes, 8, "zero-detail buffers keep only 4-byte minimum allocations");
+same(semanticOnly.sectionFrameBytes, 0, "semantic benchmark has zero logical section-frame bytes");
+same(semanticOnly.selectorInvocationsPerStep, 0, "semantic benchmark has no selector work");
+same(semanticOnly.detailInvocationsPerStep, 0, "semantic benchmark has no detail work");
+same(semanticOnly.computePassesPerStep, 3, "semantic benchmark is 2 physics + compact shape");
+
+const detail4096 = planMonolithicLinkWebGpuCapacity3D(
+  1_000_000,
+  aspectForOctahedra(128),
+  {
+    maxStorageBufferBindingSize: storage128MiB,
+    maxBufferSize: 256 * MIB,
+  },
+  { detailCapacity: 4096 },
+);
+same(detail4096.detailCapacity, 4096, "benchmark preflight honors requested 4096 detail slots");
+same(
+  detail4096.sectionFrameBytes,
+  4096 * 129 * 16,
+  "requested detail preflight models exact section-frame allocation",
+);
+same(detail4096.selectorInvocationsPerStep, 4096, "bounded benchmark selector work uses requested detail count");
+same(detail4096.computePassesPerStep, 5, "bounded benchmark includes selector + detail passes");
+
 const noLimit = planMonolithicLinkWebGpuCapacity3D(
   1_000,
   aspectForOctahedra(32),
@@ -233,6 +267,21 @@ assert(
   ),
   "capacity model includes the fixed 96-byte GPU selector uniform",
 );
+
+try {
+  planMonolithicLinkWebGpuCapacity3D(
+    10,
+    aspectForOctahedra(16),
+    {},
+    { detailCapacity: 11 },
+  );
+  throw new Error("detailCapacity > linkCount accepted");
+} catch (error) {
+  assert(
+    String(error).includes("invalid monolithic capacity detailCapacity"),
+    "requested detail capacity above Link count fails closed",
+  );
+}
 
 for (const invalid of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
   try {
