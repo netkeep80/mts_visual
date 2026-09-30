@@ -935,16 +935,17 @@ implements MonolithicLinkWebGpuRenderer3D {
 
     const linkCount = this.compute.topology.linkCount;
     const detailedLinkCount = this.shape.snapshot().detailedLinkCount;
+    const wireframe = frame.wireframe === true;
+    const hoveredCenterLink =
+      frame.hoveredCenterLink ?? -1;
+    const showHoveredCenter =
+      frame.showCenterMarkers !== false
+      && Number.isSafeInteger(hoveredCenterLink)
+      && hoveredCenterLink >= 0
+      && hoveredCenterLink < linkCount;
     let drawCalls = 0;
+
     if (detailedLinkCount > 0) {
-      const wireframe = frame.wireframe === true;
-      const hoveredCenterLink =
-        frame.hoveredCenterLink ?? -1;
-      const showHoveredCenter =
-        frame.showCenterMarkers !== false
-        && Number.isSafeInteger(hoveredCenterLink)
-        && hoveredCenterLink >= 0
-        && hoveredCenterLink < linkCount;
       pass.setBindGroup(
         0,
         wireframe
@@ -967,18 +968,23 @@ implements MonolithicLinkWebGpuRenderer3D {
         0,
       );
       drawCalls += 1;
+    }
 
+    if (showHoveredCenter) {
       pass.setBindGroup(0, this.surfaceBindGroup);
-      if (showHoveredCenter) {
-        pass.setPipeline(this.centerPipeline);
-        pass.draw(CENTER_VERTEX_COUNT, 1, 0, hoveredCenterLink);
-        drawCalls += 1;
-      }
-      if (frame.showEndCones !== false) {
-        pass.setPipeline(this.arrowPipeline);
-        pass.draw(END_CONE_VERTEX_COUNT, detailedLinkCount, 0, 0);
-        drawCalls += 1;
-      }
+      pass.setPipeline(this.centerPipeline);
+      pass.draw(CENTER_VERTEX_COUNT, 1, 0, hoveredCenterLink);
+      drawCalls += 1;
+    }
+
+    if (
+      detailedLinkCount > 0
+      && frame.showEndCones !== false
+    ) {
+      pass.setBindGroup(0, this.surfaceBindGroup);
+      pass.setPipeline(this.arrowPipeline);
+      pass.draw(END_CONE_VERTEX_COUNT, detailedLinkCount, 0, 0);
+      drawCalls += 1;
     }
 
     pass.end();
