@@ -52,8 +52,7 @@ jobs:
           mkdir -p _site/vendor
 
           cp browser/webgpu-witness/index.html _site/index.html
-          cp browser/webgpu-witness/app.js _site/app.js
-          cp browser/webgpu-witness/benchmark.js _site/benchmark.js
+          cp browser/webgpu-witness/*.js _site/
           touch _site/.nojekyll
 
           ./node_modules/.bin/esbuild             src/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-core.bundle.js
@@ -90,10 +89,13 @@ jobs:
           set -euo pipefail
           node --check browser/webgpu-witness/app.js
           node --check browser/webgpu-witness/benchmark.js
+          node --check browser/webgpu-witness/benchmark-ui-model.js
           test -s _site/benchmark.js
+          test -s _site/benchmark-ui-model.js
 
           grep -F 'src="./app.js"' _site/index.html
           grep -F 'from "./benchmark.js"' _site/app.js
+          grep -F 'from "./benchmark-ui-model.js"' _site/app.js
           grep -F 'queue.onSubmittedWorkDone()' _site/benchmark.js
           grep -F 'createMonolithicLinkWebGpuComputeFromTopology3D' _site/benchmark.js
           grep -F './vendor/mts-visual-core.bundle.js' _site/app.js
@@ -202,6 +204,7 @@ jobs:
           fetch "build-info.json" /tmp/mts-visual-pages-smoke/build-info.json
           fetch "index.html" /tmp/mts-visual-pages-smoke/index.html
           fetch "app.js" /tmp/mts-visual-pages-smoke/app.js
+          fetch "benchmark-ui-model.js" /tmp/mts-visual-pages-smoke/benchmark-ui-model.js
           fetch "vendor/mts-visual-core.bundle.js" /tmp/mts-visual-pages-smoke/core.js
           fetch "vendor/mts-visual-webgpu.bundle.js" /tmp/mts-visual-pages-smoke/webgpu.js
           fetch "vendor/mts-visual-three.bundle.js" /tmp/mts-visual-pages-smoke/three.js
@@ -212,6 +215,8 @@ jobs:
           grep -F 'id="gpu-canvas"' /tmp/mts-visual-pages-smoke/index.html
           grep -F 'id="lab-run-cycle-test"' /tmp/mts-visual-pages-smoke/index.html
           grep -F 'id="lab-resource-audit"' /tmp/mts-visual-pages-smoke/index.html
+          grep -F 'from "./benchmark-ui-model.js"' /tmp/mts-visual-pages-smoke/app.js
+          grep -F 'export function parseMechanicalBenchmarkQuery' /tmp/mts-visual-pages-smoke/benchmark-ui-model.js
           grep -F 'runOctahedralWebGpuDifferentialWitness3D' /tmp/mts-visual-pages-smoke/app.js
           grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' /tmp/mts-visual-pages-smoke/app.js
           grep -F 'LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"' /tmp/mts-visual-pages-smoke/app.js
