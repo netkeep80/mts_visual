@@ -2507,9 +2507,9 @@ function updateDocumentDiagnostics(state) {
   const before = state.layout.metrics.qualityBefore;
   const after = state.layout.metrics.qualityAfter;
   ui.documentSeed.textContent =
-    `${state.layout.metrics.seedStrategy} · ${state.layout.metrics.seedCandidates} кандидата`;
+    `${state.layout.metrics.seedStrategy} · ${state.layout.metrics.seedVariant} · ${state.layout.metrics.seedCandidates} кандидатов`;
   ui.documentCrossings.textContent =
-    `${before.crossings} → ${after.crossings}`;
+    `${before.crossings} → ${after.crossings}${state.layout.metrics.zeroCrossingFound ? " · найден 0-crossing" : ""}`;
   ui.documentOverlaps.textContent =
     `центры ${after.centerOverlaps} · подписи ${after.labelOverlaps}`;
   ui.documentOptimizer.textContent =
