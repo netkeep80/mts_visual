@@ -829,15 +829,102 @@ implements MonolithicLinkWebGpuCompute3D {
   }
 }
 
-export async function createMonolithicLinkWebGpuCompute3D(
+function validateMonolithicLinkWebGpuTopology3D(
+  topology: MonolithicLinkWebGpuTopology3D,
+): void {
+  const { linkCount, startIndices, endIndices } = topology;
+  if (!Number.isSafeInteger(linkCount) || linkCount < 0) {
+    throw new Error(
+      `invalid monolithic WebGPU topology linkCount: ${String(linkCount)}`,
+    );
+  }
+  if (startIndices.length !== linkCount) {
+    throw new Error(
+      `invalid monolithic WebGPU topology startIndices length: ${startIndices.length} != ${linkCount}`,
+    );
+  }
+  if (endIndices.length !== linkCount) {
+    throw new Error(
+      `invalid monolithic WebGPU topology endIndices length: ${endIndices.length} != ${linkCount}`,
+    );
+  }
+  for (let link = 0; link < linkCount; link += 1) {
+    const start = startIndices[link]!;
+    const end = endIndices[link]!;
+    if (start >= linkCount) {
+      throw new Error(
+        `invalid monolithic WebGPU topology START[${link}]: ${start}`,
+      );
+    }
+    if (end >= linkCount) {
+      throw new Error(
+        `invalid monolithic WebGPU topology END[${link}]: ${end}`,
+      );
+    }
+  }
+}
+
+function validateMonolithicLinkWebGpuInitialState3D(
+  state: MonolithicLinkWebGpuInitialState3D,
+  linkCount: number,
+): Readonly<{
+  centers: Float32Array;
+  velocities: Float32Array;
+}> {
+  const expected = linkCount * 3;
+  if (state.centers.length !== expected) {
+    throw new Error(
+      `invalid monolithic WebGPU initial centers length: ${state.centers.length} != ${expected}`,
+    );
+  }
+  const velocities =
+    state.velocities ?? new Float32Array(expected);
+  if (velocities.length !== expected) {
+    throw new Error(
+      `invalid monolithic WebGPU initial velocities length: ${velocities.length} != ${expected}`,
+    );
+  }
+
+  for (const [label, values] of [
+    ["centers", state.centers],
+    ["velocities", velocities],
+  ] as const) {
+    for (let index = 0; index < values.length; index += 1) {
+      if (!Number.isFinite(values[index]!)) {
+        throw new Error(
+          `non-finite monolithic WebGPU initial ${label}[${index}]`,
+        );
+      }
+    }
+  }
+
+  return Object.freeze({
+    centers: state.centers,
+    velocities,
+  });
+}
+
+async function createMonolithicLinkWebGpuComputeResolved3D(
   device: WebGpuDeviceLike,
-  network: VisualLinkNetwork,
+  topology: MonolithicLinkWebGpuTopology3D,
   options: MonolithicLinkSpringOptions3D,
+  initialState?: MonolithicLinkWebGpuInitialState3D,
 ): Promise<MonolithicLinkWebGpuCompute3D> {
+  validateMonolithicLinkWebGpuTopology3D(topology);
   const physics = resolvePhysics(options);
-  const topology = buildOctahedralLinkTopology3D(network);
-  const cpuSeed = createMonolithicLinkSpringPhysics3D(network, options);
-  const restLength = cpuSeed.template.restLength;
+  const template = getMonolithicLinkSpringTemplate3D(
+    options.aspectRatio,
+  );
+  const seed = validateMonolithicLinkWebGpuInitialState3D(
+    initialState ?? {
+      centers: createMonolithicLinkSemanticCenterSeed3D(
+        topology.linkCount,
+        template.aspectRatio,
+      ),
+    },
+    topology.linkCount,
+  );
+  const restLength = template.restLength;
   const reverse = buildReverseIncidence(topology);
   const topologyData = packedTopologyData(topology, reverse);
 
@@ -887,8 +974,12 @@ export async function createMonolithicLinkWebGpuCompute3D(
     GPU_BUFFER_USAGE.UNIFORM | GPU_BUFFER_USAGE.COPY_DST,
   );
 
-  writeWhole(device, centerBuffer, packVec3ToVec4(cpuSeed.centers));
-  writeWhole(device, velocityBuffer, packVec3ToVec4(cpuSeed.velocities));
+  writeWhole(device, centerBuffer, packVec3ToVec4(seed.centers));
+  writeWhole(
+    device,
+    velocityBuffer,
+    packVec3ToVec4(seed.velocities),
+  );
   writeWhole(device, topologyBuffer, topologyData);
   writeWhole(
     device,
@@ -980,6 +1071,41 @@ export async function createMonolithicLinkWebGpuCompute3D(
     restLength,
     physics,
   });
+}
+
+/**
+ * Low-level typed-array entry point used by large-scale benchmarks and other
+ * callers that already own indexed Link topology.
+ *
+ * It uses the exact same production WebGPU buffers, WGSL and controller as the
+ * VisualLinkNetwork adapter, without allocating presentation keys or a CPU
+ * spring-physics mirror.
+ */
+export async function createMonolithicLinkWebGpuComputeFromTopology3D(
+  device: WebGpuDeviceLike,
+  topology: MonolithicLinkWebGpuTopology3D,
+  options: MonolithicLinkSpringOptions3D,
+  initialState?: MonolithicLinkWebGpuInitialState3D,
+): Promise<MonolithicLinkWebGpuCompute3D> {
+  return createMonolithicLinkWebGpuComputeResolved3D(
+    device,
+    topology,
+    options,
+    initialState,
+  );
+}
+
+export async function createMonolithicLinkWebGpuCompute3D(
+  device: WebGpuDeviceLike,
+  network: VisualLinkNetwork,
+  options: MonolithicLinkSpringOptions3D,
+): Promise<MonolithicLinkWebGpuCompute3D> {
+  const topology = buildOctahedralLinkTopology3D(network);
+  return createMonolithicLinkWebGpuComputeResolved3D(
+    device,
+    topology,
+    options,
+  );
 }
 
 function maxDelta(left: Float32Array, right: Float32Array): number {
