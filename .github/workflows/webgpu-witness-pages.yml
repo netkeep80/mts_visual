@@ -56,11 +56,11 @@ jobs:
           cp browser/webgpu-witness/benchmark.js _site/benchmark.js
           touch _site/.nojekyll
 
-          npx --yes esbuild@0.24.2             src/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-core.bundle.js
+          ./node_modules/.bin/esbuild             src/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-core.bundle.js
 
-          npx --yes esbuild@0.24.2             src/webgpu/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-webgpu.bundle.js
+          ./node_modules/.bin/esbuild             src/webgpu/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-webgpu.bundle.js
 
-          npx --yes esbuild@0.24.2             src/three/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-three.bundle.js
+          ./node_modules/.bin/esbuild             src/three/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-three.bundle.js
 
           test -s _site/vendor/mts-visual-core.bundle.js
           test -s _site/vendor/mts-visual-webgpu.bundle.js
