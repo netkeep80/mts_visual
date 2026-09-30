@@ -53,7 +53,6 @@ jobs:
 
           cp browser/webgpu-witness/index.html _site/index.html
           cp browser/webgpu-witness/app.js _site/app.js
-          cp browser/webgpu-witness/lab-shell.js _site/lab-shell.js
           touch _site/.nojekyll
 
           npx --yes esbuild@0.24.2             src/index.ts             --bundle             --format=esm             --platform=browser             --target=es2022             --outfile=_site/vendor/mts-visual-core.bundle.js
@@ -85,12 +84,8 @@ jobs:
         run: |
           set -euo pipefail
           node --check browser/webgpu-witness/app.js
-          node --check browser/webgpu-witness/lab-shell.js
 
           grep -F 'src="./app.js"' _site/index.html
-          grep -F 'from "./lab-shell.js"' _site/app.js
-          grep -F 'classic-3d' _site/lab-shell.js
-          grep -F 'mechanical-3d' _site/lab-shell.js
           grep -F './vendor/mts-visual-core.bundle.js' _site/app.js
           grep -F './vendor/mts-visual-webgpu.bundle.js' _site/app.js
           grep -F 'runOctahedralWebGpuDifferentialWitness3D' _site/app.js
@@ -178,15 +173,12 @@ jobs:
           fetch "build-info.json" /tmp/mts-visual-pages-smoke/build-info.json
           fetch "index.html" /tmp/mts-visual-pages-smoke/index.html
           fetch "app.js" /tmp/mts-visual-pages-smoke/app.js
-          fetch "lab-shell.js" /tmp/mts-visual-pages-smoke/lab-shell.js
           fetch "vendor/mts-visual-core.bundle.js" /tmp/mts-visual-pages-smoke/core.js
           fetch "vendor/mts-visual-webgpu.bundle.js" /tmp/mts-visual-pages-smoke/webgpu.js
 
           jq -e --arg sha "${EXPECTED_SHA}" '.mainSha == $sha'             /tmp/mts-visual-pages-smoke/build-info.json >/dev/null
           grep -F '<html lang="ru">' /tmp/mts-visual-pages-smoke/index.html
           grep -F 'id="gpu-canvas"' /tmp/mts-visual-pages-smoke/index.html
-          grep -F 'id="visualization-mode"' /tmp/mts-visual-pages-smoke/index.html
-          grep -F 'classic-3d' /tmp/mts-visual-pages-smoke/lab-shell.js
           grep -F 'runOctahedralWebGpuDifferentialWitness3D' /tmp/mts-visual-pages-smoke/app.js
           grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' /tmp/mts-visual-pages-smoke/app.js
 
