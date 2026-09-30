@@ -1393,7 +1393,7 @@ implements MonolithicLinkWebGpuShape3D {
 
     if (linkCount <= this.detailCapacityValue) {
       return this.setDetailLinkIndices(
-        defaultDetailLinkIndices(linkCount),
+        Array.from(defaultDetailLinkIndices(linkCount)),
       );
     }
 
