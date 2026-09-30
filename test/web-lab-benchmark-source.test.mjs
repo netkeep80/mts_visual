@@ -59,6 +59,7 @@ for (const needle of [
   '"PASS"',
   "timestampQuerySupported",
   "timestampQueryUsed: false",
+  'resourceIsolation: "separate-device"',
 ]) {
   assert(
     benchmark.includes(needle),
