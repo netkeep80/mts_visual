@@ -16,9 +16,19 @@ const benchmark = await readFile(
   "utf8",
 );
 
+const initializationRegion = compute.slice(
+  0,
+  compute.indexOf("function maxDelta"),
+);
 assert(
-  !compute.includes("createMonolithicLinkSpringPhysics3D"),
+  !initializationRegion.includes("createMonolithicLinkSpringPhysics3D("),
   "WebGPU initialization must not allocate a full CPU spring-physics mirror",
+);
+assert(
+  compute.slice(compute.indexOf("function maxDelta")).includes(
+    "createMonolithicLinkSpringPhysics3D(",
+  ),
+  "CPU physics remains available below the initialization boundary as the differential oracle",
 );
 assert(
   compute.includes("createMonolithicLinkWebGpuComputeFromTopology3D"),
