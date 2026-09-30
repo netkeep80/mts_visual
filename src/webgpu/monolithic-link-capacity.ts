@@ -23,6 +23,10 @@ export interface MonolithicLinkWebGpuCapacityLimits3D {
   readonly maxComputeWorkgroupsPerDimension?: number;
 }
 
+export interface MonolithicLinkWebGpuCapacityOptions3D {
+  readonly detailCapacity?: number;
+}
+
 export interface MonolithicLinkWebGpuCapacityBuffer3D {
   readonly name: string;
   readonly allocatedBytes: number;
@@ -206,8 +210,18 @@ export function planMonolithicLinkWebGpuCapacity3D(
   linkCountValue: number,
   aspectRatio: number,
   adapterLimits: MonolithicLinkWebGpuCapacityLimits3D = {},
+  options: MonolithicLinkWebGpuCapacityOptions3D = {},
 ): MonolithicLinkWebGpuCapacityPlan3D {
   const linkCount = requireLinkCount(linkCountValue);
+  const requestedDetailCapacity =
+    options.detailCapacity === undefined
+      ? linkCount
+      : requireLinkCount(options.detailCapacity);
+  if (requestedDetailCapacity > linkCount) {
+    throw new Error(
+      `invalid monolithic capacity detailCapacity: ${requestedDetailCapacity} > ${linkCount}`,
+    );
+  }
   const template = getOctahedralLinkTemplate3D(aspectRatio);
   const octahedronCount = template.octahedronCount;
   const sectionCount = octahedronCount + 1;
@@ -228,7 +242,7 @@ export function planMonolithicLinkWebGpuCapacity3D(
   );
 
   const detail = boundedDetailCapacity(
-    linkCount,
+    requestedDetailCapacity,
     sectionCount,
     maxStorageBufferBindingSize,
     maxBufferSize,
