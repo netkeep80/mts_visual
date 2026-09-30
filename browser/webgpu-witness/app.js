@@ -1734,7 +1734,7 @@ async function startRender() {
     const shapeSnapshot = shape.snapshot();
     setStatus(
       ui.renderCompute,
-      `ДОСТУПНО · 2 прохода физики + 1 compact shape + 1 detail`,
+      `ДОСТУПНО · 2 прохода физики + 1 компактный проход формы + 1 детальный проход`,
       "ok",
     );
     setStatus(
