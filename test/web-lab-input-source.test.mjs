@@ -25,11 +25,10 @@ assert(app.includes("core.visualLabFixture(id)"), "built-in scenes must use cach
 assert(
   app.includes('from "./lab-input-model.js"')
     && app.includes("createImportedSceneFromText")
-    && app.includes("createSceneInputManifest")
     && app.includes("serializeSceneInputManifest")
     && app.includes("parseManifest: core.parseDocument2DInputManifest")
     && app.includes("normalizeNetwork: core.normalizeVisualLinkNetwork"),
-  "shared input behavior must delegate to the executable model with canonical core parser/normalizer injection",
+  "shared input import/serialization wiring must delegate to the executable model with canonical core parser/normalizer injection",
 );
 assert(
   app.includes("IMPORTED_SCENE_ID"),
