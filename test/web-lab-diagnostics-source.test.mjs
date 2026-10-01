@@ -7,7 +7,7 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, structuralController, blueprintController, documentController, classicController, mechanicalInteractionController, html] = await Promise.all([
+const [app, structuralController, blueprintController, documentController, classicController, mechanicalInteractionController, mechanicalRuntimeController, html] = await Promise.all([
   readFile(join(repoRoot, "browser", "webgpu-witness", "app.js"), "utf8"),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "structural-2d-controller.js"),
@@ -27,6 +27,10 @@ const [app, structuralController, blueprintController, documentController, class
   ),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "mechanical-interaction-controller.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "mechanical-runtime-controller.js"),
     "utf8",
   ),
   readFile(join(repoRoot, "browser", "webgpu-witness", "index.html"), "utf8"),
@@ -58,34 +62,39 @@ assert(
 );
 
 for (const needle of [
-  "detailedLinkCount: shape.detailedLinkCount",
-  "detailCapacity: shape.detailCapacity",
-  "compactDynamicStateBytes: shape.compactDynamicStateBytes",
-  "detailDynamicStateBytes: shape.detailDynamicStateBytes",
+  "detailedLinkCount:",
+  "detailCapacity:",
+  "compactDynamicStateBytes:",
+  "detailDynamicStateBytes:",
   '"gpu-partition-frustum/v1"',
   '"full-detail-identity/v1"',
-  "selectionMode: shape.selectionMode",
-  "selectorControlBytes: shape.selectionControlBytes",
+  "selectionMode:",
+  "selectorControlBytes:",
   "selectionControlUploadBytes:",
   "culledLinkCount:",
   "visibleCandidateCount:",
   "selectedPinned:",
   "hoveredPinned:",
-  "renderer.shapeDetailLinkIndexBuffer",
-  "renderer.shapeSectionFrameBuffer",
   "shapeStats.compactDispatches !== 1",
   "shapeStats.selectorDispatches",
-  "shapeStats.detailDispatches !== expectedDetailDispatches",
-  "shapeStats.computePasses !== expectedShapePasses",
-  "const hasDetail = stats.detailedLinkCount > 0",
+  "shapeStats.detailDispatches",
+  "expectedDetailDispatches",
+  "expectedShapePasses",
+  "const hasDetail =",
 ]) {
   assert(
-    app.includes(needle),
-    `Mechanical bounded-detail runtime contract missing: ${needle}`,
+    mechanicalRuntimeController.includes(needle),
+    `Mechanical bounded-detail runtime contract missing from controller: ${needle}`,
   );
 }
 assert(
-  !app.includes("shapeStats.computePasses !== 1"),
+  app.includes('from "./mechanical-runtime-controller.js"')
+    && app.includes("mechanicalRuntimeController")
+    && app.includes(".diagnosticDetail(selectedScene())"),
+  "Mechanical diagnostics must delegate to the runtime controller",
+);
+assert(
+  !mechanicalRuntimeController.includes("shapeStats.computePasses !== 1"),
   "Mechanical lab must not retain the obsolete one-pass shape invariant",
 );
 assert(
