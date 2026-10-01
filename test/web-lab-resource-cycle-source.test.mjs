@@ -66,6 +66,15 @@ assert(
 );
 
 assert(
+  app.includes('from "./structural-2d-controller.js"')
+    && app.includes("createStructural2DController")
+    && app.includes("mountStructural: () => mountStructural2D()")
+    && app.includes("return structural2DController.mount()")
+    && app.includes("structuralState: structural2DController.isMounted()"),
+  "Structural mode ownership must delegate to the per-mode controller",
+);
+
+assert(
   app.includes("threeVisual.getVisualThreeRendererSnapshot"),
   "Classic resource acceptance must inspect the actual Three mount registry",
 );

@@ -7,8 +7,12 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, html] = await Promise.all([
+const [app, structuralController, html] = await Promise.all([
   readFile(join(repoRoot, "browser", "webgpu-witness", "app.js"), "utf8"),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "structural-2d-controller.js"),
+    "utf8",
+  ),
   readFile(join(repoRoot, "browser", "webgpu-witness", "index.html"), "utf8"),
 ]);
 
@@ -31,7 +35,11 @@ assert(app.includes("fixtureSceneCache"), "built-in fixture scene identity must 
 assert(!app.includes("function hubHeavyNetwork(count)"), "browser must not own hub fixture generation");
 assert(!app.includes("function classicSeparationNetwork()"), "browser must not own Classic fixture topology");
 assert(!app.includes('case "hub-64"'), "browser scene selection must not hardcode fixture switch cases");
-assert(app.includes('ui.structuralRoot.value = scene.hints?.rootKey ?? "";'), "Structural uses explicit fixture root hint");
+assert(
+  app.includes('from "./structural-2d-controller.js"')
+    && structuralController.includes('ui.structuralRoot.value = scene.hints?.rootKey ?? "";'),
+  "Structural controller uses explicit fixture root hint",
+);
 assert(app.includes('ui.documentRoot.value = scene.hints?.rootKey ?? "";'), "Document uses explicit fixture root hint");
 
 for (const id of [

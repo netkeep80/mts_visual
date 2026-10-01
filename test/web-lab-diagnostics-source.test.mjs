@@ -7,8 +7,12 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, html] = await Promise.all([
+const [app, structuralController, html] = await Promise.all([
   readFile(join(repoRoot, "browser", "webgpu-witness", "app.js"), "utf8"),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "structural-2d-controller.js"),
+    "utf8",
+  ),
   readFile(join(repoRoot, "browser", "webgpu-witness", "index.html"), "utf8"),
 ]);
 
@@ -68,6 +72,13 @@ assert(
   !app.includes("shapeStats.computePasses !== 1"),
   "Mechanical lab must not retain the obsolete one-pass shape invariant",
 );
+assert(
+  app.includes('from "./structural-2d-controller.js"')
+    && app.includes("createStructural2DController")
+    && app.includes("structural2DController.diagnosticDetail(selectedScene())"),
+  "Structural diagnostics must delegate to the per-mode controller",
+);
+
 for (const fn of [
   "structuralDiagnosticDetail",
   "blueprintDiagnosticDetail",
@@ -83,7 +94,11 @@ assert(
     && app.includes("selectedVisualKey = reconcileSelectedLinkKey("),
   "shared selected Link state must use executable validation/reconciliation",
 );
-assert(app.includes('[data-role="structural-node"]'), "Structural selection participates");
+assert(
+  structuralController.includes('[data-role="structural-node"]')
+    && structuralController.includes("setSelectedKey(key)"),
+  "Structural selection participates through the Structural controller",
+);
 assert(app.includes('[data-role="blueprint-center"]'), "Blueprint selection participates");
 assert(app.includes('[data-role="document-link"]'), "Document selection participates");
 assert(app.includes("setSelectedVisualKey(state.centerDrag.key)"), "Mechanical selection participates");
