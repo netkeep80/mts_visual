@@ -178,7 +178,7 @@ function createFixture() {
 
   const shape = {
     parameterBuffer,
-    detailIndexBuffer,
+    detailLinkIndexBuffer: detailIndexBuffer,
     sectionFrameBuffer,
     selectionControlBytes: 64,
     template: {
