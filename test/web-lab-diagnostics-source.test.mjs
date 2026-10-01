@@ -7,7 +7,7 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, structuralController, blueprintController, documentController, html] = await Promise.all([
+const [app, structuralController, blueprintController, documentController, classicController, html] = await Promise.all([
   readFile(join(repoRoot, "browser", "webgpu-witness", "app.js"), "utf8"),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "structural-2d-controller.js"),
@@ -19,6 +19,10 @@ const [app, structuralController, blueprintController, documentController, html]
   ),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "document-2d-controller.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "classic-3d-controller.js"),
     "utf8",
   ),
   readFile(join(repoRoot, "browser", "webgpu-witness", "index.html"), "utf8"),
@@ -98,6 +102,12 @@ assert(
     && app.includes("document2DController.diagnosticDetail(selectedScene())"),
   "Document diagnostics must delegate to the per-mode controller",
 );
+assert(
+  app.includes('from "./classic-3d-controller.js"')
+    && app.includes("createClassic3DController")
+    && app.includes("classic3DController.diagnosticDetail(selectedScene())"),
+  "Classic diagnostics must delegate to the per-mode controller",
+);
 
 for (const fn of [
   "structuralDiagnosticDetail",
@@ -130,8 +140,11 @@ assert(
   "Document selection participates through the Document controller",
 );
 assert(app.includes("setSelectedVisualKey(state.centerDrag.key)"), "Mechanical selection participates");
-assert(app.includes("onActivateKey: (key) =>"), "Classic activation callback exists");
-assert(app.includes("setSelectedVisualKey(key);"), "Classic/shared selection callback is wired");
+assert(
+  classicController.includes("onActivateKey: (key) =>")
+    && classicController.includes("setSelectedKey(key)"),
+  "Classic activation callback participates through the Classic controller",
+);
 
 assert(
   app.includes('globalThis.crypto.subtle.digest("SHA-256", bytes)'),

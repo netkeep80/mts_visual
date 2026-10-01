@@ -7,10 +7,16 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const app = await readFile(
-  join(repoRoot, "browser", "webgpu-witness", "app.js"),
-  "utf8",
-);
+const [app, classicController] = await Promise.all([
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "app.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "classic-3d-controller.js"),
+    "utf8",
+  ),
+]);
 const html = await readFile(
   join(repoRoot, "browser", "webgpu-witness", "index.html"),
   "utf8",
@@ -92,6 +98,19 @@ assert(
   "Document mode ownership must delegate to the per-mode controller",
 );
 
+assert(
+  app.includes('from "./classic-3d-controller.js"')
+    && app.includes("createClassic3DController")
+    && app.includes("mountClassic: () => mountClassic3D()")
+    && app.includes("return classic3DController.mount()")
+    && app.includes("classicState: classic3DController.isMounted()"),
+  "Classic mode ownership must delegate to the per-mode controller",
+);
+assert(
+  classicController.includes("threeVisual.createVisualThreeLiveRenderer")
+    && classicController.includes("threeVisual.destroyVisualThreeRenderer"),
+  "Classic controller must own the real Three renderer lifecycle",
+);
 assert(
   app.includes("threeVisual.getVisualThreeRendererSnapshot"),
   "Classic resource acceptance must inspect the actual Three mount registry",
