@@ -7,7 +7,7 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, cameraModel, interactionController] = await Promise.all([
+const [app, cameraModel, interactionController, detailSelectionController] = await Promise.all([
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "app.js"),
     "utf8",
@@ -18,6 +18,10 @@ const [app, cameraModel, interactionController] = await Promise.all([
   ),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "mechanical-interaction-controller.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "mechanical-detail-selection-controller.js"),
     "utf8",
   ),
 ]);
@@ -95,28 +99,63 @@ for (const exportedPrimitive of [
   );
 }
 
+assert(
+  app.includes('from "./mechanical-detail-selection-controller.js"')
+    && app.includes("createMechanicalDetailSelectionController({")
+    && app.includes("frustumMargin:")
+    && app.includes("MECHANICAL_DETAIL_FRUSTUM_MARGIN")
+    && app.includes("defaultDelay:")
+    && app.includes("MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS")
+    && app.includes("mechanicalDetailSelectionController.refresh(")
+    && app.includes("mechanicalDetailSelectionController.schedule(")
+    && app.includes("mechanicalDetailSelectionController.cancel(state)"),
+  "Mechanical GPU detail-selection ownership must delegate to the executable controller",
+);
+for (const legacyDetailFunction of [
+  "function selectedMechanicalLinkIndex(",
+  "function sameMechanicalGpuSelectionView(",
+  "function refreshMechanicalDetailSelection(",
+  "function scheduleMechanicalDetailSelection(",
+]) {
+  assert(
+    !app.includes(legacyDetailFunction),
+    `Mechanical detail-selection implementation must not remain duplicated in app.js: ${legacyDetailFunction}`,
+  );
+}
+
 for (const needle of [
   "const MECHANICAL_DETAIL_SLOT_BUDGET = 4096",
-  '"gpu-partition-frustum/v1"',
-  '"full-detail-identity/v1"',
-  "state.shape.setGpuDetailSelectionView({",
-  "viewProjection,",
-  "selectedLink: priorityLink",
-  "frustumMargin: MECHANICAL_DETAIL_FRUSTUM_MARGIN",
   "shapeStats.selectorDispatches",
   "shapeStats.selectionMode === \"gpu-partition\"",
-  "scheduleMechanicalDetailSelection(",
   '"shared-selection"',
   '"auto-rotate"',
   "detailSelectionControlUploadBytes",
-  "selectionControlUploadBytes",
   "liveCenterSource:",
   '"semantic-center-buffer"',
   "culledLinkCount:",
   "selectedPinned:",
   "hoveredPinned:",
 ]) {
-  assert(app.includes(needle), `missing Mechanical GPU detail-selection contract: ${needle}`);
+  assert(app.includes(needle), `missing Mechanical browser integration contract: ${needle}`);
+}
+
+for (const needle of [
+  '"gpu-partition-frustum/v1"',
+  '"full-detail-identity/v1"',
+  "state.shape.setGpuDetailSelectionView({",
+  "viewProjection,",
+  "selectedLink: priorityLink",
+  "shapeSnapshot.detailCapacity < linkCount",
+  "sameMechanicalGpuSelectionView(",
+  "indexUploadBytes",
+  "globalsUploadBytes",
+  "selectionControlUploadBytes",
+  "clearTimeoutFn(",
+]) {
+  assert(
+    detailSelectionController.includes(needle),
+    `missing Mechanical detail-selection controller contract: ${needle}`,
+  );
 }
 
 for (const reason of [
@@ -145,16 +184,6 @@ assert(
 );
 
 assert(
-  app.includes("shapeSnapshot.detailCapacity < linkCount"),
-  "GPU selector must be used only when semantic Link count exceeds detail capacity",
-);
-
-assert(
-  app.includes("sameMechanicalGpuSelectionView("),
-  "identical camera/priority control state must avoid redundant uniform writes",
-);
-
-assert(
   !app.includes("webgpu.selectMonolithicLinkDetail3D({"),
   "production bounded Mechanical mode must not perform the P2b CPU O(N) selector scan",
 );
@@ -178,8 +207,8 @@ assert(
 );
 
 assert(
-  app.includes("clearTimeout(state.detailSelectionTimer)"),
-  "Mechanical disposal must clear a pending detail-selection timer",
+  app.includes("mechanicalDetailSelectionController.cancel(state)"),
+  "Mechanical disposal must delegate pending detail-selection timer cleanup",
 );
 
 assert(
