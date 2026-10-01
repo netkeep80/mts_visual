@@ -3,6 +3,12 @@ import { createBenchmarkUiController } from "./benchmark-ui-controller.js";
 import { createLabModeMountController } from "./lab-mode-mount-controller.js";
 import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controller.js";
 import {
+  IMPORTED_SCENE_ID,
+  createImportedSceneFromText,
+  createSceneInputManifest,
+  serializeSceneInputManifest,
+} from "./lab-input-model.js";
+import {
   LAB_REAL_CYCLE,
   LAB_REAL_CYCLE_REPEATS,
   assertLabResourceAudit,
@@ -898,7 +904,6 @@ async function runDifferentials() {
   updateOverall();
 }
 
-const IMPORTED_SCENE_ID = "__imported__";
 const fixtureSceneCache = new Map();
 let importedScene = null;
 
@@ -948,18 +953,17 @@ function selectedScene() {
 }
 
 function sceneInputManifest(scene = selectedScene()) {
-  return Object.freeze({
-    schema: core.DOCUMENT2D_INPUT_SCHEMA,
-    ...(scene.sourceRepository === undefined
-      ? {}
-      : { sourceRepository: scene.sourceRepository }),
-    ...(scene.sourceSha === undefined ? {} : { sourceSha: scene.sourceSha }),
-    links: scene.network.links,
-  });
+  return createSceneInputManifest(
+    scene,
+    core.DOCUMENT2D_INPUT_SCHEMA,
+  );
 }
 
 function sceneInputManifestText(scene = selectedScene()) {
-  return JSON.stringify(sceneInputManifest(scene), null, 2) + "\n";
+  return serializeSceneInputManifest(
+    scene,
+    core.DOCUMENT2D_INPUT_SCHEMA,
+  );
 }
 
 function setLabInputStatus(text, kind = "") {
@@ -983,34 +987,20 @@ function syncLabInputPanel(scene = selectedScene()) {
 }
 
 function applyImportedManifestText(text, sourceLabel) {
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch (error) {
-    throw new Error(
-      `некорректный JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  const parsed = core.parseDocument2DInputManifest(raw);
-  const network = core.normalizeVisualLinkNetwork(parsed.network);
-  importedScene = Object.freeze({
-    id: IMPORTED_SCENE_ID,
-    label: `Импорт · ${sourceLabel}`,
-    network,
-    hints: Object.freeze({}),
-    sourceKind: "import",
-    ...(parsed.sourceRepository === undefined
-      ? {}
-      : { sourceRepository: parsed.sourceRepository }),
-    ...(parsed.sourceSha === undefined ? {} : { sourceSha: parsed.sourceSha }),
-  });
+  importedScene = createImportedSceneFromText(
+    text,
+    sourceLabel,
+    {
+      parseManifest: core.parseDocument2DInputManifest,
+      normalizeNetwork: core.normalizeVisualLinkNetwork,
+    },
+  );
 
   populateSceneSelector(IMPORTED_SCENE_ID);
   syncLabInputPanel(importedScene);
   ui.scene.dispatchEvent(new Event("change"));
   log(
-    `импортирована асеть: источник=${sourceLabel}, связей=${network.links.length}, schema=${core.DOCUMENT2D_INPUT_SCHEMA}`,
+    `импортирована асеть: источник=${sourceLabel}, связей=${importedScene.network.links.length}, schema=${core.DOCUMENT2D_INPUT_SCHEMA}`,
   );
 }
 
