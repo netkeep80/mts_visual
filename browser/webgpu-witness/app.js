@@ -335,14 +335,6 @@ for (const exportName of [
   }
 }
 
-/** Temporary migration witness required by the pre-#200 Pages smoke contract.
- * #200 removes this witness together with the stale workflow grep.
- */
-function legacyOctahedralZeroCopyInvariant(renderer, compute) {
-  return renderer.positionBuffer === compute.positionBuffer;
-}
-void legacyOctahedralZeroCopyInvariant;
-
 const baselineAspectRatio = core.OCTAHEDRAL_PRESENTATION_BASELINE_ASPECT_RATIO;
 const baselineOctahedra = core.OCTAHEDRAL_PRESENTATION_BASELINE_OCTAHEDRA;
 if (!Number.isFinite(baselineAspectRatio) || baselineOctahedra !== 20) {
