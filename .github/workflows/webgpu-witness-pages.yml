@@ -91,6 +91,10 @@ jobs:
           node --check browser/webgpu-witness/benchmark.js
           node --check browser/webgpu-witness/benchmark-ui-model.js
           node --check browser/webgpu-witness/benchmark-ui-controller.js
+          node --check browser/webgpu-witness/mechanical-camera-model.js
+          node --check browser/webgpu-witness/mechanical-interaction-controller.js
+          node --check browser/webgpu-witness/mechanical-detail-selection-controller.js
+          node --check browser/webgpu-witness/mechanical-runtime-controller.js
           test -s _site/benchmark.js
           test -s _site/benchmark-ui-model.js
           test -s _site/benchmark-ui-controller.js
@@ -106,7 +110,12 @@ jobs:
           grep -F './vendor/mts-visual-three.bundle.js' _site/app.js
           grep -F 'runOctahedralWebGpuDifferentialWitness3D' _site/app.js
           grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' _site/app.js
-          grep -F 'renderer.positionBuffer === compute.positionBuffer' _site/app.js
+          grep -F 'from "./mechanical-runtime-controller.js"' _site/app.js
+          grep -F 'export function createMechanicalRuntimeController' _site/mechanical-runtime-controller.js
+          if grep -F 'legacyOctahedralZeroCopyInvariant' _site/app.js; then
+            echo "obsolete legacy runtime witness must not ship"
+            exit 1
+          fi
           grep -F 'id="lab-run-cycle-test"' _site/index.html
           grep -F 'id="lab-resource-audit"' _site/index.html
           grep -F 'LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"' _site/app.js
@@ -209,6 +218,7 @@ jobs:
           fetch "app.js" /tmp/mts-visual-pages-smoke/app.js
           fetch "benchmark-ui-controller.js" /tmp/mts-visual-pages-smoke/benchmark-ui-controller.js
           fetch "benchmark-ui-model.js" /tmp/mts-visual-pages-smoke/benchmark-ui-model.js
+          fetch "mechanical-runtime-controller.js" /tmp/mts-visual-pages-smoke/mechanical-runtime-controller.js
           fetch "vendor/mts-visual-core.bundle.js" /tmp/mts-visual-pages-smoke/core.js
           fetch "vendor/mts-visual-webgpu.bundle.js" /tmp/mts-visual-pages-smoke/webgpu.js
           fetch "vendor/mts-visual-three.bundle.js" /tmp/mts-visual-pages-smoke/three.js
@@ -223,6 +233,8 @@ jobs:
           grep -F 'from "./benchmark-ui-model.js"' /tmp/mts-visual-pages-smoke/benchmark-ui-controller.js
           grep -F 'export function createBenchmarkUiController' /tmp/mts-visual-pages-smoke/benchmark-ui-controller.js
           grep -F 'export function parseMechanicalBenchmarkQuery' /tmp/mts-visual-pages-smoke/benchmark-ui-model.js
+          grep -F 'export function createMechanicalRuntimeController' /tmp/mts-visual-pages-smoke/mechanical-runtime-controller.js
+          grep -F 'from "./mechanical-runtime-controller.js"' /tmp/mts-visual-pages-smoke/app.js
           grep -F 'runOctahedralWebGpuDifferentialWitness3D' /tmp/mts-visual-pages-smoke/app.js
           grep -F 'createOctahedralWebGpuZeroCopyRenderer3D' /tmp/mts-visual-pages-smoke/app.js
           grep -F 'LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"' /tmp/mts-visual-pages-smoke/app.js
