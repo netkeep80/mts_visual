@@ -628,8 +628,6 @@ mechanicalRuntimeController =
     updateOverall: () => updateOverall(),
     updateDiagnostics: () =>
       updateSharedDiagnostics(),
-    markDifferentialStale: () =>
-      markDifferentialStale(),
     equationForNetworkLink,
     fmt,
     log,
