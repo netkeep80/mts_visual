@@ -36,7 +36,6 @@ export function createMechanicalRuntimeController({
   uiStatus,
   updateOverall,
   updateDiagnostics,
-  markDifferentialStale,
   equationForNetworkLink,
   fmt,
   log,
