@@ -7,7 +7,7 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, structuralController, blueprintController, html] = await Promise.all([
+const [app, structuralController, blueprintController, documentController, html] = await Promise.all([
   readFile(join(repoRoot, "browser", "webgpu-witness", "app.js"), "utf8"),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "structural-2d-controller.js"),
@@ -15,6 +15,10 @@ const [app, structuralController, blueprintController, html] = await Promise.all
   ),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "blueprint-2d-controller.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "document-2d-controller.js"),
     "utf8",
   ),
   readFile(join(repoRoot, "browser", "webgpu-witness", "index.html"), "utf8"),
@@ -88,6 +92,12 @@ assert(
     && app.includes("blueprint2DController.diagnosticDetail(selectedScene())"),
   "Blueprint diagnostics must delegate to the per-mode controller",
 );
+assert(
+  app.includes('from "./document-2d-controller.js"')
+    && app.includes("createDocument2DController")
+    && app.includes("document2DController.diagnosticDetail(selectedScene())"),
+  "Document diagnostics must delegate to the per-mode controller",
+);
 
 for (const fn of [
   "structuralDiagnosticDetail",
@@ -114,7 +124,11 @@ assert(
     && blueprintController.includes("setSelectedKey(target.dragKey)"),
   "Blueprint selection participates through the Blueprint controller",
 );
-assert(app.includes('[data-role="document-link"]'), "Document selection participates");
+assert(
+  documentController.includes('[data-role="document-link"]')
+    && documentController.includes("setSelectedKey(key)"),
+  "Document selection participates through the Document controller",
+);
 assert(app.includes("setSelectedVisualKey(state.centerDrag.key)"), "Mechanical selection participates");
 assert(app.includes("onActivateKey: (key) =>"), "Classic activation callback exists");
 assert(app.includes("setSelectedVisualKey(key);"), "Classic/shared selection callback is wired");
@@ -124,22 +138,35 @@ assert(
   "Document browser digest must use Web Crypto SHA-256",
 );
 assert(
-  app.includes("core.createDocument2DRenderManifest({"),
+  documentController.includes("core.createDocument2DRenderManifest({"),
   "browser provenance must reuse the core render-manifest contract",
 );
 assert(
-  app.includes("rendererSha: String(buildInfo.mainSha)"),
+  documentController.includes("rendererSha: String(buildInfo.mainSha)"),
   "browser provenance must record exact build SHA",
 );
 assert(
-  app.includes("inputDigest = await sha256Text(inputText)"),
+  documentController.includes("const inputDigest = await sha256Text(inputText)"),
   "browser provenance must hash exact input manifest text",
 );
 assert(
-  app.includes("const outputDigest = state.outputDigest ?? await sha256Text(state.svgText)"),
-  "browser provenance must hash exact SVG text",
+  documentController.includes("snapshot.cachedOutputDigest")
+    && documentController.includes("await sha256Text(snapshot.svgText)"),
+  "browser provenance must reuse or hash the exact rendered SVG text",
 );
-assert(!app.includes('outputDigest: "unknown"'), "fake output digest is forbidden");
-assert(!app.includes('rendererSha: "unknown"'), "fake renderer SHA is forbidden");
+assert(
+  documentController.includes("target.digestGeneration === generation")
+    && documentController.includes("state === target")
+    && documentController.includes("!target.cleaned"),
+  "Document digest updates must be guarded against stale render/dispose completion",
+);
+assert(
+  !documentController.includes('outputDigest: "unknown"'),
+  "fake output digest is forbidden",
+);
+assert(
+  !documentController.includes('rendererSha: "unknown"'),
+  "fake renderer SHA is forbidden",
+);
 
 console.log("web lab shared diagnostics/provenance source contract: PASS");
