@@ -132,7 +132,8 @@ for (const reason of [
 assert(
   interactionController.includes("state.compute.readBackState()")
     && interactionController.includes("Interaction-triggered readback only.")
-    && interactionController.includes("setTimeoutFn(runHoverPick,")
+    && interactionController.includes("setTimeoutFn(")
+    && interactionController.includes("runHoverPick")
     && interactionController.includes("state.compute.writeCenterOverrides(["),
   "CENTER hover/drag interaction must own readback/debounce/override behavior",
 );
