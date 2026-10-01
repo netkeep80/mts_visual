@@ -7,13 +7,17 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, classicController] = await Promise.all([
+const [app, classicController, mechanicalRuntimeController] = await Promise.all([
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "app.js"),
     "utf8",
   ),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "classic-3d-controller.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "mechanical-runtime-controller.js"),
     "utf8",
   ),
 ]);
@@ -128,8 +132,19 @@ assert(
   "Document actual DOM root must be checked",
 );
 assert(
-  app.includes("renderState !== null"),
-  "Mechanical actual renderer state must be checked",
+  app.includes('from "./mechanical-runtime-controller.js"')
+    && app.includes("createMechanicalRuntimeController({")
+    && app.includes("mechanicalState:")
+    && app.includes("mechanicalRuntimeController.isMounted()")
+    && app.includes("mechanicalCanvasConfigured:")
+    && app.includes("mechanicalRuntimeController.state()"),
+  "Mechanical resource acceptance must delegate to the runtime controller",
+);
+assert(
+  mechanicalRuntimeController.includes("function dispose()")
+    && mechanicalRuntimeController.includes("target.context.unconfigure?.()")
+    && mechanicalRuntimeController.includes("target.renderer.destroy()"),
+  "Mechanical runtime controller must own the real WebGPU resource lifecycle",
 );
 assert(
   app.includes('from "./lab-mode-mount-controller.js"')
