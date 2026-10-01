@@ -6,15 +6,11 @@ import { createBlueprint2DController } from "./blueprint-2d-controller.js";
 import { createDocument2DController } from "./document-2d-controller.js";
 import { createClassic3DController } from "./classic-3d-controller.js";
 import {
-  cameraBasis,
-  clamp,
   createViewProjection,
-  dot3,
-  panCamera,
-  pointerWorldRay as createPointerWorldRay,
   projectWorldToClient as projectMechanicalWorldToClient,
   resetCamera,
 } from "./mechanical-camera-model.js";
+import { createMechanicalInteractionController } from "./mechanical-interaction-controller.js";
 import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controller.js";
 import {
   IMPORTED_SCENE_ID,
@@ -556,6 +552,34 @@ const MECHANICAL_DETAIL_SLOT_BUDGET = 4096;
 const MECHANICAL_DETAIL_FRUSTUM_MARGIN = 0.18;
 const MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS = 70;
 const MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS = 250;
+
+const mechanicalInteractionController =
+  createMechanicalInteractionController({
+    canvas: ui.canvas,
+    showCenterMarkers: ui.showCenterMarkers,
+    getMarkerControls: () => selectedMarkerControls(),
+    isStateCurrent: (state) => renderState === state,
+    scheduleDetailSelection:
+      (state, reason, delay) =>
+        scheduleMechanicalDetailSelection(
+          state,
+          reason,
+          delay,
+        ),
+    setSelectedKey: (key) =>
+      setSelectedVisualKey(key),
+    pickCenterIcosahedra3D:
+      webgpu.pickRigidSectionCenterIcosahedra3D,
+    screenDragDelta3D:
+      webgpu.rigidSectionScreenDragDelta3D,
+    setComputeStatus: (text, tone) =>
+      setStatus(ui.renderCompute, text, tone),
+    setTimeoutFn: (callback, milliseconds) =>
+      window.setTimeout(callback, milliseconds),
+    clearTimeoutFn: (timer) =>
+      window.clearTimeout(timer),
+    log,
+  });
 
 const benchmarkController = createBenchmarkUiController({
   ui,
@@ -1359,317 +1383,6 @@ function packedVec3(values, index) {
   return [values[offset], values[offset + 1], values[offset + 2]];
 }
 
-function pointerWorldRay(state, event) {
-  return createPointerWorldRay({
-    camera: state.camera,
-    clientX: event.clientX,
-    clientY: event.clientY,
-    rect: ui.canvas.getBoundingClientRect(),
-  });
-}
-
-function pickCenterIcosahedron(state, event, centers) {
-  const ray = pointerWorldRay(state, event);
-  // The two central octahedra define the hover neighborhood around semantic
-  // CENTER. The L2 icosahedron has diameter 2 * octahedron diameter, hence
-  // radius = one octahedron diameter.
-  return webgpu.pickRigidSectionCenterIcosahedra3D(
-    ray.origin,
-    ray.direction,
-    centers,
-    state.shape.template.diameter
-      * selectedMarkerControls().centerMarkerScale,
-  );
-}
-
-function moveCenterDragTarget(state, dx, dy) {
-  const drag = state.centerDrag;
-  if (!drag || (dx === 0 && dy === 0)) return;
-  const { right, up } = cameraBasis(state.camera);
-  const rect = ui.canvas.getBoundingClientRect();
-  const delta = webgpu.rigidSectionScreenDragDelta3D(
-    right,
-    up,
-    drag.depth,
-    Math.max(1, rect.height),
-    dx,
-    dy,
-  );
-  for (let axis = 0; axis < 3; axis += 1) {
-    drag.target[axis] += delta[axis];
-  }
-  state.semanticCenterCache[drag.linkIndex] = [...drag.target];
-}
-
-function applyCenterDrag(state) {
-  const drag = state.centerDrag;
-  if (!drag) return null;
-  return state.compute.writeCenterOverrides([
-    {
-      linkIndex: drag.linkIndex,
-      position: [...drag.target],
-      velocity: [0, 0, 0],
-    },
-  ]);
-}
-
-function installCameraControls(state) {
-  const canvas = ui.canvas;
-  const abortController = new AbortController();
-  const listenerOptions = { signal: abortController.signal };
-  let pointerId = null;
-  let mode = null;
-  let lastX = 0;
-  let lastY = 0;
-  let hoverGeneration = 0;
-  let hoverBusy = false;
-  let hoverTimer = null;
-  let queuedHover = null;
-
-  const setHoveredCenter = (selected) => {
-    const next = Number.isSafeInteger(selected) ? selected : -1;
-    if (state.hoveredCenterLink === next) return;
-    state.hoveredCenterLink = next;
-    canvas.classList.toggle("center-hover", next >= 0);
-    scheduleMechanicalDetailSelection(
-      state,
-      "hover-priority",
-      0,
-    );
-  };
-
-  const runHoverPick = async () => {
-    hoverTimer = null;
-    if (
-      hoverBusy
-      || queuedHover === null
-      || pointerId !== null
-      || state.centerDrag
-      || !ui.showCenterMarkers.checked
-      || renderState !== state
-    ) {
-      if (!ui.showCenterMarkers.checked || state.centerDrag) {
-        setHoveredCenter(-1);
-      }
-      return;
-    }
-
-    hoverBusy = true;
-    const point = queuedHover;
-    queuedHover = null;
-    const generation = hoverGeneration;
-    try {
-      // Interaction-triggered readback only. The frame loop remains zero-copy.
-      const gpuState = await state.compute.readBackState();
-      if (
-        generation !== hoverGeneration
-        || renderState !== state
-        || pointerId !== null
-      ) return;
-
-      const worldCenters = [];
-      for (let link = 0; link < state.compute.topology.linkCount; link += 1) {
-        const center = packedVec3(gpuState.centers, link);
-        worldCenters.push(center);
-        state.semanticCenterCache[link] = [...center];
-      }
-      state.centerCacheRevision += 1;
-      setHoveredCenter(
-        pickCenterIcosahedron(state, point, worldCenters),
-      );
-    } catch (error) {
-      if (generation === hoverGeneration && renderState === state) {
-        setHoveredCenter(-1);
-        log(`ОШИБКА выбора маркера CENTER — ${error.stack ?? error}`);
-      }
-    } finally {
-      hoverBusy = false;
-      if (
-        queuedHover !== null
-        && pointerId === null
-        && renderState === state
-      ) {
-        hoverTimer = setTimeout(runHoverPick, 45);
-      }
-    }
-  };
-
-  const requestHoverPick = (event) => {
-    if (
-      pointerId !== null
-      || state.centerDrag
-      || !ui.showCenterMarkers.checked
-    ) return;
-    queuedHover = {
-      clientX: event.clientX,
-      clientY: event.clientY,
-    };
-    if (!hoverBusy && hoverTimer === null) {
-      hoverTimer = setTimeout(runHoverPick, 35);
-    }
-  };
-
-  const finishPointer = (event) => {
-    if (pointerId !== event.pointerId) return;
-    const releasedMode = mode;
-    const releasedDrag = state.centerDrag;
-    try { canvas.releasePointerCapture(pointerId); } catch {}
-    pointerId = null;
-    mode = null;
-    state.centerDrag = null;
-    canvas.classList.remove("dragging");
-    if (releasedMode === "center" && releasedDrag) {
-      setHoveredCenter(releasedDrag.linkIndex);
-      log(`перетаскивание CENTER завершено: ${releasedDrag.key}`);
-      setStatus(
-        ui.renderCompute,
-        `ДОСТУПНО · mC=${state.compute.centerMass.toFixed(2)} · kS=${state.compute.stretchStiffness.toFixed(2)} · kB=${state.compute.straighteningStiffness.toFixed(2)} · t=${state.compute.simulationSpeed.toFixed(2)}x`,
-        "ok",
-      );
-    }
-  };
-
-  const activateCenterDrag = (selected, center, source) => {
-    const basis = cameraBasis(state.camera);
-    const depth = Math.max(
-      0.1,
-      dot3(
-        [
-          center[0] - basis.eye[0],
-          center[1] - basis.eye[1],
-          center[2] - basis.eye[2],
-        ],
-        basis.forward,
-      ),
-    );
-    state.centerDrag = {
-      linkIndex: selected,
-      key: state.compute.topology.keys[selected],
-      target: [...center],
-      depth,
-      uploadedBytes: 0,
-    };
-    state.semanticCenterCache[selected] = [...center];
-    setHoveredCenter(selected);
-    setSelectedVisualKey(state.centerDrag.key);
-    mode = "center";
-    log(
-      `выбран CENTER для перетаскивания: ${state.centerDrag.key} · источник=${source} · один семантический CENTER`,
-    );
-    setStatus(
-      ui.renderCompute,
-      `ПЕРЕТАСКИВАНИЕ ${state.centerDrag.key} · переопределение семантического CENTER`,
-      "warn",
-    );
-  };
-
-  canvas.addEventListener(
-    "contextmenu",
-    (event) => event.preventDefault(),
-    listenerOptions,
-  );
-
-  canvas.addEventListener("pointerdown", (event) => {
-    if (pointerId !== null) return;
-    pointerId = event.pointerId;
-    lastX = event.clientX;
-    lastY = event.clientY;
-    hoverGeneration += 1;
-    queuedHover = null;
-    if (hoverTimer !== null) {
-      clearTimeout(hoverTimer);
-      hoverTimer = null;
-    }
-    canvas.setPointerCapture(pointerId);
-    canvas.classList.add("dragging");
-
-    if (event.button === 2 || (event.button === 0 && event.shiftKey)) {
-      mode = "pan";
-    } else if (
-      event.button === 0
-      && ui.showCenterMarkers.checked
-      && state.hoveredCenterLink >= 0
-    ) {
-      const selected = state.hoveredCenterLink;
-      activateCenterDrag(
-        selected,
-        state.semanticCenterCache[selected],
-        "область двух центральных октаэдров CENTER",
-      );
-    } else {
-      mode = "orbit";
-    }
-    event.preventDefault();
-  }, listenerOptions);
-
-  canvas.addEventListener("pointermove", (event) => {
-    if (pointerId === null) {
-      requestHoverPick(event);
-      return;
-    }
-    if (pointerId !== event.pointerId || mode === null) return;
-
-    const dx = event.clientX - lastX;
-    const dy = event.clientY - lastY;
-    lastX = event.clientX;
-    lastY = event.clientY;
-
-    if (mode === "orbit") {
-      state.camera.yaw -= dx * 0.006;
-      state.camera.pitch = clamp(
-        state.camera.pitch - dy * 0.006,
-        -Math.PI * 0.48,
-        Math.PI * 0.48,
-      );
-    } else if (mode === "pan") {
-      panCamera(state.camera, dx, dy);
-    } else if (mode === "center" && state.centerDrag) {
-      moveCenterDragTarget(state, dx, dy);
-    }
-    if (mode === "orbit" || mode === "pan") {
-      scheduleMechanicalDetailSelection(
-        state,
-        "camera-interaction",
-      );
-    }
-    event.preventDefault();
-  }, listenerOptions);
-
-  canvas.addEventListener("pointerleave", () => {
-    if (pointerId === null) {
-      queuedHover = null;
-      setHoveredCenter(-1);
-    }
-  }, listenerOptions);
-
-  canvas.addEventListener("pointerup", finishPointer, listenerOptions);
-  canvas.addEventListener("pointercancel", finishPointer, listenerOptions);
-
-  canvas.addEventListener("wheel", (event) => {
-    event.preventDefault();
-    if (state.centerDrag) return;
-    const factor = Math.exp(event.deltaY * 0.001);
-    state.camera.distance = clamp(
-      state.camera.distance * factor,
-      state.camera.minDistance,
-      state.camera.maxDistance,
-    );
-    scheduleMechanicalDetailSelection(
-      state,
-      "camera-zoom",
-    );
-  }, { passive: false, signal: abortController.signal });
-
-  return () => {
-    hoverGeneration += 1;
-    if (hoverTimer !== null) clearTimeout(hoverTimer);
-    queuedHover = null;
-    state.centerDrag = null;
-    state.hoveredCenterLink = -1;
-    abortController.abort();
-    canvas.classList.remove("dragging", "center-hover");
-  };
-}
 function resizeCanvas(canvas) {
   const scale = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.round(canvas.clientWidth * scale));
@@ -1874,7 +1587,8 @@ async function startRender() {
       network,
     };
     resetCamera(state.camera, defaultCameraDistance);
-    state.cleanupCameraControls = installCameraControls(state);
+    state.cleanupCameraControls =
+      mechanicalInteractionController.mount(state);
     renderState = state;
     resizeCanvas(ui.canvas);
     refreshMechanicalDetailSelection(state, "initial-camera");
@@ -1917,7 +1631,8 @@ async function startRender() {
           state.steps += 1;
         }
 
-        const dragStats = applyCenterDrag(state);
+        const dragStats =
+          mechanicalInteractionController.applyCenterDrag(state);
         if (dragStats && state.centerDrag) {
           state.centerDrag.uploadedBytes +=
             dragStats.centerBytes + dragStats.velocityBytes;
@@ -2556,9 +2271,8 @@ ui.globalSmoothNormals.addEventListener("change", () => {
 
 ui.showCenterMarkers.addEventListener("change", () => {
   if (!ui.showCenterMarkers.checked && renderState) {
-    renderState.centerDrag = null;
-    renderState.hoveredCenterLink = -1;
-    ui.canvas.classList.remove("center-hover");
+    mechanicalInteractionController
+      .clearCenterInteraction(renderState);
   }
   log(
     `маркер CENTER ${ui.showCenterMarkers.checked ? "включён" : "выключен"} — каркасный икосаэдр L2, физическое состояние сохранено`,

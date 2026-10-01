@@ -7,7 +7,7 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, cameraModel] = await Promise.all([
+const [app, cameraModel, interactionController] = await Promise.all([
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "app.js"),
     "utf8",
@@ -16,15 +16,46 @@ const [app, cameraModel] = await Promise.all([
     join(repoRoot, "browser", "webgpu-witness", "mechanical-camera-model.js"),
     "utf8",
   ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "mechanical-interaction-controller.js"),
+    "utf8",
+  ),
 ]);
 
 assert(
   app.includes('from "./mechanical-camera-model.js"')
     && app.includes("return createViewProjection(")
-    && app.includes("return projectMechanicalWorldToClient({")
-    && app.includes("return createPointerWorldRay({"),
-  "Mechanical camera/projection behavior must delegate to the executable camera model",
+    && app.includes("return projectMechanicalWorldToClient({"),
+  "Mechanical render projection behavior must delegate to the executable camera model",
 );
+assert(
+  interactionController.includes('from "./mechanical-camera-model.js"')
+    && interactionController.includes("pointerWorldRay({")
+    && interactionController.includes("cameraBasis(state.camera)")
+    && interactionController.includes("panCamera(state.camera, dx, dy)")
+    && interactionController.includes("clamp("),
+  "Mechanical interaction camera behavior must delegate to the executable camera model",
+);
+assert(
+  app.includes('from "./mechanical-interaction-controller.js"')
+    && app.includes("createMechanicalInteractionController({")
+    && app.includes("mechanicalInteractionController.mount(state)")
+    && app.includes("mechanicalInteractionController.applyCenterDrag(state)")
+    && app.includes(".clearCenterInteraction(renderState)"),
+  "Mechanical stateful interaction ownership must delegate to the executable interaction controller",
+);
+for (const legacyInteraction of [
+  "function installCameraControls(",
+  "function pointerWorldRay(",
+  "function pickCenterIcosahedron(",
+  "function moveCenterDragTarget(",
+  "function applyCenterDrag(",
+]) {
+  assert(
+    !app.includes(legacyInteraction),
+    `Mechanical interaction implementation must not remain duplicated in app.js: ${legacyInteraction}`,
+  );
+}
 for (const legacyFunction of [
   "function normalize3(",
   "function cross(",
@@ -76,9 +107,6 @@ for (const needle of [
   "shapeStats.selectionMode === \"gpu-partition\"",
   "scheduleMechanicalDetailSelection(",
   '"shared-selection"',
-  '"hover-priority"',
-  '"camera-interaction"',
-  '"camera-zoom"',
   '"auto-rotate"',
   "detailSelectionControlUploadBytes",
   "selectionControlUploadBytes",
@@ -90,6 +118,25 @@ for (const needle of [
 ]) {
   assert(app.includes(needle), `missing Mechanical GPU detail-selection contract: ${needle}`);
 }
+
+for (const reason of [
+  '"hover-priority"',
+  '"camera-interaction"',
+  '"camera-zoom"',
+]) {
+  assert(
+    interactionController.includes(reason),
+    `Mechanical interaction controller missing detail-selection reason: ${reason}`,
+  );
+}
+assert(
+  interactionController.includes("state.compute.readBackState()")
+    && interactionController.includes("Interaction-triggered readback only.")
+    && interactionController.includes("setTimeoutFn(")
+    && interactionController.includes("runHoverPick")
+    && interactionController.includes("state.compute.writeCenterOverrides(["),
+  "CENTER hover/drag interaction must own readback/debounce/override behavior",
+);
 
 assert(
   app.includes("detailCapacity: Math.min(")
