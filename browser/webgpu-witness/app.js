@@ -1,6 +1,7 @@
 import { runMechanicalWebGpuBenchmark } from "./benchmark.js";
 import { createBenchmarkUiController } from "./benchmark-ui-controller.js";
 import { createLabModeMountController } from "./lab-mode-mount-controller.js";
+import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controller.js";
 import {
   LAB_REAL_CYCLE,
   LAB_REAL_CYCLE_REPEATS,
@@ -3124,7 +3125,6 @@ function updateModePlaceholder(modeId) {
 const LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1";
 const LAB_SELF_TEST_QUERY = "mode-cycle";
 const labResourceLedger = createLabResourceLedger();
-let labCycleTestRunning = false;
 
 function activeModeState(modeId) {
   switch (modeId) {
@@ -3210,85 +3210,26 @@ function assertRealModeResources(modeId, scene) {
   return audit;
 }
 
+const labCycleSelfTestController = createLabCycleSelfTestController({
+  ui,
+  cycle: LAB_REAL_CYCLE,
+  repeats: LAB_REAL_CYCLE_REPEATS,
+  getActiveMode: () => labLifecycle.activeMode,
+  activateMode: (modeId) => activateLabMode(modeId),
+  getSelectedScene: () => selectedScene(),
+  sceneManifestText: (scene) => sceneInputManifestText(scene),
+  getSelectedKey: () => selectedVisualKey,
+  getResourceLedger: () => labResourceLedger,
+  assertModeResources: (modeId, scene) =>
+    assertRealModeResources(modeId, scene),
+  hasWebGpuDevice: () => Boolean(device),
+  renderResourceAudit: (selfTest) =>
+    renderLabResourceAudit(selfTest),
+  log,
+});
+
 async function runLabModeCycleSelfTest() {
-  if (labCycleTestRunning) return;
-  const scene = selectedScene();
-  if (scene.network.links.length > 64) {
-    throw new Error("mode-cycle self-test ограничен 64 Links; выберите меньший fixture");
-  }
-
-  labCycleTestRunning = true;
-  ui.labRunCycleTest.disabled = true;
-  ui.labCycleStatus.textContent = "выполняется…";
-  const originalMode = labLifecycle.activeMode ?? ui.visualizationMode.value;
-  const originalModeSelect = ui.visualizationMode.value;
-  const originalSceneValue = ui.scene.value;
-  const originalManifest = sceneInputManifestText(scene);
-  const originalSelectedKey = selectedVisualKey;
-  const report = [];
-  let finalSelfTest = null;
-  const startMounts = labResourceLedger.mounts;
-  const startDisposals = labResourceLedger.disposals;
-
-  try {
-    for (let iteration = 0; iteration < LAB_REAL_CYCLE_REPEATS; iteration += 1) {
-      for (const modeId of LAB_REAL_CYCLE) {
-        ui.visualizationMode.value = modeId;
-        await activateLabMode(modeId);
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        assertLabCycle(ui.scene.value === originalSceneValue, `${modeId}: scene selector changed`);
-        assertLabCycle(sceneInputManifestText(scene) === originalManifest, `${modeId}: input manifest changed`);
-        assertLabCycle(selectedVisualKey === originalSelectedKey, `${modeId}: selected Link changed`);
-        const audit = assertRealModeResources(modeId, scene);
-        report.push({
-          iteration: iteration + 1,
-          modeId,
-          generation: audit.ledger.generation,
-          owners: audit.ledger.activeRendererOwners,
-          svgRoots: audit.ledger.svgRoots,
-          threeRenderers: audit.ledger.threeRenderers,
-          mechanicalRenderers: audit.ledger.mechanicalRenderers,
-          webgpuConfigured: audit.ledger.webgpuConfigured,
-        });
-      }
-    }
-
-    const expectedActivations = LAB_REAL_CYCLE.length * LAB_REAL_CYCLE_REPEATS;
-    assertLabCycle(
-      labResourceLedger.mounts - startMounts === expectedActivations,
-      `mount count delta=${labResourceLedger.mounts - startMounts}, expected=${expectedActivations}`,
-    );
-    assertLabCycle(
-      labResourceLedger.disposals - startDisposals === expectedActivations,
-      `dispose count before restore=${labResourceLedger.disposals - startDisposals}, expected=${expectedActivations}`,
-    );
-
-    ui.labCycleStatus.textContent = device
-      ? `PASS · ${expectedActivations} переходов · WebGPU проверен`
-      : `PASS · ${expectedActivations} переходов · Mechanical без WebGPU device`;
-    log(`mode-cycle self-test: PASS · переходов=${expectedActivations} · input=${scene.id}`);
-    finalSelfTest = { status: "PASS", steps: report };
-  } catch (error) {
-    ui.labCycleStatus.textContent = "FAIL · см. resource ledger";
-    log(`mode-cycle self-test: FAIL — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-    finalSelfTest = {
-      status: "FAIL",
-      error: error instanceof Error ? error.message : String(error),
-      steps: report,
-    };
-    throw error;
-  } finally {
-    ui.visualizationMode.value = originalModeSelect;
-    try {
-      await activateLabMode(originalMode);
-    } catch (restoreError) {
-      log(`ОШИБКА восстановления режима после mode-cycle — ${restoreError instanceof Error ? restoreError.stack ?? restoreError.message : String(restoreError)}`);
-    }
-    labCycleTestRunning = false;
-    ui.labRunCycleTest.disabled = false;
-    renderLabResourceAudit(finalSelfTest);
-  }
+  return labCycleSelfTestController.run();
 }
 
 const labModeMountController = createLabModeMountController({
