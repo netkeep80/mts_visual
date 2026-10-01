@@ -84,6 +84,15 @@ assert(
 );
 
 assert(
+  app.includes('from "./document-2d-controller.js"')
+    && app.includes("createDocument2DController")
+    && app.includes("mountDocument: () => mountDocument2D()")
+    && app.includes("return document2DController.mount()")
+    && app.includes("documentState: document2DController.isMounted()"),
+  "Document mode ownership must delegate to the per-mode controller",
+);
+
+assert(
   app.includes("threeVisual.getVisualThreeRendererSnapshot"),
   "Classic resource acceptance must inspect the actual Three mount registry",
 );
