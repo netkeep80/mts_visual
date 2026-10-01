@@ -27,7 +27,15 @@ for (const id of [
   assert(html.includes(`id="${id}"`), `missing diagnostic/provenance control: ${id}`);
 }
 
-assert(app.includes("function sharedDiagnosticSnapshot()"), "shared diagnostic envelope exists");
+assert(
+  app.includes('from "./lab-diagnostics-model.js"')
+    && app.includes("createSharedDiagnosticEnvelope")
+    && app.includes("projectSharedDiagnosticDisplay")
+    && app.includes("serializeSharedDiagnosticSnapshot")
+    && app.includes("validateSelectedLinkKey")
+    && app.includes("reconcileSelectedLinkKey"),
+  "shared diagnostic envelope/selection behavior must delegate to the executable diagnostics model",
+);
 
 for (const needle of [
   "detailedLinkCount: shape.detailedLinkCount",
@@ -70,7 +78,11 @@ for (const fn of [
   assert(app.includes(`function ${fn}()`), `missing mode diagnostic adapter: ${fn}`);
 }
 
-assert(app.includes("function setSelectedVisualKey(key)"), "shared selected Link state exists");
+assert(
+  app.includes("selectedVisualKey = validateSelectedLinkKey(scene, key)")
+    && app.includes("selectedVisualKey = reconcileSelectedLinkKey("),
+  "shared selected Link state must use executable validation/reconciliation",
+);
 assert(app.includes('[data-role="structural-node"]'), "Structural selection participates");
 assert(app.includes('[data-role="blueprint-center"]'), "Blueprint selection participates");
 assert(app.includes('[data-role="document-link"]'), "Document selection participates");
