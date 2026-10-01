@@ -7,10 +7,62 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const app = await readFile(
-  join(repoRoot, "browser", "webgpu-witness", "app.js"),
-  "utf8",
+const [app, cameraModel] = await Promise.all([
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "app.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "mechanical-camera-model.js"),
+    "utf8",
+  ),
+]);
+
+assert(
+  app.includes('from "./mechanical-camera-model.js"')
+    && app.includes("return createViewProjection(")
+    && app.includes("return projectMechanicalWorldToClient({")
+    && app.includes("return createPointerWorldRay({"),
+  "Mechanical camera/projection behavior must delegate to the executable camera model",
 );
+for (const legacyFunction of [
+  "function normalize3(",
+  "function cross(",
+  "function dot(",
+  "function lookAt(",
+  "function perspective(",
+  "function multiply4(",
+  "function transformPoint4(",
+  "function clamp(",
+  "function cameraEye(",
+  "function resetCamera(",
+  "function cameraBasis(",
+  "function panCamera(",
+]) {
+  assert(
+    !app.includes(legacyFunction),
+    `Mechanical camera math must not remain duplicated in app.js: ${legacyFunction}`,
+  );
+}
+for (const exportedPrimitive of [
+  "export function normalize3(",
+  "export function cross3(",
+  "export function dot3(",
+  "export function lookAt4(",
+  "export function perspective4(",
+  "export function multiply4(",
+  "export function transformPoint4(",
+  "export function cameraEye(",
+  "export function cameraBasis(",
+  "export function createViewProjection(",
+  "export function projectWorldToClient(",
+  "export function pointerWorldRay(",
+]) {
+  assert(
+    cameraModel.includes(exportedPrimitive),
+    `camera model missing exported primitive: ${exportedPrimitive}`,
+  );
+}
 
 for (const needle of [
   "const MECHANICAL_DETAIL_SLOT_BUDGET = 4096",
