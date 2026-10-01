@@ -7,10 +7,14 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, structuralController, html] = await Promise.all([
+const [app, structuralController, documentController, html] = await Promise.all([
   readFile(join(repoRoot, "browser", "webgpu-witness", "app.js"), "utf8"),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "structural-2d-controller.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "document-2d-controller.js"),
     "utf8",
   ),
   readFile(join(repoRoot, "browser", "webgpu-witness", "index.html"), "utf8"),
@@ -40,7 +44,11 @@ assert(
     && structuralController.includes('ui.structuralRoot.value = scene.hints?.rootKey ?? "";'),
   "Structural controller uses explicit fixture root hint",
 );
-assert(app.includes('ui.documentRoot.value = scene.hints?.rootKey ?? "";'), "Document uses explicit fixture root hint");
+assert(
+  app.includes('from "./document-2d-controller.js"')
+    && documentController.includes('ui.documentRoot.value = scene.hints?.rootKey ?? "";'),
+  "Document controller uses explicit fixture root hint",
+);
 
 for (const id of [
   "lab-input-json",
