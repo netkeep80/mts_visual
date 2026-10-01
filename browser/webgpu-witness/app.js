@@ -5,6 +5,16 @@ import { createStructural2DController } from "./structural-2d-controller.js";
 import { createBlueprint2DController } from "./blueprint-2d-controller.js";
 import { createDocument2DController } from "./document-2d-controller.js";
 import { createClassic3DController } from "./classic-3d-controller.js";
+import {
+  cameraBasis,
+  clamp,
+  createViewProjection,
+  dot3,
+  panCamera,
+  pointerWorldRay as createPointerWorldRay,
+  projectWorldToClient as projectMechanicalWorldToClient,
+  resetCamera,
+} from "./mechanical-camera-model.js";
 import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controller.js";
 import {
   IMPORTED_SCENE_ID,
@@ -1211,80 +1221,12 @@ populateSceneSelector("root-r");
 syncLabInputPanel();
 
 
-function normalize3(v) {
-  const length = Math.hypot(v[0], v[1], v[2]) || 1;
-  return [v[0] / length, v[1] / length, v[2] / length];
-}
-
-function cross(a, b) {
-  return [
-    a[1] * b[2] - a[2] * b[1],
-    a[2] * b[0] - a[0] * b[2],
-    a[0] * b[1] - a[1] * b[0],
-  ];
-}
-
-function dot(a, b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-function lookAt(eye, center, up) {
-  const z = normalize3([eye[0] - center[0], eye[1] - center[1], eye[2] - center[2]]);
-  const x = normalize3(cross(up, z));
-  const y = cross(z, x);
-  return new Float32Array([
-    x[0], y[0], z[0], 0,
-    x[1], y[1], z[1], 0,
-    x[2], y[2], z[2], 0,
-    -dot(x, eye), -dot(y, eye), -dot(z, eye), 1,
-  ]);
-}
-
-function perspective(fovy, aspect, near, far) {
-  const f = 1 / Math.tan(fovy / 2);
-  const nf = 1 / (near - far);
-  return new Float32Array([
-    f / aspect, 0, 0, 0,
-    0, f, 0, 0,
-    0, 0, (far + near) * nf, -1,
-    0, 0, 2 * far * near * nf, 0,
-  ]);
-}
-
-function multiply4(a, b) {
-  const out = new Float32Array(16);
-  for (let column = 0; column < 4; column += 1) {
-    for (let row = 0; row < 4; row += 1) {
-      let value = 0;
-      for (let k = 0; k < 4; k += 1) {
-        value += a[k * 4 + row] * b[column * 4 + k];
-      }
-      out[column * 4 + row] = value;
-    }
-  }
-  return out;
-}
-
-function transformPoint4(matrix, point) {
-  const [x, y, z] = point;
-  return [
-    matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
-    matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
-    matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
-    matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15],
-  ];
-}
-
 function currentViewProjection(state) {
-  const eye = cameraEye(state.camera);
-  const view = lookAt(eye, state.camera.target, [0, 1, 0]);
-  const projection = perspective(
-    Math.PI / 4,
-    Math.max(1e-9, ui.canvas.width / ui.canvas.height),
-    0.1,
-    state.camera.maxDistance * 4,
+  return createViewProjection(
+    state.camera,
+    ui.canvas.width,
+    ui.canvas.height,
   );
-  return multiply4(projection, view);
 }
 
 function selectedMechanicalLinkIndex(state) {
@@ -1403,16 +1345,13 @@ function scheduleMechanicalDetailSelection(
 }
 
 function projectWorldToClient(state, world) {
-  const clip = transformPoint4(currentViewProjection(state), world);
-  if (!(clip[3] > 1e-6)) return null;
-  const ndcX = clip[0] / clip[3];
-  const ndcY = clip[1] / clip[3];
-  if (!Number.isFinite(ndcX) || !Number.isFinite(ndcY)) return null;
-  const rect = ui.canvas.getBoundingClientRect();
-  return [
-    rect.left + (ndcX * 0.5 + 0.5) * rect.width,
-    rect.top + (0.5 - ndcY * 0.5) * rect.height,
-  ];
+  return projectMechanicalWorldToClient({
+    camera: state.camera,
+    world,
+    framebufferWidth: ui.canvas.width,
+    framebufferHeight: ui.canvas.height,
+    rect: ui.canvas.getBoundingClientRect(),
+  });
 }
 
 function packedVec3(values, index) {
@@ -1421,20 +1360,12 @@ function packedVec3(values, index) {
 }
 
 function pointerWorldRay(state, event) {
-  const { eye, forward, right, up } = cameraBasis(state.camera);
-  const rect = ui.canvas.getBoundingClientRect();
-  const width = Math.max(1, rect.width);
-  const height = Math.max(1, rect.height);
-  const ndcX = ((event.clientX - rect.left) / width) * 2 - 1;
-  const ndcY = 1 - ((event.clientY - rect.top) / height) * 2;
-  const tanHalfFov = Math.tan(Math.PI / 8);
-  const aspect = width / height;
-  const direction = normalize3([
-    forward[0] + right[0] * ndcX * aspect * tanHalfFov + up[0] * ndcY * tanHalfFov,
-    forward[1] + right[1] * ndcX * aspect * tanHalfFov + up[1] * ndcY * tanHalfFov,
-    forward[2] + right[2] * ndcX * aspect * tanHalfFov + up[2] * ndcY * tanHalfFov,
-  ]);
-  return { origin: eye, direction };
+  return createPointerWorldRay({
+    camera: state.camera,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    rect: ui.canvas.getBoundingClientRect(),
+  });
 }
 
 function pickCenterIcosahedron(state, event, centers) {
@@ -1480,51 +1411,6 @@ function applyCenterDrag(state) {
       velocity: [0, 0, 0],
     },
   ]);
-}
-
-function clamp(value, minimum, maximum) {
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-function cameraEye(camera) {
-  const cp = Math.cos(camera.pitch);
-  return [
-    camera.target[0] + Math.cos(camera.yaw) * cp * camera.distance,
-    camera.target[1] + Math.sin(camera.pitch) * camera.distance,
-    camera.target[2] + Math.sin(camera.yaw) * cp * camera.distance,
-  ];
-}
-
-function resetCamera(camera, distance) {
-  camera.yaw = -0.8;
-  camera.pitch = 0.38;
-  camera.distance = distance;
-  camera.defaultDistance = distance;
-  camera.minDistance = Math.max(2, distance * 0.08);
-  camera.maxDistance = distance * 20;
-  camera.target[0] = 0;
-  camera.target[1] = 0;
-  camera.target[2] = 0;
-}
-
-function cameraBasis(camera) {
-  const eye = cameraEye(camera);
-  const forward = normalize3([
-    camera.target[0] - eye[0],
-    camera.target[1] - eye[1],
-    camera.target[2] - eye[2],
-  ]);
-  const right = normalize3(cross(forward, [0, 1, 0]));
-  const up = normalize3(cross(right, forward));
-  return { eye, forward, right, up };
-}
-
-function panCamera(camera, dx, dy) {
-  const { right, up } = cameraBasis(camera);
-  const scale = camera.distance * 0.0015;
-  for (let axis = 0; axis < 3; axis += 1) {
-    camera.target[axis] += right[axis] * (-dx * scale) + up[axis] * (dy * scale);
-  }
 }
 
 function installCameraControls(state) {
@@ -1647,7 +1533,7 @@ function installCameraControls(state) {
     const basis = cameraBasis(state.camera);
     const depth = Math.max(
       0.1,
-      dot(
+      dot3(
         [
           center[0] - basis.eye[0],
           center[1] - basis.eye[1],
