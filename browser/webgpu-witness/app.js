@@ -1,6 +1,7 @@
 import { runMechanicalWebGpuBenchmark } from "./benchmark.js";
 import { createBenchmarkUiController } from "./benchmark-ui-controller.js";
 import { createLabModeMountController } from "./lab-mode-mount-controller.js";
+import { createStructural2DController } from "./structural-2d-controller.js";
 import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controller.js";
 import {
   IMPORTED_SCENE_ID,
@@ -1052,20 +1053,7 @@ function setSelectedVisualKey(key) {
 }
 
 function structuralDiagnosticDetail() {
-  if (!structuralState?.layout || structuralState.scene !== selectedScene()) return null;
-  const maxDepth = structuralState.layout.positions.reduce(
-    (maximum, position) => Math.max(maximum, position.depth),
-    0,
-  );
-  return {
-    scc: structuralState.layout.components.length,
-    layers: maxDepth + 1,
-    crossingsBefore: structuralState.layout.metrics.crossingsBefore,
-    crossingsAfter: structuralState.layout.metrics.crossingsAfter,
-    evaluations: structuralState.layout.metrics.evaluations,
-    passes: structuralState.layout.metrics.passes,
-    bounds: structuralState.layout.bounds,
-  };
+  return structural2DController.diagnosticDetail(selectedScene());
 }
 
 function blueprintDiagnosticDetail() {
@@ -2293,210 +2281,22 @@ async function inspectGeometry() {
   }
 }
 
-let structuralState = null;
-
-function selectedStructuralOptions() {
-  const rootKey = ui.structuralRoot.value || undefined;
-  return Object.freeze({
-    ...(rootKey === undefined ? {} : { rootKey }),
-    layerSpacing: controlNumber(ui.structuralSpacing, "шаг структурных слоёв", 64, 240),
-    minimumNodeSpacing: controlNumber(ui.structuralNodeSpacing, "минимальное расстояние Structural", 36, 160),
-    optimizeCrossings: ui.structuralOptimize.checked,
-    crossingPasses: 5,
-    crossingEvaluations: 240,
-  });
-}
-
-function refreshStructuralControlLabels() {
-  const options = selectedStructuralOptions();
-  ui.structuralSpacingValue.value = options.layerSpacing.toFixed(0);
-  ui.structuralNodeSpacingValue.value = options.minimumNodeSpacing.toFixed(0);
-}
-
-function refreshStructuralRootOptions(network) {
-  const previous = ui.structuralRoot.value;
-  ui.structuralRoot.replaceChildren();
-  const none = document.createElement("option");
-  none.value = "";
-  none.textContent = "Без явного корня";
-  ui.structuralRoot.appendChild(none);
-  for (const link of [...network.links].sort((left, right) => left.key.localeCompare(right.key))) {
-    const option = document.createElement("option");
-    option.value = link.key;
-    option.textContent = link.key;
-    ui.structuralRoot.appendChild(option);
-  }
-  ui.structuralRoot.value = network.links.some((link) => link.key === previous) ? previous : "";
-}
-
-function structuralViewportSize() {
-  return {
-    width: Math.max(1, ui.structuralViewport.clientWidth),
-    height: Math.max(1, ui.structuralViewport.clientHeight),
-  };
-}
-
-function applyStructuralViewport(state) {
-  const svg = ui.structuralViewport.querySelector("svg");
-  if (!svg || !state.viewport) return;
-  const { width, height } = structuralViewportSize();
-  const { scale, panX, panY } = state.viewport;
-  svg.setAttribute(
-    "viewBox",
-    [
-      -panX / scale,
-      -panY / scale,
-      width / scale,
-      height / scale,
-    ].map((value) => Number(value.toFixed(9))).join(" "),
-  );
-  svg.setAttribute("preserveAspectRatio", "none");
-}
-
-function fitStructuralState(state) {
-  const { width, height } = structuralViewportSize();
-  state.viewport = core.fitBlueprintViewport(
-    state.layout.bounds,
-    width,
-    height,
-    { padding: 30, minScale: 0.05, maxScale: 16 },
-  );
-  applyStructuralViewport(state);
-}
-
-function updateStructuralDiagnostics(state) {
-  const maxDepth = state.layout.positions.reduce(
-    (maximum, position) => Math.max(maximum, position.depth),
-    0,
-  );
-  ui.structuralComponents.textContent =
-    `${state.layout.components.length} / ${maxDepth + 1}`;
-  ui.structuralCrossings.textContent =
-    `${state.layout.metrics.crossingsBefore} → ${state.layout.metrics.crossingsAfter}`;
-  ui.structuralOptimizer.textContent =
-    `${state.layout.metrics.evaluations} проверок · ${state.layout.metrics.passes} проходов`;
-  ui.structuralLinkCount.textContent = String(state.network.links.length);
-  updateSharedDiagnostics();
-}
-
-function renderStructuralState(state, { fit = false } = {}) {
-  state.options = selectedStructuralOptions();
-  state.layout = core.layoutStructural2D(state.network, state.options);
-  ui.structuralViewport.innerHTML = core.serializeStructural2DSvg(
-    state.network,
-    state.layout,
-  );
-  const svg = ui.structuralViewport.querySelector("svg");
-  if (!svg) throw new Error("Structural 2D renderer не создал SVG");
-  svg.setAttribute("aria-label", `Structural 2D: ${state.scene.label}`);
-  updateStructuralDiagnostics(state);
-  if (fit || !state.viewport) fitStructuralState(state);
-  else applyStructuralViewport(state);
-}
-
-function structuralPointerPoint(event) {
-  const rect = ui.structuralViewport.getBoundingClientRect();
-  return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-  };
-}
-
-function downloadStructuralSvg() {
-  if (!structuralState?.layout) return;
-  const text = core.serializeStructural2DSvg(
-    structuralState.network,
-    structuralState.layout,
-  );
-  const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download =
-    `mts-visual-structural-${structuralState.scene.id}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-  log(
-    `Structural SVG сохранён: сцена=${structuralState.scene.label}, пересечения=${structuralState.layout.metrics.crossingsAfter}`,
-  );
-}
+const structural2DController = createStructural2DController({
+  ui,
+  core,
+  getSelectedScene: () => selectedScene(),
+  setSelectedKey: (key) => setSelectedVisualKey(key),
+  updateSharedDiagnostics,
+  controlNumber,
+  downloadTextFile,
+  buildInfo,
+  createOption: () => document.createElement("option"),
+  log,
+});
+structural2DController.mountControls();
 
 function mountStructural2D() {
-  const scene = selectedScene();
-  const abortController = new AbortController();
-  refreshStructuralRootOptions(scene.network);
-  ui.structuralRoot.value = scene.hints?.rootKey ?? "";
-  refreshStructuralControlLabels();
-
-  const state = {
-    scene,
-    network: scene.network,
-    options: null,
-    layout: null,
-    viewport: null,
-    pointerId: null,
-    panPointer: null,
-    abortController,
-  };
-  structuralState = state;
-  renderStructuralState(state, { fit: true });
-
-  const signal = abortController.signal;
-  ui.structuralViewport.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    const node = event.target.closest?.('[data-role="structural-node"]');
-    const key = node?.getAttribute("data-link-key");
-    if (key) setSelectedVisualKey(key);
-    state.pointerId = event.pointerId;
-    state.panPointer = { x: event.clientX, y: event.clientY };
-    ui.structuralViewport.setPointerCapture?.(event.pointerId);
-    ui.structuralViewport.classList.add("dragging");
-    event.preventDefault();
-  }, { signal });
-
-  ui.structuralViewport.addEventListener("pointermove", (event) => {
-    if (state.pointerId !== event.pointerId || !state.panPointer) return;
-    const dx = event.clientX - state.panPointer.x;
-    const dy = event.clientY - state.panPointer.y;
-    state.panPointer = { x: event.clientX, y: event.clientY };
-    state.viewport = core.panBlueprintViewport(state.viewport, dx, dy);
-    applyStructuralViewport(state);
-    event.preventDefault();
-  }, { signal });
-
-  const finishPointer = (event) => {
-    if (state.pointerId !== event.pointerId) return;
-    state.pointerId = null;
-    state.panPointer = null;
-    ui.structuralViewport.classList.remove("dragging");
-  };
-  ui.structuralViewport.addEventListener("pointerup", finishPointer, { signal });
-  ui.structuralViewport.addEventListener("pointercancel", finishPointer, { signal });
-
-  ui.structuralViewport.addEventListener("wheel", (event) => {
-    const factor = Math.exp(-event.deltaY * 0.001);
-    state.viewport = core.zoomBlueprintViewport(
-      state.viewport,
-      factor,
-      structuralPointerPoint(event),
-      { minScale: 0.05, maxScale: 24 },
-    );
-    applyStructuralViewport(state);
-    event.preventDefault();
-  }, { passive: false, signal });
-
-  log(
-    `Structural 2D запущен: сцена=${scene.label}, SCC=${state.layout.components.length}, пересечения=${state.layout.metrics.crossingsBefore}→${state.layout.metrics.crossingsAfter}`,
-  );
-
-  return () => {
-    abortController.abort();
-    ui.structuralViewport.classList.remove("dragging");
-    ui.structuralViewport.replaceChildren();
-    if (structuralState === state) structuralState = null;
-  };
+  return structural2DController.mount();
 }
 
 let blueprintState = null;
@@ -3113,7 +2913,7 @@ const labResourceLedger = createLabResourceLedger();
 
 function activeModeState(modeId) {
   switch (modeId) {
-    case "structural-2d": return structuralState;
+    case "structural-2d": return structural2DController.state();
     case "blueprint-2d": return blueprintState;
     case "document-2d": return document2dState;
     case "classic-3d": return classicState;
@@ -3143,7 +2943,7 @@ function labResourceAuditSnapshot() {
   return Object.freeze({
     ledger: snapshotLabResourceLedger(labResourceLedger),
     actual: Object.freeze({
-      structuralState: structuralState !== null,
+      structuralState: structural2DController.isMounted(),
       blueprintState: blueprintState !== null,
       documentState: document2dState !== null,
       classicState: classicState !== null,
@@ -3398,36 +3198,6 @@ ui.scene.addEventListener("change", () => {
     return;
   }
   void remountMechanical("смена сцены");
-});
-
-for (const control of [
-  ui.structuralSpacing,
-  ui.structuralNodeSpacing,
-]) {
-  control.addEventListener("input", () => {
-    refreshStructuralControlLabels();
-    if (structuralState) renderStructuralState(structuralState, { fit: true });
-  });
-}
-
-ui.structuralRoot.addEventListener("change", () => {
-  if (structuralState) renderStructuralState(structuralState, { fit: true });
-});
-
-ui.structuralOptimize.addEventListener("change", () => {
-  if (structuralState) renderStructuralState(structuralState, { fit: true });
-});
-
-ui.structuralFit.addEventListener("click", () => {
-  if (structuralState) fitStructuralState(structuralState);
-});
-
-ui.structuralReset.addEventListener("click", () => {
-  if (structuralState) renderStructuralState(structuralState, { fit: true });
-});
-
-ui.structuralExport.addEventListener("click", () => {
-  downloadStructuralSvg();
 });
 
 for (const control of [
@@ -3700,7 +3470,9 @@ document.addEventListener("fullscreenchange", () => {
   if (classicState) {
     requestAnimationFrame(() => threeVisual.fitVisualThreeRenderer(ui.classicViewport));
   }
-  if (structuralState) requestAnimationFrame(() => fitStructuralState(structuralState));
+  if (structural2DController.isMounted()) {
+    requestAnimationFrame(() => structural2DController.fit());
+  }
   if (blueprintState) requestAnimationFrame(() => fitBlueprintState(blueprintState));
   if (document2dState) requestAnimationFrame(() => fitDocumentState(document2dState));
 });
@@ -3729,6 +3501,7 @@ try {
 window.addEventListener("pagehide", () => {
   benchmarkController.requestStop({ announce: false });
   benchmarkController.dispose();
+  structural2DController.disposeControls();
   void labLifecycle.dispose();
   stopRender();
 });
