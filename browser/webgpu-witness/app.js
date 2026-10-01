@@ -9,6 +9,13 @@ import {
   serializeSceneInputManifest,
 } from "./lab-input-model.js";
 import {
+  createSharedDiagnosticSnapshot as createSharedDiagnosticEnvelope,
+  projectSharedDiagnosticDisplay,
+  reconcileSelectedLinkKey,
+  serializeSharedDiagnosticSnapshot,
+  validateSelectedLinkKey,
+} from "./lab-diagnostics-model.js";
+import {
   LAB_REAL_CYCLE,
   LAB_REAL_CYCLE_REPEATS,
   assertLabResourceAudit,
@@ -1025,20 +1032,15 @@ let selectedVisualKey = null;
 let currentLabModeId = ui.visualizationMode.value;
 
 function reconcileSelectedVisualKey(scene = selectedScene()) {
-  if (
-    selectedVisualKey !== null
-    && !scene.network.links.some((link) => link.key === selectedVisualKey)
-  ) {
-    selectedVisualKey = null;
-  }
+  selectedVisualKey = reconcileSelectedLinkKey(
+    scene,
+    selectedVisualKey,
+  );
 }
 
 function setSelectedVisualKey(key) {
   const scene = selectedScene();
-  if (key !== null && !scene.network.links.some((link) => link.key === key)) {
-    throw new Error(`неизвестная выбранная связь: ${key}`);
-  }
-  selectedVisualKey = key;
+  selectedVisualKey = validateSelectedLinkKey(scene, key);
   if (renderState?.scene === scene) {
     scheduleMechanicalDetailSelection(
       renderState,
@@ -1190,41 +1192,34 @@ function activeModeDiagnosticDetail() {
 function sharedDiagnosticSnapshot() {
   const scene = selectedScene();
   const definition = labModeUi(currentLabModeId);
-  return {
+  return createSharedDiagnosticEnvelope({
     mode: currentLabModeId,
     modeLabel: definition?.label ?? currentLabModeId,
-    input: {
-      id: scene.id,
-      label: scene.label,
-      sourceKind: scene.sourceKind,
-      links: scene.network.links.length,
-      ...(scene.sourceRepository === undefined
-        ? {}
-        : { sourceRepository: scene.sourceRepository }),
-      ...(scene.sourceSha === undefined ? {} : { sourceSha: scene.sourceSha }),
-    },
+    scene,
     selectedKey: selectedVisualKey,
-    renderer: {
-      version: buildInfo.version,
-      buildSha: buildInfo.mainSha,
-    },
+    rendererVersion: buildInfo.version,
+    rendererBuildSha: buildInfo.mainSha,
     detail: activeModeDiagnosticDetail(),
-  };
+  });
 }
 
 function updateSharedDiagnostics() {
-  const snapshot = sharedDiagnosticSnapshot();
-  ui.labDiagnosticMode.textContent = `${snapshot.modeLabel} · ${snapshot.mode}`;
-  ui.labDiagnosticInput.textContent = `${snapshot.input.label} · ${snapshot.input.sourceKind}`;
-  ui.labDiagnosticLinks.textContent = String(snapshot.input.links);
-  ui.labDiagnosticSelected.textContent = snapshot.selectedKey ?? "—";
-  ui.labDiagnosticVersion.textContent = String(snapshot.renderer.version);
-  ui.labDiagnosticSha.textContent = String(snapshot.renderer.buildSha).slice(0, 12);
-  ui.labDiagnosticDetail.textContent = JSON.stringify(snapshot.detail ?? {}, null, 2);
+  const display = projectSharedDiagnosticDisplay(
+    sharedDiagnosticSnapshot(),
+  );
+  ui.labDiagnosticMode.textContent = display.mode;
+  ui.labDiagnosticInput.textContent = display.input;
+  ui.labDiagnosticLinks.textContent = display.links;
+  ui.labDiagnosticSelected.textContent = display.selected;
+  ui.labDiagnosticVersion.textContent = display.version;
+  ui.labDiagnosticSha.textContent = display.sha;
+  ui.labDiagnosticDetail.textContent = display.detail;
 }
 
 function sharedDiagnosticText() {
-  return JSON.stringify(sharedDiagnosticSnapshot(), null, 2) + "\n";
+  return serializeSharedDiagnosticSnapshot(
+    sharedDiagnosticSnapshot(),
+  );
 }
 
 async function sha256Text(text) {
