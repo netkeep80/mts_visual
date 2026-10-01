@@ -11,6 +11,7 @@ import {
   resetCamera,
 } from "./mechanical-camera-model.js";
 import { createMechanicalInteractionController } from "./mechanical-interaction-controller.js";
+import { createMechanicalDetailSelectionController } from "./mechanical-detail-selection-controller.js";
 import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controller.js";
 import {
   IMPORTED_SCENE_ID,
@@ -553,6 +554,26 @@ const MECHANICAL_DETAIL_FRUSTUM_MARGIN = 0.18;
 const MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS = 70;
 const MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS = 250;
 
+const mechanicalDetailSelectionController =
+  createMechanicalDetailSelectionController({
+    getSelectedKey: () => selectedVisualKey,
+    getViewProjection: (state) =>
+      currentViewProjection(state),
+    frustumMargin:
+      MECHANICAL_DETAIL_FRUSTUM_MARGIN,
+    defaultDelay:
+      MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS,
+    isStateCurrent: (state) =>
+      renderState === state,
+    updateDiagnostics: () =>
+      updateSharedDiagnostics(),
+    setTimeoutFn: (callback, milliseconds) =>
+      window.setTimeout(callback, milliseconds),
+    clearTimeoutFn: (timer) =>
+      window.clearTimeout(timer),
+    log,
+  });
+
 const mechanicalInteractionController =
   createMechanicalInteractionController({
     canvas: ui.canvas,
@@ -561,7 +582,7 @@ const mechanicalInteractionController =
     isStateCurrent: (state) => renderState === state,
     scheduleDetailSelection:
       (state, reason, delay) =>
-        scheduleMechanicalDetailSelection(
+        mechanicalDetailSelectionController.schedule(
           state,
           reason,
           delay,
@@ -1080,7 +1101,7 @@ function setSelectedVisualKey(key) {
   const scene = selectedScene();
   selectedVisualKey = validateSelectedLinkKey(scene, key);
   if (renderState?.scene === scene) {
-    scheduleMechanicalDetailSelection(
+    mechanicalDetailSelectionController.schedule(
       renderState,
       "shared-selection",
       0,
@@ -1253,121 +1274,6 @@ function currentViewProjection(state) {
   );
 }
 
-function selectedMechanicalLinkIndex(state) {
-  if (selectedVisualKey === null) return -1;
-  return state.linkIndexByKey.get(selectedVisualKey) ?? -1;
-}
-
-function sameMechanicalGpuSelectionView(previous, matrix, priorityLink) {
-  if (
-    previous === null
-    || previous.priorityLink !== priorityLink
-    || previous.viewProjection.length !== matrix.length
-  ) {
-    return false;
-  }
-  for (let index = 0; index < matrix.length; index += 1) {
-    if (previous.viewProjection[index] !== matrix[index]) return false;
-  }
-  return true;
-}
-
-function refreshMechanicalDetailSelection(state, reason) {
-  if (renderState !== state) return null;
-  const shapeSnapshot = state.shape.snapshot();
-  const linkCount = state.compute.topology.linkCount;
-  const selectedLink = selectedMechanicalLinkIndex(state);
-  const hoveredLink = state.hoveredCenterLink;
-  const bounded = shapeSnapshot.detailCapacity < linkCount;
-
-  if (!bounded) {
-    state.detailSelectionView = null;
-    state.detailSelection = {
-      policy: "full-detail-identity/v1",
-      reason,
-      detailedLinkCount: shapeSnapshot.detailedLinkCount,
-      culledLinkCount: 0,
-      visibleCandidateCount: null,
-      selectedPinned: false,
-      hoveredPinned: false,
-      centerCacheRevision: null,
-    };
-    updateSharedDiagnostics();
-    return null;
-  }
-
-  const priorityLink = selectedLink >= 0
-    ? selectedLink
-    : hoveredLink;
-  const viewProjection = currentViewProjection(state);
-  if (
-    sameMechanicalGpuSelectionView(
-      state.detailSelectionView,
-      viewProjection,
-      priorityLink,
-    )
-  ) {
-    state.detailSelection = {
-      ...state.detailSelection,
-      reason,
-    };
-    updateSharedDiagnostics();
-    return null;
-  }
-
-  const updateStats = state.shape.setGpuDetailSelectionView({
-    viewProjection,
-    selectedLink: priorityLink,
-    frustumMargin: MECHANICAL_DETAIL_FRUSTUM_MARGIN,
-  });
-  state.detailSelectionUpdates += 1;
-  state.detailSelectionIndexUploadBytes += updateStats.indexUploadBytes;
-  state.detailSelectionGlobalsUploadBytes += updateStats.globalsUploadBytes;
-  state.detailSelectionControlUploadBytes +=
-    updateStats.selectionControlUploadBytes;
-  state.detailSelectionView = {
-    priorityLink,
-    viewProjection: Array.from(viewProjection),
-  };
-  state.detailSelection = {
-    policy: "gpu-partition-frustum/v1",
-    reason,
-    detailedLinkCount: updateStats.detailedLinkCount,
-    culledLinkCount: Math.max(
-      0,
-      linkCount - updateStats.detailedLinkCount,
-    ),
-    visibleCandidateCount: null,
-    selectedPinned: selectedLink >= 0,
-    hoveredPinned: selectedLink < 0 && hoveredLink >= 0,
-    centerCacheRevision: null,
-  };
-  updateSharedDiagnostics();
-  return updateStats;
-}
-
-function scheduleMechanicalDetailSelection(
-  state,
-  reason,
-  delay = MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS,
-) {
-  if (renderState !== state) return;
-  if (state.detailSelectionTimer !== null) {
-    clearTimeout(state.detailSelectionTimer);
-  }
-  state.detailSelectionTimer = setTimeout(() => {
-    state.detailSelectionTimer = null;
-    if (renderState !== state) return;
-    try {
-      refreshMechanicalDetailSelection(state, reason);
-    } catch (error) {
-      log(
-        `ОШИБКА выбора detail-cache (${reason}) — ${error.stack ?? error}`,
-      );
-    }
-  }, Math.max(0, delay));
-}
-
 function projectWorldToClient(state, world) {
   return projectMechanicalWorldToClient({
     camera: state.camera,
@@ -1402,10 +1308,7 @@ function stopRender() {
   renderPass = false;
 
   cancelAnimationFrame(state.raf);
-  if (state.detailSelectionTimer !== null) {
-    clearTimeout(state.detailSelectionTimer);
-    state.detailSelectionTimer = null;
-  }
+  mechanicalDetailSelectionController.cancel(state);
   try { state.cleanupCameraControls?.(); } catch {}
   try { state.renderer.destroy(); } catch {}
   try { state.depthTexture?.destroy(); } catch {}
@@ -1591,7 +1494,10 @@ async function startRender() {
       mechanicalInteractionController.mount(state);
     renderState = state;
     resizeCanvas(ui.canvas);
-    refreshMechanicalDetailSelection(state, "initial-camera");
+    mechanicalDetailSelectionController.refresh(
+      state,
+      "initial-camera",
+    );
     ui.pauseRender.textContent = "Пауза";
 
     function ensureDepth() {
@@ -1674,7 +1580,7 @@ async function startRender() {
             >= MECHANICAL_DETAIL_AUTOROTATE_INTERVAL_MS
           ) {
             state.lastDetailAutoRotateAt = now;
-            scheduleMechanicalDetailSelection(
+            mechanicalDetailSelectionController.schedule(
               state,
               "auto-rotate",
               0,
