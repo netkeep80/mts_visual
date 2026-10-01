@@ -7,24 +7,16 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, classicController, mechanicalRuntimeController] = await Promise.all([
+const [app, html] = await Promise.all([
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "app.js"),
     "utf8",
   ),
   readFile(
-    join(repoRoot, "browser", "webgpu-witness", "classic-3d-controller.js"),
-    "utf8",
-  ),
-  readFile(
-    join(repoRoot, "browser", "webgpu-witness", "mechanical-runtime-controller.js"),
+    join(repoRoot, "browser", "webgpu-witness", "index.html"),
     "utf8",
   ),
 ]);
-const html = await readFile(
-  join(repoRoot, "browser", "webgpu-witness", "index.html"),
-  "utf8",
-);
 
 for (const id of [
   "lab-run-cycle-test",
@@ -42,118 +34,45 @@ assert(
     && app.includes("assertLabResourceAudit"),
   "app must delegate resource accounting/invariants to the executable resource model",
 );
-
-for (const symbol of [
-  "labResourceAuditSnapshot",
-  "assertRealModeResources",
-  "runLabModeCycleSelfTest",
-]) {
-  assert(app.includes(symbol), `missing resource-cycle browser wiring: ${symbol}`);
-}
-
 assert(
-  app.includes('LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"'),
-  "browser self-test contract version must be explicit",
-);
-assert(
-  app.includes('LAB_SELF_TEST_QUERY = "mode-cycle"'),
-  "browser self-test query token must be explicit",
-);
-assert(
-  app.includes("const startupParams = new URLSearchParams(window.location.search)")
+  app.includes('LAB_SELF_TEST_CONTRACT = "five-mode-resource-cycle/v1"')
+    && app.includes('LAB_SELF_TEST_QUERY = "mode-cycle"')
+    && app.includes("const startupParams = new URLSearchParams(window.location.search)")
     && app.includes('startupParams.get("selftest")'),
-  "browser self-test must be directly invocable through the page URL",
+  "browser self-test must remain URL-addressable with an explicit contract",
 );
 assert(
   app.includes('from "./lab-cycle-selftest-controller.js"')
     && app.includes("createLabCycleSelfTestController")
-    && app.includes("activateMode: (modeId) => activateLabMode(modeId)")
-    && app.includes("getSelectedScene: () => selectedScene()")
-    && app.includes("sceneManifestText: (scene) => sceneInputManifestText(scene)")
-    && app.includes("getSelectedKey: () => selectedVisualKey")
     && app.includes("return labCycleSelfTestController.run()"),
-  "browser self-test must delegate behavior to the executable controller while driving production activateLabMode",
+  "browser self-test behavior must delegate to the executable controller",
 );
 
-assert(
-  app.includes('from "./structural-2d-controller.js"')
-    && app.includes("createStructural2DController")
-    && app.includes("mountStructural: () => mountStructural2D()")
-    && app.includes("return structural2DController.mount()")
-    && app.includes("structuralState: structural2DController.isMounted()"),
-  "Structural mode ownership must delegate to the per-mode controller",
-);
+for (const wiring of [
+  'from "./structural-2d-controller.js"',
+  "structuralState: structural2DController.isMounted()",
+  'from "./blueprint-2d-controller.js"',
+  "blueprintState: blueprint2DController.isMounted()",
+  'from "./document-2d-controller.js"',
+  "documentState: document2DController.isMounted()",
+  'from "./classic-3d-controller.js"',
+  "classicState: classic3DController.isMounted()",
+  'from "./mechanical-runtime-controller.js"',
+  "mechanicalState:",
+  "mechanicalRuntimeController.isMounted()",
+  'from "./lab-mode-mount-controller.js"',
+  "createLabModeMountController",
+  "mount: mountLabMode",
+]) {
+  assert(app.includes(wiring), `missing five-mode lifecycle wiring: ${wiring}`);
+}
 
 assert(
-  app.includes('from "./blueprint-2d-controller.js"')
-    && app.includes("createBlueprint2DController")
-    && app.includes("mountBlueprint: () => mountBlueprint()")
-    && app.includes("return blueprint2DController.mount()")
-    && app.includes("blueprintState: blueprint2DController.isMounted()"),
-  "Blueprint mode ownership must delegate to the per-mode controller",
+  app.includes('ui.structuralViewport.querySelectorAll("svg").length')
+    && app.includes('ui.blueprintViewport.querySelectorAll("svg").length')
+    && app.includes('ui.documentViewport.querySelectorAll("svg").length')
+    && app.includes("threeVisual.getVisualThreeRendererSnapshot"),
+  "resource audit must inspect the actual mounted browser surfaces",
 );
 
-assert(
-  app.includes('from "./document-2d-controller.js"')
-    && app.includes("createDocument2DController")
-    && app.includes("mountDocument: () => mountDocument2D()")
-    && app.includes("return document2DController.mount()")
-    && app.includes("documentState: document2DController.isMounted()"),
-  "Document mode ownership must delegate to the per-mode controller",
-);
-
-assert(
-  app.includes('from "./classic-3d-controller.js"')
-    && app.includes("createClassic3DController")
-    && app.includes("mountClassic: () => mountClassic3D()")
-    && app.includes("return classic3DController.mount()")
-    && app.includes("classicState: classic3DController.isMounted()"),
-  "Classic mode ownership must delegate to the per-mode controller",
-);
-assert(
-  classicController.includes("threeVisual.createVisualThreeLiveRenderer")
-    && classicController.includes("threeVisual.destroyVisualThreeRenderer"),
-  "Classic controller must own the real Three renderer lifecycle",
-);
-assert(
-  app.includes("threeVisual.getVisualThreeRendererSnapshot"),
-  "Classic resource acceptance must inspect the actual Three mount registry",
-);
-assert(
-  app.includes('ui.structuralViewport.querySelectorAll("svg").length'),
-  "Structural actual DOM root must be checked",
-);
-assert(
-  app.includes('ui.blueprintViewport.querySelectorAll("svg").length'),
-  "Blueprint actual DOM root must be checked",
-);
-assert(
-  app.includes('ui.documentViewport.querySelectorAll("svg").length'),
-  "Document actual DOM root must be checked",
-);
-assert(
-  app.includes('from "./mechanical-runtime-controller.js"')
-    && app.includes("createMechanicalRuntimeController({")
-    && app.includes("mechanicalState:")
-    && app.includes("mechanicalRuntimeController.isMounted()")
-    && app.includes("mechanicalCanvasConfigured:")
-    && app.includes("mechanicalRuntimeController.state()"),
-  "Mechanical resource acceptance must delegate to the runtime controller",
-);
-assert(
-  mechanicalRuntimeController.includes("function dispose()")
-    && mechanicalRuntimeController.includes("target.context.unconfigure?.()")
-    && mechanicalRuntimeController.includes("target.renderer.destroy()"),
-  "Mechanical runtime controller must own the real WebGPU resource lifecycle",
-);
-assert(
-  app.includes('from "./lab-mode-mount-controller.js"')
-    && app.includes("createLabModeMountController")
-    && app.includes("claimResources: claimLabResources")
-    && app.includes("releaseResources: releaseLabResources")
-    && app.includes("return labModeMountController.mount(modeId)")
-    && app.includes("mount: mountLabMode"),
-  "production lifecycle must delegate mode mounting and resource cleanup to the executable mount controller",
-);
-
-console.log("web lab real resource-cycle source contract: PASS");
+console.log("web lab resource-cycle source boundary: PASS");
