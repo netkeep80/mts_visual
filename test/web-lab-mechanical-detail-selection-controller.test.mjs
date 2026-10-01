@@ -410,7 +410,7 @@ assert.equal(timers.size(), 0);
 assert.equal(state.detailSelectionTimer, null);
 assert.equal(controller.cancel(state), false);
 
-fixture.shape.setGpuDetailSelectionView = () => {
+fixture.state.shape.setGpuDetailSelectionView = () => {
   throw new Error("selector boom");
 };
 selectedKey = "C";
