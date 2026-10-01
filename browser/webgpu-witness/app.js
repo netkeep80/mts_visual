@@ -16,7 +16,6 @@ import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controlle
 import {
   IMPORTED_SCENE_ID,
   createImportedSceneFromText,
-  createSceneInputManifest,
   serializeSceneInputManifest,
 } from "./lab-input-model.js";
 import {
@@ -1059,13 +1058,6 @@ function selectedScene() {
     return importedScene;
   }
   return fixtureScene(ui.scene.value);
-}
-
-function sceneInputManifest(scene = selectedScene()) {
-  return createSceneInputManifest(
-    scene,
-    core.DOCUMENT2D_INPUT_SCHEMA,
-  );
 }
 
 function sceneInputManifestText(scene = selectedScene()) {
