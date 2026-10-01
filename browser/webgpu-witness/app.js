@@ -3,6 +3,7 @@ import { createBenchmarkUiController } from "./benchmark-ui-controller.js";
 import { createLabModeMountController } from "./lab-mode-mount-controller.js";
 import { createStructural2DController } from "./structural-2d-controller.js";
 import { createBlueprint2DController } from "./blueprint-2d-controller.js";
+import { createDocument2DController } from "./document-2d-controller.js";
 import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controller.js";
 import {
   IMPORTED_SCENE_ID,
@@ -1062,21 +1063,7 @@ function blueprintDiagnosticDetail() {
 }
 
 function documentDiagnosticDetail() {
-  if (!document2dState?.layout || document2dState.scene !== selectedScene()) return null;
-  const quality = document2dState.layout.metrics.qualityAfter;
-  return {
-    profile: document2dState.layout.profile,
-    requestedStrategy: document2dState.options?.strategy ?? null,
-    seedStrategy: document2dState.layout.metrics.seedStrategy,
-    seedCandidates: document2dState.layout.metrics.seedCandidates,
-    crossings: quality.crossings,
-    centerOverlaps: quality.centerOverlaps,
-    labelOverlaps: quality.labelOverlaps,
-    evaluations: document2dState.layout.metrics.optimizerEvaluations,
-    passes: document2dState.layout.metrics.optimizerPasses,
-    svgSha256: document2dState.outputDigest ?? null,
-    bounds: document2dState.layout.bounds,
-  };
+  return document2DController.diagnosticDetail(selectedScene());
 }
 
 function classicDiagnosticDetail() {
@@ -2312,277 +2299,23 @@ function mountBlueprint() {
   return blueprint2DController.mount();
 }
 
-let document2dState = null;
-
-function selectedDocumentOptions() {
-  const rootKey = ui.documentRoot.value || undefined;
-  return Object.freeze({
-    profile: ui.documentProfile.value,
-    strategy: ui.documentStrategy.value,
-    ...(rootKey === undefined ? {} : { rootKey }),
-  });
-}
-
-function refreshDocumentRootOptions(network) {
-  const previous = ui.documentRoot.value;
-  ui.documentRoot.replaceChildren();
-
-  const none = document.createElement("option");
-  none.value = "";
-  none.textContent = "Без явного корня";
-  ui.documentRoot.appendChild(none);
-
-  for (const link of [...network.links].sort((left, right) => left.key.localeCompare(right.key))) {
-    const option = document.createElement("option");
-    option.value = link.key;
-    option.textContent = link.key;
-    ui.documentRoot.appendChild(option);
-  }
-
-  ui.documentRoot.value = network.links.some((link) => link.key === previous)
-    ? previous
-    : "";
-}
-
-function documentViewportSize() {
-  return {
-    width: Math.max(1, ui.documentViewport.clientWidth),
-    height: Math.max(1, ui.documentViewport.clientHeight),
-  };
-}
-
-function applyDocumentViewport(state) {
-  const svg = ui.documentViewport.querySelector("svg");
-  if (!svg || !state.viewport) return;
-  const { width, height } = documentViewportSize();
-  const { scale, panX, panY } = state.viewport;
-  svg.setAttribute(
-    "viewBox",
-    [
-      -panX / scale,
-      -panY / scale,
-      width / scale,
-      height / scale,
-    ].map((value) => Number(value.toFixed(9))).join(" "),
-  );
-  svg.setAttribute("preserveAspectRatio", "none");
-}
-
-function fitDocumentState(state) {
-  const { width, height } = documentViewportSize();
-  state.viewport = core.fitBlueprintViewport(
-    state.layout.bounds,
-    width,
-    height,
-    { padding: 28, minScale: 0.05, maxScale: 16 },
-  );
-  applyDocumentViewport(state);
-}
-
-function updateDocumentDiagnostics(state) {
-  const before = state.layout.metrics.qualityBefore;
-  const after = state.layout.metrics.qualityAfter;
-  ui.documentSeed.textContent =
-    `${state.layout.metrics.seedStrategy} · ${state.layout.metrics.seedVariant} · ${state.layout.metrics.seedCandidates} кандидатов`;
-  ui.documentCrossings.textContent =
-    `${before.crossings} → ${after.crossings}${state.layout.metrics.zeroCrossingFound ? " · найден 0-crossing" : ""}`;
-  ui.documentOverlaps.textContent =
-    `центры ${after.centerOverlaps} · подписи ${after.labelOverlaps}`;
-  ui.documentOptimizer.textContent =
-    `${state.layout.metrics.optimizerEvaluations} проверок · ${state.layout.metrics.optimizerPasses} проходов`;
-  ui.documentDigest.textContent = state.outputDigest
-    ? state.outputDigest.slice(0, 16) + "…"
-    : state.digestError
-      ? "недоступен"
-      : "вычисляется…";
-  updateSharedDiagnostics();
-}
-
-function renderDocumentState(state, { fit = false } = {}) {
-  state.options = selectedDocumentOptions();
-  state.layout = core.layoutDocument2D(state.network, state.options);
-  state.svgText = core.serializeDocument2DSvg(state.network, state.layout);
-  state.outputDigest = null;
-  state.digestError = null;
-  state.digestGeneration += 1;
-  const digestGeneration = state.digestGeneration;
-  ui.documentViewport.innerHTML = state.svgText;
-
-  const svg = ui.documentViewport.querySelector("svg");
-  if (!svg) throw new Error("Document 2D renderer не создал SVG");
-  svg.setAttribute(
-    "aria-label",
-    `Document 2D: ${state.scene.label} · ${state.layout.profile}`,
-  );
-
-  updateDocumentDiagnostics(state);
-  if (fit || !state.viewport) fitDocumentState(state);
-  else applyDocumentViewport(state);
-
-  sha256Text(state.svgText).then((digest) => {
-    if (document2dState !== state || state.digestGeneration !== digestGeneration) return;
-    state.outputDigest = digest;
-    state.digestError = null;
-    updateDocumentDiagnostics(state);
-  }).catch((error) => {
-    if (document2dState !== state || state.digestGeneration !== digestGeneration) return;
-    state.outputDigest = null;
-    state.digestError = error;
-    updateDocumentDiagnostics(state);
-    log(`ОШИБКА SHA-256 Document SVG — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-  });
-}
-
-function documentPointerPoint(event) {
-  const rect = ui.documentViewport.getBoundingClientRect();
-  return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-  };
-}
-
-function documentSvgFilename(state) {
-  return `mts-visual-document-${state.scene.id}-${state.layout.profile}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
-}
-
-function downloadDocumentSvg() {
-  if (!document2dState?.layout || !document2dState.svgText) return;
-  downloadTextFile(
-    document2dState.svgText,
-    documentSvgFilename(document2dState),
-    "image/svg+xml;charset=utf-8",
-  );
-
-  log(
-    `Document SVG сохранён: сцена=${document2dState.scene.label}, профиль=${document2dState.layout.profile}, seed=${document2dState.layout.metrics.seedStrategy}, качество=${document2dState.layout.metrics.qualityAfter.score}`,
-  );
-}
-
-async function documentBrowserManifest(state) {
-  if (!state.layout || !state.svgText) {
-    throw new Error("Document 2D ещё не отрендерен");
-  }
-  const inputText = sceneInputManifestText(state.scene);
-  const inputDigest = await sha256Text(inputText);
-  const outputDigest = state.outputDigest ?? await sha256Text(state.svgText);
-  state.outputDigest = outputDigest;
-  state.digestError = null;
-  updateDocumentDiagnostics(state);
-
-  return core.createDocument2DRenderManifest({
-    inputPath: `browser:${state.scene.id}.json`,
-    inputDigest,
-    ...(state.scene.sourceRepository === undefined
-      ? {}
-      : { sourceRepository: state.scene.sourceRepository }),
-    ...(state.scene.sourceSha === undefined
-      ? {}
-      : { sourceSha: state.scene.sourceSha }),
-    rendererVersion: String(buildInfo.version),
-    rendererSha: String(buildInfo.mainSha),
-    profile: state.layout.profile,
-    layoutOptions: {
-      strategy: state.options.strategy,
-      rootKey: state.options.rootKey ?? null,
-    },
-    seedStrategy: state.layout.metrics.seedStrategy,
-    quality: state.layout.metrics.qualityAfter,
-    outputPath: `browser:${documentSvgFilename(state)}`,
-    outputDigest,
-  });
-}
-
-async function downloadDocumentManifest() {
-  if (!document2dState) return;
-  const manifest = await documentBrowserManifest(document2dState);
-  const text = JSON.stringify(manifest, null, 2) + "\n";
-  downloadTextFile(
-    text,
-    documentSvgFilename(document2dState).replace(/\.svg$/, ".manifest.json"),
-    "application/json;charset=utf-8",
-  );
-  log(
-    `Document manifest сохранён: outputDigest=${manifest.outputDigest}, renderer=${manifest.rendererSha.slice(0, 12)}`,
-  );
-}
+const document2DController = createDocument2DController({
+  ui,
+  core,
+  getSelectedScene: () => selectedScene(),
+  setSelectedKey: (key) => setSelectedVisualKey(key),
+  updateSharedDiagnostics,
+  sceneInputManifestText: (scene) => sceneInputManifestText(scene),
+  sha256Text,
+  downloadTextFile,
+  buildInfo,
+  createOption: () => document.createElement("option"),
+  log,
+});
+document2DController.mountControls();
 
 function mountDocument2D() {
-  const scene = selectedScene();
-  const abortController = new AbortController();
-  refreshDocumentRootOptions(scene.network);
-  ui.documentRoot.value = scene.hints?.rootKey ?? "";
-
-  const state = {
-    scene,
-    network: scene.network,
-    options: null,
-    layout: null,
-    svgText: null,
-    outputDigest: null,
-    digestError: null,
-    digestGeneration: 0,
-    viewport: null,
-    pointerId: null,
-    panPointer: null,
-    abortController,
-  };
-  document2dState = state;
-  renderDocumentState(state, { fit: true });
-
-  const signal = abortController.signal;
-  ui.documentViewport.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    const linkGroup = event.target.closest?.('[data-role="document-link"]');
-    const key = linkGroup?.getAttribute("data-link-key");
-    if (key) setSelectedVisualKey(key);
-    state.pointerId = event.pointerId;
-    state.panPointer = { x: event.clientX, y: event.clientY };
-    ui.documentViewport.setPointerCapture?.(event.pointerId);
-    ui.documentViewport.classList.add("dragging");
-    event.preventDefault();
-  }, { signal });
-
-  ui.documentViewport.addEventListener("pointermove", (event) => {
-    if (state.pointerId !== event.pointerId || !state.panPointer) return;
-    const dx = event.clientX - state.panPointer.x;
-    const dy = event.clientY - state.panPointer.y;
-    state.panPointer = { x: event.clientX, y: event.clientY };
-    state.viewport = core.panBlueprintViewport(state.viewport, dx, dy);
-    applyDocumentViewport(state);
-    event.preventDefault();
-  }, { signal });
-
-  const finishPointer = (event) => {
-    if (state.pointerId !== event.pointerId) return;
-    state.pointerId = null;
-    state.panPointer = null;
-    ui.documentViewport.classList.remove("dragging");
-  };
-  ui.documentViewport.addEventListener("pointerup", finishPointer, { signal });
-  ui.documentViewport.addEventListener("pointercancel", finishPointer, { signal });
-
-  ui.documentViewport.addEventListener("wheel", (event) => {
-    const factor = Math.exp(-event.deltaY * 0.001);
-    state.viewport = core.zoomBlueprintViewport(
-      state.viewport,
-      factor,
-      documentPointerPoint(event),
-      { minScale: 0.05, maxScale: 24 },
-    );
-    applyDocumentViewport(state);
-    event.preventDefault();
-  }, { passive: false, signal });
-
-  log(
-    `Document 2D запущен: сцена=${scene.label}, профиль=${state.layout.profile}, seed=${state.layout.metrics.seedStrategy}, пересечения=${state.layout.metrics.qualityBefore.crossings}→${state.layout.metrics.qualityAfter.crossings}`,
-  );
-
-  return () => {
-    abortController.abort();
-    ui.documentViewport.classList.remove("dragging");
-    ui.documentViewport.replaceChildren();
-    if (document2dState === state) document2dState = null;
-  };
+  return document2DController.mount();
 }
 
 let classicState = null;
@@ -2712,7 +2445,7 @@ function activeModeState(modeId) {
   switch (modeId) {
     case "structural-2d": return structural2DController.state();
     case "blueprint-2d": return blueprint2DController.state();
-    case "document-2d": return document2dState;
+    case "document-2d": return document2DController.state();
     case "classic-3d": return classicState;
     case "mechanical-3d": return renderState;
     default: return null;
@@ -2742,7 +2475,7 @@ function labResourceAuditSnapshot() {
     actual: Object.freeze({
       structuralState: structural2DController.isMounted(),
       blueprintState: blueprint2DController.isMounted(),
-      documentState: document2dState !== null,
+      documentState: document2DController.isMounted(),
       classicState: classicState !== null,
       mechanicalState: renderState !== null,
       structuralSvgRoots: ui.structuralViewport.querySelectorAll("svg").length,
@@ -2998,35 +2731,6 @@ ui.scene.addEventListener("change", () => {
 });
 
 for (const control of [
-  ui.documentProfile,
-  ui.documentStrategy,
-  ui.documentRoot,
-]) {
-  control.addEventListener("change", () => {
-    if (document2dState) renderDocumentState(document2dState, { fit: true });
-  });
-}
-
-ui.documentFit.addEventListener("click", () => {
-  if (document2dState) fitDocumentState(document2dState);
-});
-
-ui.documentReset.addEventListener("click", () => {
-  if (document2dState) renderDocumentState(document2dState, { fit: true });
-});
-
-ui.documentExport.addEventListener("click", () => {
-  downloadDocumentSvg();
-});
-
-ui.documentManifest.addEventListener("click", () => {
-  downloadDocumentManifest().catch((error) => {
-    ui.documentDigest.textContent = "ошибка";
-    log(`ОШИБКА экспорта Document manifest — ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-  });
-});
-
-for (const control of [
   ui.classicCharge,
   ui.classicRestLength,
   ui.classicStiffness,
@@ -3236,7 +2940,9 @@ document.addEventListener("fullscreenchange", () => {
   if (blueprint2DController.isMounted()) {
     requestAnimationFrame(() => blueprint2DController.fit());
   }
-  if (document2dState) requestAnimationFrame(() => fitDocumentState(document2dState));
+  if (document2DController.isMounted()) {
+    requestAnimationFrame(() => document2DController.fit());
+  }
 });
 
 try {
@@ -3265,6 +2971,7 @@ window.addEventListener("pagehide", () => {
   benchmarkController.dispose();
   structural2DController.disposeControls();
   blueprint2DController.disposeControls();
+  document2DController.disposeControls();
   void labLifecycle.dispose();
   stopRender();
 });
