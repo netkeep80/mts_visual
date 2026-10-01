@@ -7,7 +7,7 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, structuralController, blueprintController, documentController, classicController, html] = await Promise.all([
+const [app, structuralController, blueprintController, documentController, classicController, mechanicalInteractionController, html] = await Promise.all([
   readFile(join(repoRoot, "browser", "webgpu-witness", "app.js"), "utf8"),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "structural-2d-controller.js"),
@@ -23,6 +23,10 @@ const [app, structuralController, blueprintController, documentController, class
   ),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "classic-3d-controller.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "mechanical-interaction-controller.js"),
     "utf8",
   ),
   readFile(join(repoRoot, "browser", "webgpu-witness", "index.html"), "utf8"),
@@ -139,7 +143,12 @@ assert(
     && documentController.includes("setSelectedKey(key)"),
   "Document selection participates through the Document controller",
 );
-assert(app.includes("setSelectedVisualKey(state.centerDrag.key)"), "Mechanical selection participates");
+assert(
+  app.includes("setSelectedKey: (key) =>")
+    && app.includes("setSelectedVisualKey(key)")
+    && mechanicalInteractionController.includes("setSelectedKey(state.centerDrag.key)"),
+  "Mechanical selection participates through the Mechanical interaction controller",
+);
 assert(
   classicController.includes("onActivateKey: (key) =>")
     && classicController.includes("setSelectedKey(key)"),
