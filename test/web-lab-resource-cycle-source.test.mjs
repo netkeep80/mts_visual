@@ -75,6 +75,15 @@ assert(
 );
 
 assert(
+  app.includes('from "./blueprint-2d-controller.js"')
+    && app.includes("createBlueprint2DController")
+    && app.includes("mountBlueprint: () => mountBlueprint()")
+    && app.includes("return blueprint2DController.mount()")
+    && app.includes("blueprintState: blueprint2DController.isMounted()"),
+  "Blueprint mode ownership must delegate to the per-mode controller",
+);
+
+assert(
   app.includes("threeVisual.getVisualThreeRendererSnapshot"),
   "Classic resource acceptance must inspect the actual Three mount registry",
 );

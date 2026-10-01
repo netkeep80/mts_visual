@@ -2,6 +2,7 @@ import { runMechanicalWebGpuBenchmark } from "./benchmark.js";
 import { createBenchmarkUiController } from "./benchmark-ui-controller.js";
 import { createLabModeMountController } from "./lab-mode-mount-controller.js";
 import { createStructural2DController } from "./structural-2d-controller.js";
+import { createBlueprint2DController } from "./blueprint-2d-controller.js";
 import { createLabCycleSelfTestController } from "./lab-cycle-selftest-controller.js";
 import {
   IMPORTED_SCENE_ID,
@@ -1057,12 +1058,7 @@ function structuralDiagnosticDetail() {
 }
 
 function blueprintDiagnosticDetail() {
-  if (!blueprintState?.svgScene || blueprintState.scene !== selectedScene()) return null;
-  return {
-    positions: blueprintState.positions.length,
-    bounds: blueprintState.svgScene.bounds,
-    viewport: blueprintState.viewport,
-  };
+  return blueprint2DController.diagnosticDetail(selectedScene());
 }
 
 function documentDiagnosticDetail() {
@@ -2299,220 +2295,21 @@ function mountStructural2D() {
   return structural2DController.mount();
 }
 
-let blueprintState = null;
-
-function selectedBlueprintOptions() {
-  const spacing = controlNumber(ui.blueprintSpacing, "шаг Blueprint", 48, 220);
-  const loopRadius = controlNumber(ui.blueprintLoopRadius, "радиус самопетли Blueprint", 12, 100);
-  const clearance = controlNumber(ui.blueprintClearance, "отступ концов Blueprint", 0, 0.30);
-  return Object.freeze({ spacing, loopRadius, clearance });
-}
-
-function refreshBlueprintControlLabels() {
-  const options = selectedBlueprintOptions();
-  ui.blueprintSpacingValue.value = options.spacing.toFixed(0);
-  ui.blueprintLoopRadiusValue.value = options.loopRadius.toFixed(0);
-  ui.blueprintClearanceValue.value = options.clearance.toFixed(2);
-}
-
-function blueprintPresentationNetwork(network) {
-  return {
-    links: network.links.map((link) => {
-      const copy = { ...link };
-      if (ui.blueprintLabels.checked) copy.label = link.label ?? link.key;
-      else delete copy.label;
-      return copy;
-    }),
-  };
-}
-
-function blueprintViewportSize() {
-  return {
-    width: Math.max(1, ui.blueprintViewport.clientWidth),
-    height: Math.max(1, ui.blueprintViewport.clientHeight),
-  };
-}
-
-function applyBlueprintViewport(state) {
-  const svg = ui.blueprintViewport.querySelector("svg");
-  if (!svg) return;
-  const { width, height } = blueprintViewportSize();
-  const { scale, panX, panY } = state.viewport;
-  svg.setAttribute(
-    "viewBox",
-    [
-      -panX / scale,
-      -panY / scale,
-      width / scale,
-      height / scale,
-    ].map((value) => Number(value.toFixed(9))).join(" "),
-  );
-  svg.setAttribute("preserveAspectRatio", "none");
-}
-
-function fitBlueprintState(state) {
-  const { width, height } = blueprintViewportSize();
-  state.viewport = core.fitBlueprintViewport(
-    state.svgScene.bounds,
-    width,
-    height,
-    { padding: 28, minScale: 0.05, maxScale: 12 },
-  );
-  applyBlueprintViewport(state);
-}
-
-function renderBlueprintState(state, { fit = false } = {}) {
-  const options = selectedBlueprintOptions();
-  const network = blueprintPresentationNetwork(state.sourceNetwork);
-  state.geometry = core.buildBlueprintGeometry(network, state.positions, {
-    spacing: options.spacing,
-    loopRadius: options.loopRadius,
-    startOffsetFraction: options.clearance,
-    endOffsetFraction: options.clearance,
-  });
-  state.svgScene = core.buildBlueprintSvgScene(network, state.geometry, { padding: 36 });
-  ui.blueprintViewport.innerHTML = core.serializeBlueprintSvg(state.svgScene);
-  const svg = ui.blueprintViewport.querySelector("svg");
-  if (!svg) throw new Error("Blueprint renderer не создал SVG");
-
-  svg.setAttribute("aria-label", `Blueprint 2D: ${state.scene.label}`);
-  svg.querySelectorAll('[data-role="blueprint-center"]').forEach((center) => {
-    center.setAttribute("tabindex", "0");
-  });
-
-  if (fit || !state.viewport) fitBlueprintState(state);
-  else applyBlueprintViewport(state);
-  updateSharedDiagnostics();
-}
-
-function resetBlueprintPositions(state) {
-  const options = selectedBlueprintOptions();
-  state.positions = core.createBlueprintInitialPositions(state.sourceNetwork, {
-    spacing: options.spacing,
-  });
-  renderBlueprintState(state, { fit: true });
-}
-
-function blueprintPointerPoint(event) {
-  const rect = ui.blueprintViewport.getBoundingClientRect();
-  return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-  };
-}
-
-function downloadBlueprintSvg() {
-  if (!blueprintState?.svgScene) return;
-  const text = core.serializeBlueprintSvg(blueprintState.svgScene);
-  const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `mts-visual-blueprint-${blueprintState.scene.id}-${String(buildInfo.mainSha).slice(0, 12)}.svg`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-  log(`Blueprint SVG сохранён: сцена=${blueprintState.scene.label}, связей=${blueprintState.sourceNetwork.links.length}`);
-}
+const blueprint2DController = createBlueprint2DController({
+  ui,
+  core,
+  getSelectedScene: () => selectedScene(),
+  setSelectedKey: (key) => setSelectedVisualKey(key),
+  updateSharedDiagnostics,
+  controlNumber,
+  downloadTextFile,
+  buildInfo,
+  log,
+});
+blueprint2DController.mountControls();
 
 function mountBlueprint() {
-  const scene = selectedScene();
-  const abortController = new AbortController();
-  const state = {
-    scene,
-    sourceNetwork: scene.network,
-    positions: core.createBlueprintInitialPositions(scene.network, {
-      spacing: selectedBlueprintOptions().spacing,
-    }),
-    viewport: null,
-    geometry: null,
-    svgScene: null,
-    dragKey: null,
-    panPointer: null,
-    pointerId: null,
-    abortController,
-  };
-  blueprintState = state;
-  refreshBlueprintControlLabels();
-  renderBlueprintState(state, { fit: true });
-
-  const signal = abortController.signal;
-  ui.blueprintViewport.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    const center = event.target.closest?.('[data-role="blueprint-center"]');
-    state.pointerId = event.pointerId;
-    ui.blueprintViewport.setPointerCapture?.(event.pointerId);
-    ui.blueprintViewport.classList.add("dragging");
-
-    if (center) {
-      state.dragKey = center.getAttribute("data-link-key");
-      if (state.dragKey) setSelectedVisualKey(state.dragKey);
-      state.panPointer = null;
-    } else {
-      state.dragKey = null;
-      state.panPointer = { x: event.clientX, y: event.clientY };
-    }
-    event.preventDefault();
-  }, { signal });
-
-  ui.blueprintViewport.addEventListener("pointermove", (event) => {
-    if (state.pointerId !== event.pointerId) return;
-    if (state.dragKey) {
-      const world = core.blueprintScreenToWorld(
-        state.viewport,
-        blueprintPointerPoint(event),
-      );
-      state.positions = core.moveBlueprintPosition(
-        state.positions,
-        state.dragKey,
-        world,
-      );
-      renderBlueprintState(state);
-      event.preventDefault();
-      return;
-    }
-
-    if (state.panPointer) {
-      const dx = event.clientX - state.panPointer.x;
-      const dy = event.clientY - state.panPointer.y;
-      state.panPointer = { x: event.clientX, y: event.clientY };
-      state.viewport = core.panBlueprintViewport(state.viewport, dx, dy);
-      applyBlueprintViewport(state);
-      event.preventDefault();
-    }
-  }, { signal });
-
-  const finishPointer = (event) => {
-    if (state.pointerId !== event.pointerId) return;
-    state.pointerId = null;
-    state.dragKey = null;
-    state.panPointer = null;
-    ui.blueprintViewport.classList.remove("dragging");
-  };
-  ui.blueprintViewport.addEventListener("pointerup", finishPointer, { signal });
-  ui.blueprintViewport.addEventListener("pointercancel", finishPointer, { signal });
-
-  ui.blueprintViewport.addEventListener("wheel", (event) => {
-    const factor = Math.exp(-event.deltaY * 0.001);
-    state.viewport = core.zoomBlueprintViewport(
-      state.viewport,
-      factor,
-      blueprintPointerPoint(event),
-      { minScale: 0.05, maxScale: 20 },
-    );
-    applyBlueprintViewport(state);
-    event.preventDefault();
-  }, { passive: false, signal });
-
-  log(`Blueprint 2D запущен: сцена=${scene.label}, связей=${scene.network.links.length}`);
-
-  return () => {
-    abortController.abort();
-    ui.blueprintViewport.classList.remove("dragging");
-    ui.blueprintViewport.replaceChildren();
-    if (blueprintState === state) blueprintState = null;
-  };
+  return blueprint2DController.mount();
 }
 
 let document2dState = null;
@@ -2914,7 +2711,7 @@ const labResourceLedger = createLabResourceLedger();
 function activeModeState(modeId) {
   switch (modeId) {
     case "structural-2d": return structural2DController.state();
-    case "blueprint-2d": return blueprintState;
+    case "blueprint-2d": return blueprint2DController.state();
     case "document-2d": return document2dState;
     case "classic-3d": return classicState;
     case "mechanical-3d": return renderState;
@@ -2944,7 +2741,7 @@ function labResourceAuditSnapshot() {
     ledger: snapshotLabResourceLedger(labResourceLedger),
     actual: Object.freeze({
       structuralState: structural2DController.isMounted(),
-      blueprintState: blueprintState !== null,
+      blueprintState: blueprint2DController.isMounted(),
       documentState: document2dState !== null,
       classicState: classicState !== null,
       mechanicalState: renderState !== null,
@@ -3201,43 +2998,6 @@ ui.scene.addEventListener("change", () => {
 });
 
 for (const control of [
-  ui.blueprintSpacing,
-  ui.blueprintLoopRadius,
-  ui.blueprintClearance,
-]) {
-  control.addEventListener("input", () => {
-    refreshBlueprintControlLabels();
-    if (!blueprintState) return;
-
-    if (control === ui.blueprintSpacing) {
-      blueprintState.positions = core.createBlueprintInitialPositions(
-        blueprintState.sourceNetwork,
-        { spacing: selectedBlueprintOptions().spacing },
-      );
-      renderBlueprintState(blueprintState, { fit: true });
-    } else {
-      renderBlueprintState(blueprintState);
-    }
-  });
-}
-
-ui.blueprintLabels.addEventListener("change", () => {
-  if (blueprintState) renderBlueprintState(blueprintState);
-});
-
-ui.blueprintFit.addEventListener("click", () => {
-  if (blueprintState) fitBlueprintState(blueprintState);
-});
-
-ui.blueprintReset.addEventListener("click", () => {
-  if (blueprintState) resetBlueprintPositions(blueprintState);
-});
-
-ui.blueprintExport.addEventListener("click", () => {
-  downloadBlueprintSvg();
-});
-
-for (const control of [
   ui.documentProfile,
   ui.documentStrategy,
   ui.documentRoot,
@@ -3473,7 +3233,9 @@ document.addEventListener("fullscreenchange", () => {
   if (structural2DController.isMounted()) {
     requestAnimationFrame(() => structural2DController.fit());
   }
-  if (blueprintState) requestAnimationFrame(() => fitBlueprintState(blueprintState));
+  if (blueprint2DController.isMounted()) {
+    requestAnimationFrame(() => blueprint2DController.fit());
+  }
   if (document2dState) requestAnimationFrame(() => fitDocumentState(document2dState));
 });
 
@@ -3502,6 +3264,7 @@ window.addEventListener("pagehide", () => {
   benchmarkController.requestStop({ announce: false });
   benchmarkController.dispose();
   structural2DController.disposeControls();
+  blueprint2DController.disposeControls();
   void labLifecycle.dispose();
   stopRender();
 });

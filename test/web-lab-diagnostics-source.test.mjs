@@ -7,10 +7,14 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, structuralController, html] = await Promise.all([
+const [app, structuralController, blueprintController, html] = await Promise.all([
   readFile(join(repoRoot, "browser", "webgpu-witness", "app.js"), "utf8"),
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "structural-2d-controller.js"),
+    "utf8",
+  ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "blueprint-2d-controller.js"),
     "utf8",
   ),
   readFile(join(repoRoot, "browser", "webgpu-witness", "index.html"), "utf8"),
@@ -78,6 +82,12 @@ assert(
     && app.includes("structural2DController.diagnosticDetail(selectedScene())"),
   "Structural diagnostics must delegate to the per-mode controller",
 );
+assert(
+  app.includes('from "./blueprint-2d-controller.js"')
+    && app.includes("createBlueprint2DController")
+    && app.includes("blueprint2DController.diagnosticDetail(selectedScene())"),
+  "Blueprint diagnostics must delegate to the per-mode controller",
+);
 
 for (const fn of [
   "structuralDiagnosticDetail",
@@ -99,7 +109,11 @@ assert(
     && structuralController.includes("setSelectedKey(key)"),
   "Structural selection participates through the Structural controller",
 );
-assert(app.includes('[data-role="blueprint-center"]'), "Blueprint selection participates");
+assert(
+  blueprintController.includes('[data-role="blueprint-center"]')
+    && blueprintController.includes("setSelectedKey(target.dragKey)"),
+  "Blueprint selection participates through the Blueprint controller",
+);
 assert(app.includes('[data-role="document-link"]'), "Document selection participates");
 assert(app.includes("setSelectedVisualKey(state.centerDrag.key)"), "Mechanical selection participates");
 assert(app.includes("onActivateKey: (key) =>"), "Classic activation callback exists");
