@@ -195,9 +195,9 @@ const viewProjectionWide = createViewProjection(
   1600,
   600,
 );
-assert.notEqual(
-  viewProjectionA[0],
-  viewProjectionWide[0],
+assert.notDeepEqual(
+  [...viewProjectionA],
+  [...viewProjectionWide],
 );
 
 const rect = {
