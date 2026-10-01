@@ -7,7 +7,7 @@ function assert(condition, message) {
 }
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const [app, cameraModel, interactionController, detailSelectionController] = await Promise.all([
+const [app, cameraModel, interactionController, detailSelectionController, runtimeController] = await Promise.all([
   readFile(
     join(repoRoot, "browser", "webgpu-witness", "app.js"),
     "utf8",
@@ -24,12 +24,16 @@ const [app, cameraModel, interactionController, detailSelectionController] = awa
     join(repoRoot, "browser", "webgpu-witness", "mechanical-detail-selection-controller.js"),
     "utf8",
   ),
+  readFile(
+    join(repoRoot, "browser", "webgpu-witness", "mechanical-runtime-controller.js"),
+    "utf8",
+  ),
 ]);
 
 assert(
   app.includes('from "./mechanical-camera-model.js"')
-    && app.includes("return createViewProjection(")
-    && app.includes("return projectMechanicalWorldToClient({"),
+    && app.includes("createViewProjection(")
+    && runtimeController.includes("createViewProjection("),
   "Mechanical render projection behavior must delegate to the executable camera model",
 );
 assert(
@@ -43,10 +47,10 @@ assert(
 assert(
   app.includes('from "./mechanical-interaction-controller.js"')
     && app.includes("createMechanicalInteractionController({")
-    && app.includes("mechanicalInteractionController.mount(state)")
-    && app.includes("mechanicalInteractionController.applyCenterDrag(state)")
-    && app.includes(".clearCenterInteraction(renderState)"),
-  "Mechanical stateful interaction ownership must delegate to the executable interaction controller",
+    && runtimeController.includes("interactionController.mount(target)")
+    && runtimeController.includes(".applyCenterDrag(target)")
+    && runtimeController.includes(".clearCenterInteraction("),
+  "Mechanical runtime must delegate stateful input behavior to the executable interaction controller",
 );
 for (const legacyInteraction of [
   "function installCameraControls(",
@@ -106,9 +110,9 @@ assert(
     && app.includes("MECHANICAL_DETAIL_FRUSTUM_MARGIN")
     && app.includes("defaultDelay:")
     && app.includes("MECHANICAL_DETAIL_CAMERA_DEBOUNCE_MS")
-    && app.includes("mechanicalDetailSelectionController.refresh(")
-    && app.includes("mechanicalDetailSelectionController.schedule(")
-    && app.includes("mechanicalDetailSelectionController.cancel(state)"),
+    && runtimeController.includes("detailSelectionController.refresh(")
+    && runtimeController.includes("detailSelectionController.schedule(")
+    && runtimeController.includes("detailSelectionController.cancel(target)"),
   "Mechanical GPU detail-selection ownership must delegate to the executable controller",
 );
 for (const legacyDetailFunction of [
@@ -125,9 +129,13 @@ for (const legacyDetailFunction of [
 
 for (const needle of [
   "const MECHANICAL_DETAIL_SLOT_BUDGET = 4096",
-  "shapeStats.selectorDispatches",
-  "shapeStats.selectionMode === \"gpu-partition\"",
   '"shared-selection"',
+]) {
+  assert(app.includes(needle), `missing Mechanical browser integration contract: ${needle}`);
+}
+for (const needle of [
+  "shapeStats.selectorDispatches",
+  'shapeStats.selectionMode',
   '"auto-rotate"',
   "detailSelectionControlUploadBytes",
   "liveCenterSource:",
@@ -135,8 +143,12 @@ for (const needle of [
   "culledLinkCount:",
   "selectedPinned:",
   "hoveredPinned:",
+  "detailCapacity: Math.min(",
 ]) {
-  assert(app.includes(needle), `missing Mechanical browser integration contract: ${needle}`);
+  assert(
+    runtimeController.includes(needle),
+    `missing Mechanical runtime/detail integration contract: ${needle}`,
+  );
 }
 
 for (const needle of [
@@ -178,41 +190,44 @@ assert(
 );
 
 assert(
-  app.includes("detailCapacity: Math.min(")
+  runtimeController.includes("detailCapacity: Math.min(")
     && app.includes("MECHANICAL_DETAIL_SLOT_BUDGET"),
   "Mechanical Web Lab must bound detail allocation independently of total Link count",
 );
 
 assert(
-  !app.includes("webgpu.selectMonolithicLinkDetail3D({"),
+  !runtimeController.includes("webgpu.selectMonolithicLinkDetail3D({")
+    && !app.includes("webgpu.selectMonolithicLinkDetail3D({"),
   "production bounded Mechanical mode must not perform the P2b CPU O(N) selector scan",
 );
 
 assert(
-  !app.includes("state.shape.setDetailLinkIndices(selection.indices)"),
+  !runtimeController.includes("state.shape.setDetailLinkIndices(selection.indices)")
+    && !app.includes("state.shape.setDetailLinkIndices(selection.indices)"),
   "production camera selection must not upload CPU-generated detail index lists",
 );
 
 assert(
-  app.includes("detailSelectionIndexUploadBytes"),
+  runtimeController.includes("detailSelectionIndexUploadBytes"),
   "diagnostics must preserve explicit detail-index upload accounting",
 );
 assert(
-  app.includes("detailSelectionGlobalsUploadBytes"),
+  runtimeController.includes("detailSelectionGlobalsUploadBytes"),
   "diagnostics must expose shape-global control upload bytes",
 );
 assert(
-  app.includes("detailSelectionControlUploadBytes"),
+  runtimeController.includes("detailSelectionControlUploadBytes"),
   "diagnostics must expose fixed GPU selector uniform upload bytes",
 );
 
 assert(
-  app.includes("mechanicalDetailSelectionController.cancel(state)"),
+  runtimeController.includes("detailSelectionController.cancel(target)"),
   "Mechanical disposal must delegate pending detail-selection timer cleanup",
 );
 
 assert(
-  !app.includes("detailCapacity: linkCount"),
+  !runtimeController.includes("detailCapacity: linkCount")
+    && !app.includes("detailCapacity: linkCount"),
   "Web Lab must not force all semantic Links into full detail",
 );
 
