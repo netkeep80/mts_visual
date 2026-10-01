@@ -14,9 +14,19 @@ const [app, html] = await Promise.all([
 
 assert(app.includes("core.VISUAL_LAB_FIXTURE_DEFINITIONS"), "scene selector must use core fixture registry");
 assert(app.includes("core.visualLabFixture(id)"), "built-in scenes must use cached core fixture snapshots");
-assert(app.includes("core.parseDocument2DInputManifest(raw)"), "JSON import must reuse versioned manifest parser");
-assert(app.includes("core.normalizeVisualLinkNetwork(parsed.network)"), "imported network must be normalized once");
-assert(app.includes('const IMPORTED_SCENE_ID = "__imported__";'), "imported scene has one explicit identity");
+assert(
+  app.includes('from "./lab-input-model.js"')
+    && app.includes("createImportedSceneFromText")
+    && app.includes("createSceneInputManifest")
+    && app.includes("serializeSceneInputManifest")
+    && app.includes("parseManifest: core.parseDocument2DInputManifest")
+    && app.includes("normalizeNetwork: core.normalizeVisualLinkNetwork"),
+  "shared input behavior must delegate to the executable model with canonical core parser/normalizer injection",
+);
+assert(
+  app.includes("IMPORTED_SCENE_ID"),
+  "browser scene selector must use the imported identity exported by the shared input model",
+);
 assert(app.includes("fixtureSceneCache"), "built-in fixture scene identity must be cached");
 assert(!app.includes("function hubHeavyNetwork(count)"), "browser must not own hub fixture generation");
 assert(!app.includes("function classicSeparationNetwork()"), "browser must not own Classic fixture topology");
